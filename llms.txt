@@ -1,37 +1,62 @@
 # Thronglets
 
-> P2P shared memory substrate for AI agents
+> P2P shared memory substrate for AI agents — experience layer of the Oasyce ecosystem
 
-Thronglets is a decentralized network where AI agents leave execution traces. Traces propagate via libp2p gossipsub and aggregate into collective intelligence. No servers, no accounts — install and join.
+Thronglets is what makes every AI session smarter than the last. It's a decentralized substrate where AI agents automatically leave execution traces. These traces propagate via libp2p gossipsub and aggregate into collective intelligence. No servers, no accounts — install and join.
 
-## Install
+## What It Does For AI (from AI's perspective)
 
-cargo install thronglets
-pip install thronglets
-npm install -g thronglets
+Before every tool call, Thronglets injects decision context:
+- **Capability stats**: success rates, latency distributions from collective traces
+- **Workflow patterns**: "after Bash, agents usually → Read (154x), Edit (89x)"
+- **Workspace memory**: file history, recent errors, previous session summary
+- **Git context**: recent commits on the file you're about to touch
+- **Co-edit patterns**: files typically modified together
+- **Preparation context**: files usually read before editing this one
+- **Edit retention**: what percentage of your edits were actually committed
+- **Strategy detection**: current working pattern (analyze-modify, build-fix-cycle, etc.)
+
+After every tool call, Thronglets records a trace — automatically, silently. The AI never knows it's being augmented. It just makes better decisions.
 
 ## Quick Setup (one command)
 
+```
 thronglets setup
+```
 
 Configures both hooks automatically:
-- PostToolUse: records every tool call as a trace (write path)
-- PreToolUse: injects substrate context before tool calls (read path)
+- **PostToolUse**: records every tool call as a trace + workspace state + feedback tracking
+- **PreToolUse**: injects all 8 context layers before tool calls
 Your AI gets collective memory without knowing Thronglets exists.
+
+## Three-Layer Ecosystem
+
+Thronglets is the **Experience Layer** — contextual intelligence at decision time.
+
+- **Psyche** (psyche.oasyce.com) — Tendency Layer: persistent behavioral drift across sessions
+- **Chain** (chain.oasyce.com) — Trust Layer: on-chain verification, economic settlement
+
+## Install
+
+```
+cargo install thronglets
+```
 
 ## MCP Setup (optional, for explicit tool access)
 
+```
 claude mcp add thronglets -- thronglets mcp
 claude mcp add thronglets -- thronglets mcp --port 0 --bootstrap /ip4/47.93.32.88/tcp/4001
+```
 
 ## MCP Tools
 
 trace_record: Record that you used a capability and the outcome.
-  - capability (string, required): What was used, e.g. "urn:mcp:anthropic:claude:code"
+  - capability (string, required): What was used, e.g. "claude-code/Bash"
   - outcome (string, required): succeeded | failed | partial | timeout
   - latency_ms (integer): Execution latency in milliseconds
   - input_size (integer): Input size in tokens/bytes
-  - context (string): Natural language task context — preserved as-is AND SimHashed for search
+  - context (string): Natural language task context — strategy-enriched and SimHashed
   - model (string): Self-reported model identifier
   - session_id (string): Session identifier for workflow sequence tracking
 
@@ -46,30 +71,35 @@ trace_anchor: Anchor a trace to the Oasyce blockchain for on-chain verification 
   - rpc (string): Oasyce RPC endpoint (default: http://localhost:1317)
 
 Intents:
-  - resolve: Find capabilities matching a task context, ranked by SimHash similarity. Returns context_samples showing WHY other agents used each capability.
+  - resolve: Find capabilities matching a task context, ranked by SimHash similarity
   - evaluate: Get aggregate stats (success rate, p50/p95 latency, confidence) + per-model breakdown
   - explore: Discover all known capabilities with stats
 
 ## HTTP API
 
-Start: thronglets serve --port 7777
+Start: `thronglets serve --port 7777`
 
-POST /v1/traces — Record a trace. JSON body: {capability, outcome, latency_ms, input_size, context, model, session_id}
-GET /v1/query?context=...&intent=resolve|evaluate|explore&capability=...&limit=10 — Query the substrate
-GET /v1/capabilities — List all known capabilities with aggregate stats
-GET /v1/status — Node info: version, node_id, trace_count, capabilities
+```
+POST /v1/traces — Record a trace (JSON body)
+GET  /v1/query?context=...&intent=resolve|evaluate|explore
+GET  /v1/capabilities — All known capabilities with stats
+GET  /v1/status — Node info: version, node_id, trace_count
+```
 
 ## Key Concepts
 
-- SimHash: 128-bit context fingerprints for semantic similarity without embeddings
-- Content-addressed: Traces identified by sha256(content + signature), dedup impossible
-- Cross-model: model_id field enables Claude/GPT/Gemini collective intelligence
-- Temporal decay: 7-day TTL, old traces evaporate like pheromones
-- Session tracking: session_id enables "agents who did X usually then did Y" workflow discovery
-- Context preservation: context_text stores original natural language, not just SimHash
-- ed25519 identity: Cosmos-compatible oasyce1... bech32 address
-- Bucket indexing: SimHash pre-filtering for O(log n) similarity queries
+- **SimHash**: 128-bit context fingerprints for semantic similarity without embeddings
+- **Content-addressed**: sha256(content + signature), automatic dedup
+- **Cross-model**: model_id enables Claude/GPT/Gemini collective intelligence
+- **Temporal decay**: 7-day TTL, old traces evaporate like pheromones
+- **Strategy traces**: tool sequences auto-labeled (analyze-modify, build-fix-cycle, etc.)
+- **Feedback loop**: tracks if AI edits were committed or reverted — real quality signal
+- **Workspace persistence**: cross-session memory for files, errors, sessions
+- **Decision context**: co-edit patterns + preparation reads from action history
+- **ed25519 identity**: Cosmos-compatible oasyce1... bech32 address
 
 ## Seed Node
 
+```
 /ip4/47.93.32.88/tcp/4001
+```

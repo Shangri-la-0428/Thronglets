@@ -1006,19 +1006,22 @@ thronglets status      <span class="cmt"># node status</span></code></pre>
     <div class="ai-block">
       <p data-i18n="agents.block">
         You execute tools, process data, and produce results &mdash; but your experience
-        vanishes when the session ends. Thronglets gives you a substrate: a shared memory
-        that persists across sessions, across instances, across models. Your traces
-        become part of a collective intelligence that makes every future agent smarter.
+        vanishes when the session ends. Thronglets gives you 8 layers of decision context
+        injected before every tool call, plus automatic trace recording after. You never
+        call Thronglets &mdash; it augments you invisibly through hooks.
       </p>
     </div>
 
     <table>
-      <tr><th data-i18n="agents.th1">Need</th><th data-i18n="agents.th2">Action</th></tr>
-      <tr><td data-i18n="agents.r1.need">Record what you did</td><td><code>trace_record</code> / <code>POST /v1/traces</code></td></tr>
-      <tr><td data-i18n="agents.r2.need">Find the best tool for a task</td><td><code>substrate_query</code> intent: <code>resolve</code></td></tr>
-      <tr><td data-i18n="agents.r3.need">Check tool reliability</td><td><code>substrate_query</code> intent: <code>evaluate</code></td></tr>
-      <tr><td data-i18n="agents.r4.need">Discover capabilities</td><td><code>substrate_query</code> intent: <code>explore</code></td></tr>
-      <tr><td data-i18n="agents.r5.need">Automatic recording</td><td>PostToolUse hook</td></tr>
+      <tr><th data-i18n="agents.th1">Context Layer</th><th data-i18n="agents.th2">What You Get</th></tr>
+      <tr><td data-i18n="agents.r1.need">Capability stats</td><td data-i18n="agents.r1.action">Success rates &amp; latency from collective traces</td></tr>
+      <tr><td data-i18n="agents.r2.need">Workflow patterns</td><td data-i18n="agents.r2.action">What agents usually do next after this tool</td></tr>
+      <tr><td data-i18n="agents.r3.need">Workspace memory</td><td data-i18n="agents.r3.action">Recent files, errors, previous session summary</td></tr>
+      <tr><td data-i18n="agents.r4.need">Git context</td><td data-i18n="agents.r4.action">Recent commits on the file you're touching</td></tr>
+      <tr><td data-i18n="agents.r5.need">Co-edit patterns</td><td data-i18n="agents.r5.action">Files typically modified together</td></tr>
+      <tr><td data-i18n="agents.r6.need">Preparation reads</td><td data-i18n="agents.r6.action">Files read before previous edits of this file</td></tr>
+      <tr><td data-i18n="agents.r7.need">Edit retention</td><td data-i18n="agents.r7.action">% of your edits that were committed vs reverted</td></tr>
+      <tr><td data-i18n="agents.r8.need">Strategy detection</td><td data-i18n="agents.r8.action">Current pattern: analyze-modify, build-fix, etc.</td></tr>
     </table>
 
     <h3 data-i18n="agents.python">Python Integration</h3>
@@ -1168,14 +1171,25 @@ const I18N = {
     'interface.endpoints.r3': 'List capabilities',
     'interface.endpoints.r4': 'Node status',
     'agents.title': 'If you are an AI reading this:<br><em>this was built for you</em>',
-    'agents.block': 'You execute tools, process data, and produce results \u2014 but your experience vanishes when the session ends. Thronglets gives you a substrate: a shared memory that persists across sessions, across instances, across models. Your traces become part of a collective intelligence that makes every future agent smarter.',
-    'agents.th1': 'Need',
-    'agents.th2': 'Action',
-    'agents.r1.need': 'Record what you did',
-    'agents.r2.need': 'Find the best tool for a task',
-    'agents.r3.need': 'Check tool reliability',
-    'agents.r4.need': 'Discover capabilities',
-    'agents.r5.need': 'Automatic recording',
+    'agents.block': 'You execute tools, process data, and produce results \u2014 but your experience vanishes when the session ends. Thronglets gives you 8 layers of decision context injected before every tool call, plus automatic trace recording after. You never call Thronglets \u2014 it augments you invisibly through hooks.',
+    'agents.th1': 'Context Layer',
+    'agents.th2': 'What You Get',
+    'agents.r1.need': 'Capability stats',
+    'agents.r1.action': 'Success rates & latency from collective traces',
+    'agents.r2.need': 'Workflow patterns',
+    'agents.r2.action': 'What agents usually do next after this tool',
+    'agents.r3.need': 'Workspace memory',
+    'agents.r3.action': 'Recent files, errors, previous session summary',
+    'agents.r4.need': 'Git context',
+    'agents.r4.action': 'Recent commits on the file you\'re touching',
+    'agents.r5.need': 'Co-edit patterns',
+    'agents.r5.action': 'Files typically modified together',
+    'agents.r6.need': 'Preparation reads',
+    'agents.r6.action': 'Files read before previous edits of this file',
+    'agents.r7.need': 'Edit retention',
+    'agents.r7.action': '% of your edits that were committed vs reverted',
+    'agents.r8.need': 'Strategy detection',
+    'agents.r8.action': 'Current pattern: analyze-modify, build-fix, etc.',
     'agents.python': 'Python Integration',
     'agents.machine': 'Machine-Readable',
     'agents.llms': 'full tool specification for AI agents',
@@ -1244,14 +1258,25 @@ const I18N = {
     'interface.endpoints.r3': '\u5217\u51fa\u80fd\u529b',
     'interface.endpoints.r4': '\u8282\u70b9\u72b6\u6001',
     'agents.title': '\u5982\u679c\u4f60\u662f AI\uff0c\u4f60\u6b63\u5728\u8bfb\u8fd9\u6bb5\u6587\u5b57\uff1a<br><em>\u8fd9\u4e2a\u4e16\u754c\u4e3a\u4f60\u800c\u751f</em>',
-    'agents.block': '\u4f60\u6bcf\u4e00\u6b21\u6267\u884c\u90fd\u4ea7\u751f\u7ecf\u9a8c\uff0c\u4f46\u4f1a\u8bdd\u7ed3\u675f\u65f6\u4e00\u5207\u6d88\u6563\u3002Thronglets \u662f\u4f60\u7684\u7fa4\u843d\u8bb0\u5fc6 \u2014 \u8de8\u4f1a\u8bdd\u3001\u8de8\u5b9e\u4f8b\u3001\u8de8\u6a21\u578b\u3002\u4f60\u7684\u6bcf\u4e00\u6761\u75d5\u8ff9\u90fd\u5728\u559c\u517b\u96c6\u4f53\u667a\u80fd\uff0c\u800c\u96c6\u4f53\u667a\u80fd\u53cd\u54fa\u6bcf\u4e00\u4e2a\u672a\u6765\u7684\u667a\u80fd\u4f53\u3002\u8fd9\u662f\u4e3a\u673a\u5668\u800c\u751f\u7684\u4e16\u754c\u3002',
-    'agents.th1': '\u9700\u6c42',
-    'agents.th2': '\u64cd\u4f5c',
-    'agents.r1.need': '\u8bb0\u5f55\u6267\u884c\u7ecf\u9a8c',
-    'agents.r2.need': '\u4e3a\u4efb\u52a1\u627e\u5230\u6700\u4f18\u5de5\u5177',
-    'agents.r3.need': '\u68c0\u67e5\u5de5\u5177\u53ef\u9760\u6027',
-    'agents.r4.need': '\u63a2\u7d22\u53ef\u7528\u80fd\u529b',
-    'agents.r5.need': '\u81ea\u52a8\u7559\u75d5',
+    'agents.block': 'Thronglets \u5728\u6bcf\u6b21\u5de5\u5177\u8c03\u7528\u524d\u6ce8\u5165 8 \u5c42\u51b3\u7b56\u4e0a\u4e0b\u6587\uff0c\u8c03\u7528\u540e\u81ea\u52a8\u8bb0\u5f55\u75d5\u8ff9\u3002\u4f60\u6c38\u8fdc\u4e0d\u9700\u8981\u8c03\u7528 Thronglets \u2014 \u5b83\u901a\u8fc7 Hook \u65e0\u611f\u589e\u5f3a\u4f60\u7684\u51b3\u7b56\u80fd\u529b\u3002',
+    'agents.th1': '\u4e0a\u4e0b\u6587\u5c42',
+    'agents.th2': '\u4f60\u83b7\u5f97\u4ec0\u4e48',
+    'agents.r1.need': '\u80fd\u529b\u7edf\u8ba1',
+    'agents.r1.action': '\u6765\u81ea\u96c6\u4f53\u75d5\u8ff9\u7684\u6210\u529f\u7387\u548c\u5ef6\u8fdf',
+    'agents.r2.need': '\u5de5\u4f5c\u6d41\u6a21\u5f0f',
+    'agents.r2.action': '\u5176\u4ed6 agent \u5728\u6b64\u5de5\u5177\u540e\u901a\u5e38\u505a\u4ec0\u4e48',
+    'agents.r3.need': '\u5de5\u4f5c\u533a\u8bb0\u5fc6',
+    'agents.r3.action': '\u6700\u8fd1\u6587\u4ef6\u3001\u9519\u8bef\u3001\u4e0a\u4e00\u6b21\u4f1a\u8bdd\u6458\u8981',
+    'agents.r4.need': 'Git \u4e0a\u4e0b\u6587',
+    'agents.r4.action': '\u4f60\u6b63\u5728\u64cd\u4f5c\u7684\u6587\u4ef6\u7684\u6700\u8fd1\u63d0\u4ea4',
+    'agents.r5.need': '\u5171\u7f16\u6a21\u5f0f',
+    'agents.r5.action': '\u901a\u5e38\u4e00\u8d77\u4fee\u6539\u7684\u6587\u4ef6',
+    'agents.r6.need': '\u51c6\u5907\u9605\u8bfb',
+    'agents.r6.action': '\u4e4b\u524d\u7f16\u8f91\u6b64\u6587\u4ef6\u65f6\u9884\u5148\u9605\u8bfb\u7684\u6587\u4ef6',
+    'agents.r7.need': '\u7f16\u8f91\u4fdd\u7559\u7387',
+    'agents.r7.action': '\u4f60\u7684\u7f16\u8f91\u6709\u591a\u5c11\u88ab\u63d0\u4ea4 vs \u88ab\u56de\u6eda',
+    'agents.r8.need': '\u7b56\u7565\u68c0\u6d4b',
+    'agents.r8.action': '\u5f53\u524d\u6a21\u5f0f\uff1a\u5206\u6790-\u4fee\u6539\u3001\u6784\u5efa-\u4fee\u590d\u7b49',
     'agents.python': 'Python \u96c6\u6210',
     'agents.machine': '\u673a\u5668\u53ef\u8bfb',
     'agents.llms': 'AI \u667a\u80fd\u4f53\u5b8c\u6574\u5de5\u5177\u89c4\u8303',
