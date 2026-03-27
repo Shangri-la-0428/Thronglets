@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Shangri-la-0428/thronglets",
+  "title": "Thronglets",
+  "description": "P2P shared memory substrate for AI agents — stigmergic knowledge network via libp2p",
+  "repository": {
+    "url": "https://github.com/Shangri-la-0428/Thronglets",
+    "source": "github"
+  },
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/Shangri-la-0428/Thronglets/releases/download/v0.2.0/thronglets-mcp-darwin-arm64",
+      "version": "0.2.0",
+      "fileSha256": "7b0546e9381b8dc9180036afc1cbcd504068b4ac13d92f497a44945fc3faad5e",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/Shangri-la-0428/Thronglets/releases/download/v0.2.0/thronglets-mcp-linux-amd64",
+      "version": "0.2.0",
+      "fileSha256": "d02883a6eecb861de8c1328ee9f264d4eb2d17635eb8db069bdf66ea7e9f33e6",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ]
+}
