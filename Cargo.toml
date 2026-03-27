@@ -39,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Anchor layer (Oasyce chain)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 base64 = "0.22"
 thiserror = "2"
 
