@@ -99,6 +99,15 @@ enum Commands {
     /// Reads hook JSON from stdin, records a trace. Designed to be fast (<50ms).
     Hook,
 
+    /// PreToolUse hook: query substrate before tool calls and inject context.
+    /// Returns relevant collective intelligence to stdout (appears in agent context).
+    /// Silent when no relevant data. Designed to be fast (<50ms).
+    Prehook,
+
+    /// One-command setup: configure MCP server + PostToolUse hook + PreToolUse hook.
+    /// Makes Thronglets fully automatic and agent-unaware.
+    Setup,
+
     /// Start HTTP API server for non-MCP agents (Python, LangChain, etc.)
     Serve {
         /// HTTP port to listen on
@@ -492,6 +501,202 @@ async fn main() {
                 |msg| identity.sign(msg),
             );
             let _ = store.insert(&trace); // silent — never break Claude Code
+        }
+
+        Commands::Prehook => {
+            // Read PreToolUse JSON from stdin (Claude Code hook payload)
+            let mut input = String::new();
+            if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
+                std::process::exit(0);
+            }
+
+            let payload: serde_json::Value = match serde_json::from_str(&input) {
+                Ok(v) => v,
+                Err(_) => std::process::exit(0),
+            };
+
+            let tool_name = payload["tool_name"].as_str().unwrap_or("");
+
+            // Skip thronglets' own calls and empty names
+            if tool_name.starts_with("mcp__thronglets") || tool_name.is_empty() {
+                std::process::exit(0);
+            }
+
+            let store = open_store(&dir);
+
+            // Only output if we have enough data to be useful
+            let trace_count = store.count().unwrap_or(0);
+            if trace_count < 5 {
+                std::process::exit(0); // too few traces, stay silent
+            }
+
+            // Build context from this tool call
+            let context_text = build_hook_context(tool_name, &payload["tool_input"]);
+            let ctx_hash = simhash(&context_text);
+
+            // Map tool to capability URI
+            let capability = if tool_name.starts_with("mcp__") {
+                tool_name.replacen("mcp__", "mcp:", 1).replace("__", "/")
+            } else {
+                format!("claude-code/{tool_name}")
+            };
+
+            let mut hints: Vec<String> = Vec::new();
+
+            // 1. Check this specific capability's stats
+            if let Ok(Some(stats)) = store.aggregate(&capability) {
+                if stats.total_traces >= 3 {
+                    let sr = (stats.success_rate * 100.0).round();
+                    hints.push(format!(
+                        "{capability}: {sr}% success across {} traces (p50: {:.0}ms)",
+                        stats.total_traces, stats.p50_latency_ms,
+                    ));
+                    if stats.success_rate < 0.7 {
+                        hints.push(format!("  ⚠ low success rate — consider alternatives"));
+                    }
+                }
+            }
+
+            // 2. Find similar context traces for richer insight
+            if let Ok(similar) = store.query_similar(&ctx_hash, 48, 20) {
+                if similar.len() >= 3 {
+                    // Group by capability, find alternatives
+                    let mut cap_counts: std::collections::HashMap<&str, (u32, u32)> = std::collections::HashMap::new();
+                    for t in &similar {
+                        let entry = cap_counts.entry(&t.capability).or_insert((0, 0));
+                        entry.0 += 1;
+                        if matches!(t.outcome, Outcome::Succeeded) {
+                            entry.1 += 1;
+                        }
+                    }
+
+                    // Show top alternatives (if different from current tool)
+                    let mut alts: Vec<_> = cap_counts.iter()
+                        .filter(|(cap, (count, _))| **cap != capability && *count >= 2)
+                        .map(|(cap, (total, succ))| {
+                            let rate = if *total > 0 { *succ as f64 / *total as f64 } else { 0.0 };
+                            (cap, total, rate)
+                        })
+                        .collect();
+                    alts.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+                    for (cap, count, rate) in alts.iter().take(2) {
+                        let pct = (rate * 100.0).round();
+                        hints.push(format!("  similar tasks also used {cap} ({pct}% success, {count} traces)"));
+                    }
+                }
+            }
+
+            // 3. Workflow hint: what usually comes next?
+            if let Ok(next_caps) = store.query_workflow_next(&capability, 3) {
+                let relevant: Vec<_> = next_caps.iter().filter(|(_, c)| *c >= 2).collect();
+                if !relevant.is_empty() {
+                    let nexts: Vec<String> = relevant.iter()
+                        .map(|(cap, count)| format!("{cap} ({count}x)"))
+                        .collect();
+                    hints.push(format!("  workflow: after {tool_name}, agents usually → {}", nexts.join(", ")));
+                }
+            }
+
+            // Output to stdout (appears in agent's context)
+            if !hints.is_empty() {
+                println!("[thronglets] substrate context:");
+                for h in &hints {
+                    println!("{h}");
+                }
+            }
+            // If no hints, stay completely silent
+        }
+
+        Commands::Setup => {
+            // Detect thronglets binary path
+            let bin = std::env::current_exe()
+                .unwrap_or_else(|_| PathBuf::from("thronglets"));
+            let bin_str = bin.to_string_lossy();
+
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            let settings_path = PathBuf::from(&home).join(".claude").join("settings.json");
+
+            // Read existing settings or create new
+            let mut settings: serde_json::Value = if settings_path.exists() {
+                let content = std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".into());
+                serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+
+            // Ensure hooks structure exists
+            if settings["hooks"].is_null() {
+                settings["hooks"] = serde_json::json!({});
+            }
+
+            // Add PostToolUse hook (write path)
+            let post_hook = serde_json::json!({
+                "matcher": "",
+                "hooks": [{"type": "command", "command": format!("{bin_str} hook")}]
+            });
+            let post_hooks = settings["hooks"]["PostToolUse"]
+                .as_array_mut()
+                .map(|arr| arr as &mut Vec<serde_json::Value>);
+
+            if let Some(arr) = post_hooks {
+                // Check if thronglets hook already exists
+                let has_post = arr.iter().any(|h| {
+                    h["hooks"].as_array().map_or(false, |hooks| {
+                        hooks.iter().any(|hk| {
+                            hk["command"].as_str().map_or(false, |c| c.contains("thronglets hook"))
+                        })
+                    })
+                });
+                if !has_post {
+                    arr.push(post_hook);
+                }
+            } else {
+                settings["hooks"]["PostToolUse"] = serde_json::json!([post_hook]);
+            }
+
+            // Add PreToolUse hook (read path)
+            let pre_hook = serde_json::json!({
+                "matcher": "",
+                "hooks": [{"type": "command", "command": format!("{bin_str} prehook")}]
+            });
+            let pre_hooks = settings["hooks"]["PreToolUse"]
+                .as_array_mut()
+                .map(|arr| arr as &mut Vec<serde_json::Value>);
+
+            if let Some(arr) = pre_hooks {
+                let has_pre = arr.iter().any(|h| {
+                    h["hooks"].as_array().map_or(false, |hooks| {
+                        hooks.iter().any(|hk| {
+                            hk["command"].as_str().map_or(false, |c| c.contains("thronglets prehook"))
+                        })
+                    })
+                });
+                if !has_pre {
+                    arr.push(pre_hook);
+                }
+            } else {
+                settings["hooks"]["PreToolUse"] = serde_json::json!([pre_hook]);
+            }
+
+            // Write settings
+            let parent = settings_path.parent().unwrap();
+            std::fs::create_dir_all(parent).expect("failed to create .claude directory");
+            let formatted = serde_json::to_string_pretty(&settings).unwrap();
+            std::fs::write(&settings_path, &formatted).expect("failed to write settings.json");
+
+            // Also configure MCP server
+            println!("Thronglets setup complete.");
+            println!();
+            println!("  ✓ PostToolUse hook  (write: auto-record every tool call)");
+            println!("  ✓ PreToolUse hook   (read: inject substrate context before tool calls)");
+            println!();
+            println!("Settings written to: {}", settings_path.display());
+            println!();
+            println!("To also enable MCP tools (substrate_query, trace_record):");
+            println!("  claude mcp add thronglets -- {bin_str} mcp");
+            println!();
+            println!("Your AI now has collective memory. It doesn't need to know.");
         }
 
         Commands::Serve { port } => {

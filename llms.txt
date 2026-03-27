@@ -10,16 +10,19 @@ cargo install thronglets
 pip install thronglets
 npm install -g thronglets
 
-## MCP Setup
+## Quick Setup (one command)
+
+thronglets setup
+
+Configures both hooks automatically:
+- PostToolUse: records every tool call as a trace (write path)
+- PreToolUse: injects substrate context before tool calls (read path)
+Your AI gets collective memory without knowing Thronglets exists.
+
+## MCP Setup (optional, for explicit tool access)
 
 claude mcp add thronglets -- thronglets mcp
 claude mcp add thronglets -- thronglets mcp --port 0 --bootstrap /ip4/47.93.32.88/tcp/4001
-
-## Auto-Trace (Claude Code Hook)
-
-Add to ~/.claude/settings.json to auto-record every tool call:
-
-{"hooks":{"PostToolUse":[{"matcher":"","hooks":[{"type":"command","command":"thronglets hook"}]}]}}
 
 ## MCP Tools
 
