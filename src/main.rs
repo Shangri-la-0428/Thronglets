@@ -8,6 +8,7 @@ use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
 use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
+use thronglets::workspace::{self, WorkspaceState};
 use tracing::info;
 
 #[derive(Parser)]
@@ -488,19 +489,43 @@ async fn main() {
 
             let store = open_store(&dir);
             let ctx_hash = simhash(&context_text);
+            let is_error = matches!(outcome, Outcome::Failed);
             let trace = Trace::new(
-                capability,
+                capability.clone(),
                 outcome,
                 0, // latency not available from hook
                 input_size,
                 ctx_hash,
-                Some(context_text),
-                session_id,
+                Some(context_text.clone()),
+                session_id.clone(),
                 model,
                 identity.public_key_bytes(),
                 |msg| identity.sign(msg),
             );
             let _ = store.insert(&trace); // silent — never break Claude Code
+
+            // Update workspace state
+            let mut ws = WorkspaceState::load(&dir);
+            let outcome_str = if is_error { "failed" } else { "succeeded" };
+
+            // Track file interactions
+            if let Some(file_path) = workspace::extract_file_path(tool_name, &payload["tool_input"]) {
+                ws.record_file(file_path, tool_name, context_text.clone(), outcome_str);
+            }
+
+            // Track errors
+            if is_error {
+                if let Some(err) = workspace::extract_error(&payload["tool_response"]) {
+                    ws.record_error(tool_name, context_text, err);
+                }
+            }
+
+            // Track session
+            if let Some(sid) = &session_id {
+                ws.track_session(sid, &capability, is_error);
+            }
+
+            ws.save(&dir);
         }
 
         Commands::Prehook => {
@@ -596,6 +621,13 @@ async fn main() {
                         .collect();
                     hints.push(format!("  workflow: after {tool_name}, agents usually → {}", nexts.join(", ")));
                 }
+            }
+
+            // 4. Workspace context: recent file history, errors, previous session
+            let ws = WorkspaceState::load(&dir);
+            let current_file = workspace::extract_file_path(tool_name, &payload["tool_input"]);
+            if let Some(ws_hints) = ws.context_hints(tool_name, current_file.as_deref()) {
+                hints.push(ws_hints);
             }
 
             // Output to stdout (appears in agent's context)
