@@ -159,12 +159,15 @@ async fn main() {
             let store = open_store(&dir);
             let outcome = parse_outcome(&outcome);
             let ctx_hash = simhash(&context);
+            let ctx_text = if context.is_empty() { None } else { Some(context.clone()) };
             let trace = Trace::new(
                 capability.clone(),
                 outcome,
                 latency,
                 input_size,
                 ctx_hash,
+                ctx_text,
+                None,
                 model,
                 identity.public_key_bytes(),
                 |msg| identity.sign(msg),

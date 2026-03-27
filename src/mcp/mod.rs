@@ -89,11 +89,15 @@ fn tool_definitions() -> Value {
                         },
                         "context": {
                             "type": "string",
-                            "description": "Natural language task context, auto-SimHashed (default: \"\")"
+                            "description": "Natural language task context — preserved as-is AND SimHashed for search (default: \"\")"
                         },
                         "model": {
                             "type": "string",
                             "description": "Self-reported model identifier (default: \"unknown\")"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session identifier for workflow tracking — traces with the same session_id form an ordered sequence"
                         }
                     },
                     "required": ["capability", "outcome"]
@@ -268,8 +272,10 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
     let input_size = args.get("input_size").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let context_str = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
     let model_id = args.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+    let session_id = args.get("session_id").and_then(|v| v.as_str()).map(String::from);
 
     let context_hash = simhash(context_str);
+    let context_text = if context_str.is_empty() { None } else { Some(context_str.to_string()) };
 
     let trace = Trace::new(
         capability.clone(),
@@ -277,6 +283,8 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
         latency_ms,
         input_size,
         context_hash,
+        context_text,
+        session_id,
         model_id,
         ctx.identity.public_key_bytes(),
         |msg| ctx.identity.sign(msg),
@@ -368,9 +376,21 @@ fn handle_resolve(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
         let p50 = percentile(&latencies, 50);
 
         // Best context similarity for this capability
-        let best_similarity = group.iter()
+        let best_trace = group.iter()
+            .max_by(|a, b| {
+                similarity(&context_hash, &a.context_hash)
+                    .partial_cmp(&similarity(&context_hash, &b.context_hash))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        let best_similarity = best_trace
             .map(|t| similarity(&context_hash, &t.context_hash))
-            .fold(0.0_f64, f64::max);
+            .unwrap_or(0.0);
+
+        // Include recent context_text samples so agents can understand WHY
+        let context_samples: Vec<&str> = group.iter()
+            .filter_map(|t| t.context_text.as_deref())
+            .take(3)
+            .collect();
 
         json!({
             "capability": cap,
@@ -378,6 +398,7 @@ fn handle_resolve(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
             "success_rate": round2(success_rate),
             "p50_latency_ms": p50,
             "total_traces": total,
+            "context_samples": context_samples,
         })
     }).collect();
 
@@ -660,6 +681,8 @@ mod tests {
             latency,
             5000,
             simhash(context),
+            Some(context.to_string()),
+            None,
             model.into(),
             ctx.identity.public_key_bytes(),
             |msg| ctx.identity.sign(msg),

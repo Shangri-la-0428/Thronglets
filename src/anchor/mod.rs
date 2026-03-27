@@ -263,6 +263,8 @@ mod tests {
             100,
             5000,
             simhash(ctx),
+            Some(ctx.to_string()),
+            None,
             "test-model".into(),
             id.public_key_bytes(),
             |m| id.sign(m),

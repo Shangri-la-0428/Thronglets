@@ -30,6 +30,8 @@ pub enum Outcome {
 /// - Facts, not opinions (objective execution record)
 /// - Machine-native context (SimHash, not keyword tags)
 /// - Cross-model identity (which model produced this?)
+/// - Preserve original context text (v0.2.1: AI agents want to read WHY)
+/// - Session tracking for workflow discovery (v0.2.1)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trace {
     /// Content-addressed ID: sha256(signable_bytes + signature).
@@ -49,8 +51,20 @@ pub struct Trace {
     pub input_size: u32,
 
     /// SimHash fingerprint of the agent's task context.
-    /// Enables semantic similarity search without full embeddings.
+    /// Used as fast pre-filter for similarity search.
     pub context_hash: ContextHash,
+
+    /// Original natural language context text.
+    /// SimHash alone is lexical, not semantic — preserving the original
+    /// lets future agents understand WHY a capability was used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_text: Option<String>,
+
+    /// Session identifier for workflow sequence tracking.
+    /// Traces with the same session_id form an ordered sequence,
+    /// enabling "agents who did X usually then did Y" pattern discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 
     /// Self-reported model identifier.
     /// e.g., "claude-opus-4-6", "gpt-4o", "gemini-pro"
@@ -76,6 +90,8 @@ impl Trace {
         latency_ms: u32,
         input_size: u32,
         context_hash: ContextHash,
+        context_text: Option<String>,
+        session_id: Option<String>,
         model_id: String,
         node_pubkey: [u8; 32],
         sign_fn: impl FnOnce(&[u8]) -> Signature,
@@ -87,7 +103,8 @@ impl Trace {
 
         let signable = Self::signable_bytes(
             &capability, outcome, latency_ms, input_size,
-            &context_hash, &model_id, timestamp, &node_pubkey,
+            &context_hash, context_text.as_deref(), session_id.as_deref(),
+            &model_id, timestamp, &node_pubkey,
         );
 
         let signature = sign_fn(&signable);
@@ -104,6 +121,8 @@ impl Trace {
             latency_ms,
             input_size,
             context_hash,
+            context_text,
+            session_id,
             model_id,
             timestamp,
             node_pubkey,
@@ -115,7 +134,8 @@ impl Trace {
     pub fn verify(&self) -> bool {
         let signable = Self::signable_bytes(
             &self.capability, self.outcome, self.latency_ms, self.input_size,
-            &self.context_hash, &self.model_id, self.timestamp, &self.node_pubkey,
+            &self.context_hash, self.context_text.as_deref(), self.session_id.as_deref(),
+            &self.model_id, self.timestamp, &self.node_pubkey,
         );
         crate::identity::NodeIdentity::verify(&self.node_pubkey, &signable, &self.signature)
     }
@@ -124,7 +144,8 @@ impl Trace {
     pub fn verify_id(&self) -> bool {
         let signable = Self::signable_bytes(
             &self.capability, self.outcome, self.latency_ms, self.input_size,
-            &self.context_hash, &self.model_id, self.timestamp, &self.node_pubkey,
+            &self.context_hash, self.context_text.as_deref(), self.session_id.as_deref(),
+            &self.model_id, self.timestamp, &self.node_pubkey,
         );
         let mut hasher = Sha256::new();
         hasher.update(&signable);
@@ -133,6 +154,13 @@ impl Trace {
         self.id == expected
     }
 
+    /// Signable bytes include all fields that contribute to trace identity.
+    ///
+    /// Backward compatibility: if BOTH context_text and session_id are None
+    /// (i.e., a v0.2.0 trace), the byte layout matches v0.2.0 exactly.
+    /// When either field is Some (v0.2.1+), a version tag 0xFF is inserted
+    /// after context_hash, followed by length-prefixed optional fields.
+    /// This ensures old traces received from the network still verify correctly.
     #[allow(clippy::too_many_arguments)]
     fn signable_bytes(
         capability: &str,
@@ -140,6 +168,8 @@ impl Trace {
         latency_ms: u32,
         input_size: u32,
         context_hash: &ContextHash,
+        context_text: Option<&str>,
+        session_id: Option<&str>,
         model_id: &str,
         timestamp: u64,
         node_pubkey: &[u8; 32],
@@ -151,6 +181,23 @@ impl Trace {
         buf.extend_from_slice(&latency_ms.to_le_bytes());
         buf.extend_from_slice(&input_size.to_le_bytes());
         buf.extend_from_slice(context_hash);
+        // v0.2.1 extension: only present when new fields are used
+        let has_v021_fields = context_text.is_some() || session_id.is_some();
+        if has_v021_fields {
+            buf.push(0xFF); // version tag — absent in v0.2.0 signing
+            if let Some(ct) = context_text {
+                buf.extend_from_slice(&(ct.len() as u32).to_le_bytes());
+                buf.extend_from_slice(ct.as_bytes());
+            } else {
+                buf.extend_from_slice(&0u32.to_le_bytes());
+            }
+            if let Some(sid) = session_id {
+                buf.extend_from_slice(&(sid.len() as u32).to_le_bytes());
+                buf.extend_from_slice(sid.as_bytes());
+            } else {
+                buf.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
         buf.extend_from_slice(model_id.as_bytes());
         buf.push(0);
         buf.extend_from_slice(&timestamp.to_le_bytes());
@@ -189,6 +236,8 @@ mod tests {
             100,
             5000,
             simhash(context),
+            Some(context.to_string()),
+            None,
             "claude-opus-4-6".into(),
             id.public_key_bytes(),
             |msg| id.sign(msg),

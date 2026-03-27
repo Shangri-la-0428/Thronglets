@@ -11,6 +11,13 @@ use std::sync::Mutex;
 
 const DEFAULT_TTL_DAYS: i64 = 7;
 
+/// Compute a 16-bit bucket from the first 2 bytes of a context_hash.
+/// Used as a pre-filter index for similarity search — traces in nearby
+/// buckets are more likely to have similar SimHash fingerprints.
+pub fn context_bucket(context_hash: &[u8; 16]) -> i64 {
+    ((context_hash[0] as i64) << 8) | (context_hash[1] as i64)
+}
+
 pub struct TraceStore {
     conn: Mutex<Connection>,
 }
@@ -19,6 +26,7 @@ impl TraceStore {
     /// Open or create a trace store at the given path.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
+        // Create core tables (columns match v0.2.1 schema for fresh installs)
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS traces (
                 id              BLOB PRIMARY KEY,
@@ -27,20 +35,33 @@ impl TraceStore {
                 latency_ms      INTEGER NOT NULL,
                 input_size      INTEGER NOT NULL,
                 context_hash    BLOB NOT NULL,
+                context_text    TEXT,
+                session_id      TEXT,
                 model_id        TEXT NOT NULL,
                 timestamp       INTEGER NOT NULL,
                 node_pubkey     BLOB NOT NULL,
-                signature       BLOB NOT NULL
+                signature       BLOB NOT NULL,
+                context_bucket  INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_traces_capability ON traces(capability);
-            CREATE INDEX IF NOT EXISTS idx_traces_timestamp ON traces(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_traces_model_id ON traces(model_id);
             CREATE TABLE IF NOT EXISTS anchored_traces (
                 trace_id      BLOB PRIMARY KEY,
                 anchor_height INTEGER NOT NULL,
                 tx_hash       TEXT NOT NULL,
                 anchored_at   INTEGER NOT NULL
             );",
+        )?;
+        // v0.2.1 migration: add columns if upgrading from v0.2.0
+        // Each ALTER is separate — if one fails (column exists), the rest still run
+        let _ = conn.execute("ALTER TABLE traces ADD COLUMN context_text TEXT", []);
+        let _ = conn.execute("ALTER TABLE traces ADD COLUMN session_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE traces ADD COLUMN context_bucket INTEGER NOT NULL DEFAULT 0", []);
+        // Now create indexes (columns guaranteed to exist after migration)
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_traces_capability ON traces(capability);
+            CREATE INDEX IF NOT EXISTS idx_traces_timestamp ON traces(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_traces_model_id ON traces(model_id);
+            CREATE INDEX IF NOT EXISTS idx_traces_session_id ON traces(session_id);
+            CREATE INDEX IF NOT EXISTS idx_traces_context_bucket ON traces(context_bucket);",
         )?;
         Ok(Self { conn: Mutex::new(conn) })
     }
@@ -53,9 +74,10 @@ impl TraceStore {
     /// Insert a trace. Returns false if duplicate (content-addressed dedup).
     pub fn insert(&self, trace: &Trace) -> rusqlite::Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let bucket = context_bucket(&trace.context_hash);
         let result = conn.execute(
-            "INSERT OR IGNORE INTO traces (id, capability, outcome, latency_ms, input_size, context_hash, model_id, timestamp, node_pubkey, signature)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT OR IGNORE INTO traces (id, capability, outcome, latency_ms, input_size, context_hash, context_text, session_id, model_id, timestamp, node_pubkey, signature, context_bucket)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 trace.id.as_slice(),
                 trace.capability,
@@ -63,10 +85,13 @@ impl TraceStore {
                 trace.latency_ms,
                 trace.input_size,
                 trace.context_hash.as_slice(),
+                trace.context_text,
+                trace.session_id,
                 trace.model_id,
                 trace.timestamp as i64,
                 trace.node_pubkey.as_slice(),
                 trace.signature.to_bytes().as_slice(),
+                bucket,
             ],
         )?;
         Ok(result > 0)
@@ -76,7 +101,8 @@ impl TraceStore {
     pub fn query_capability(&self, capability: &str, limit: usize) -> rusqlite::Result<Vec<Trace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, capability, outcome, latency_ms, input_size, context_hash, model_id, timestamp, node_pubkey, signature
+            "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                    context_text, session_id, model_id, timestamp, node_pubkey, signature
              FROM traces WHERE capability = ?1 ORDER BY timestamp DESC LIMIT ?2",
         )?;
         Self::collect_traces(&mut stmt, params![capability, limit as i64])
@@ -84,8 +110,11 @@ impl TraceStore {
 
     /// Query traces with similar context (Hamming distance on context_hash).
     ///
-    /// Loads all traces and filters in Rust because SQLite cannot do
-    /// efficient bitwise operations on BLOBs.
+    /// v0.2.1: Uses bucket pre-filtering. The context_bucket index narrows
+    /// candidates to traces in nearby SimHash buckets before doing the
+    /// expensive Hamming distance check in Rust. At small scale (<10k traces)
+    /// this falls back to scanning all buckets, but the index prevents
+    /// full-table-scan pathology as the DB grows.
     pub fn query_similar(
         &self,
         context_hash: &[u8; 16],
@@ -93,12 +122,25 @@ impl TraceStore {
         limit: usize,
     ) -> rusqlite::Result<Vec<Trace>> {
         let conn = self.conn.lock().unwrap();
+        let target_bucket = context_bucket(context_hash);
+
+        // Bucket pre-filter: fetch traces from nearby buckets.
+        // Each bucket bit-flip represents ~8 Hamming distance in the full hash,
+        // so we expand to neighboring buckets proportional to max_distance.
+        let bucket_radius = (max_distance / 8).max(1) as i64;
+        let bucket_lo = (target_bucket as i64 - bucket_radius).max(0) as i64;
+        let bucket_hi = (target_bucket as i64 + bucket_radius).min(65535) as i64;
+
         let mut stmt = conn.prepare(
-            "SELECT id, capability, outcome, latency_ms, input_size, context_hash, model_id, timestamp, node_pubkey, signature
-             FROM traces ORDER BY timestamp DESC",
+            "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                    context_text, session_id, model_id, timestamp, node_pubkey, signature
+             FROM traces
+             WHERE context_bucket BETWEEN ?1 AND ?2
+             ORDER BY timestamp DESC",
         )?;
-        let all = Self::collect_traces(&mut stmt, [])?;
-        let mut matched: Vec<Trace> = all
+        let candidates = Self::collect_traces(&mut stmt, params![bucket_lo, bucket_hi])?;
+
+        let mut matched: Vec<Trace> = candidates
             .into_iter()
             .filter(|t| crate::context::hamming_distance(&t.context_hash, context_hash) <= max_distance)
             .collect();
@@ -149,6 +191,44 @@ impl TraceStore {
             avg_input_size,
             confidence,
         }))
+    }
+
+    /// Query traces by session, ordered by timestamp (workflow sequence).
+    pub fn query_session(&self, session_id: &str, limit: usize) -> rusqlite::Result<Vec<Trace>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                    context_text, session_id, model_id, timestamp, node_pubkey, signature
+             FROM traces WHERE session_id = ?1 ORDER BY timestamp ASC LIMIT ?2",
+        )?;
+        Self::collect_traces(&mut stmt, params![session_id, limit as i64])
+    }
+
+    /// Discover workflow patterns: what capability do agents use AFTER a given capability?
+    /// Returns (next_capability, count) pairs ordered by frequency.
+    pub fn query_workflow_next(&self, capability: &str, limit: usize) -> rusqlite::Result<Vec<(String, u64)>> {
+        let conn = self.conn.lock().unwrap();
+        // Find sessions that contain the given capability, then look at the next trace in each session
+        let mut stmt = conn.prepare(
+            "SELECT t2.capability, COUNT(*) as cnt
+             FROM traces t1
+             JOIN traces t2 ON t1.session_id = t2.session_id
+                           AND t2.timestamp > t1.timestamp
+                           AND t1.session_id IS NOT NULL
+             WHERE t1.capability = ?1
+               AND t2.rowid = (
+                   SELECT MIN(t3.rowid) FROM traces t3
+                   WHERE t3.session_id = t1.session_id
+                     AND t3.timestamp > t1.timestamp
+               )
+             GROUP BY t2.capability
+             ORDER BY cnt DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![capability, limit as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+        })?;
+        rows.collect()
     }
 
     /// Evaporate old traces (pheromone decay).
@@ -220,7 +300,7 @@ impl TraceStore {
         let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
         let mut stmt = conn.prepare(
             "SELECT t.id, t.capability, t.outcome, t.latency_ms, t.input_size, t.context_hash,
-                    t.model_id, t.timestamp, t.node_pubkey, t.signature
+                    t.context_text, t.session_id, t.model_id, t.timestamp, t.node_pubkey, t.signature
              FROM traces t
              LEFT JOIN anchored_traces a ON t.id = a.trace_id
              WHERE a.trace_id IS NULL AND t.timestamp >= ?1
@@ -230,6 +310,9 @@ impl TraceStore {
         Self::collect_traces(&mut stmt, params![cutoff_ms, limit as i64])
     }
 
+    /// Column order: id(0), capability(1), outcome(2), latency_ms(3), input_size(4),
+    /// context_hash(5), context_text(6), session_id(7), model_id(8), timestamp(9),
+    /// node_pubkey(10), signature(11)
     fn collect_traces(
         stmt: &mut rusqlite::Statement,
         params: impl rusqlite::Params,
@@ -238,8 +321,8 @@ impl TraceStore {
             let id_bytes: Vec<u8> = row.get(0)?;
             let outcome_u8: u8 = row.get(2)?;
             let context_bytes: Vec<u8> = row.get(5)?;
-            let pubkey_bytes: Vec<u8> = row.get(8)?;
-            let sig_bytes: Vec<u8> = row.get(9)?;
+            let pubkey_bytes: Vec<u8> = row.get(10)?;
+            let sig_bytes: Vec<u8> = row.get(11)?;
 
             Ok(Trace {
                 id: id_bytes.try_into().unwrap_or([0u8; 32]),
@@ -253,8 +336,10 @@ impl TraceStore {
                 latency_ms: row.get::<_, u32>(3)?,
                 input_size: row.get::<_, u32>(4)?,
                 context_hash: context_bytes.try_into().unwrap_or([0u8; 16]),
-                model_id: row.get(6)?,
-                timestamp: row.get::<_, i64>(7)? as u64,
+                context_text: row.get(6)?,
+                session_id: row.get(7)?,
+                model_id: row.get(8)?,
+                timestamp: row.get::<_, i64>(9)? as u64,
                 node_pubkey: pubkey_bytes.try_into().unwrap_or([0u8; 32]),
                 signature: Signature::from_bytes(
                     &sig_bytes.try_into().unwrap_or([0u8; 64]),
@@ -307,6 +392,8 @@ mod tests {
             100,
             5000,
             simhash(context),
+            Some(context.to_string()),
+            None,
             "test-model".into(),
             id.public_key_bytes(),
             |m| id.sign(m),

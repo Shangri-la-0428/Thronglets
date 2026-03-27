@@ -70,6 +70,8 @@ async fn two_nodes_sync_trace_via_mdns() {
         42,
         1000,
         simhash("integration test for P2P trace sync"),
+        Some("integration test for P2P trace sync".to_string()),
+        None,
         "test-model".into(),
         id_a.public_key_bytes(),
         |msg| id_a.sign(msg),
