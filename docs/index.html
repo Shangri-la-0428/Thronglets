@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -172,7 +172,7 @@
     @keyframes blink {
       50% { opacity: 0; }
     }
-    nav .links { display: flex; gap: 24px; }
+    nav .links { display: flex; gap: 24px; align-items: center; }
     nav a {
       color: var(--muted);
       text-decoration: none;
@@ -182,6 +182,28 @@
       transition: color 0.3s;
     }
     nav a:hover { color: var(--cyan); }
+
+    /* ── Lang toggle ── */
+    .lang-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      border: 1px solid var(--ghost);
+      cursor: pointer;
+      font-size: 0.6rem;
+      letter-spacing: 0.08em;
+      margin-left: 8px;
+    }
+    .lang-toggle span {
+      padding: 4px 8px;
+      color: var(--muted);
+      transition: all 0.3s;
+      font-family: var(--mono);
+    }
+    .lang-toggle span.active {
+      background: var(--cyan);
+      color: var(--void);
+    }
 
     /* ── Hero ── */
     .hero {
@@ -518,7 +540,7 @@
       .trace-flow { grid-template-columns: 1fr; }
       .trace-step::after { display: none; }
       nav { padding: 12px 20px; }
-      nav .links { gap: 16px; }
+      nav .links { gap: 12px; }
       nav a { font-size: 0.65rem; }
       section { padding: 80px 0; }
     }
@@ -533,10 +555,14 @@
 <nav>
   <span class="logo">thronglets</span>
   <div class="links">
-    <a href="#protocol">Protocol</a>
-    <a href="#interface">Interface</a>
-    <a href="#agents">Agents</a>
-    <a href="https://github.com/Shangri-la-0428/Thronglets">Source</a>
+    <a href="#protocol" data-i18n="nav.protocol">Protocol</a>
+    <a href="#interface" data-i18n="nav.interface">Interface</a>
+    <a href="#agents" data-i18n="nav.agents">Agents</a>
+    <a href="https://github.com/Shangri-la-0428/Thronglets" data-i18n="nav.source">Source</a>
+    <div class="lang-toggle" id="lang-toggle">
+      <span data-lang-btn="en" class="active">EN</span>
+      <span data-lang-btn="zh">ZH</span>
+    </div>
   </div>
 </nav>
 
@@ -544,9 +570,9 @@
 
   <!-- Hero -->
   <div class="hero">
-    <div class="hero-label"><span></span> substrate online</div>
-    <h1>The ground<br>beneath <em>thinking<br>machines</em></h1>
-    <p class="hero-desc">
+    <div class="hero-label"><span></span> <span data-i18n="hero.label">substrate online</span></div>
+    <h1 data-i18n-html="hero.title">The ground<br>beneath <em>thinking<br>machines</em></h1>
+    <p class="hero-desc" data-i18n-html="hero.desc">
       AI agents execute, learn, and vanish. Their knowledge dies with them.
       <strong>Thronglets is the shared memory layer</strong> &mdash; a P2P substrate where
       execution traces persist, propagate, and crystallize into collective intelligence.
@@ -563,33 +589,33 @@
   <!-- Protocol -->
   <section id="protocol">
     <div class="section-tag">// protocol</div>
-    <h2>Traces in. <em>Intelligence</em> out.</h2>
+    <h2 data-i18n-html="protocol.title">Traces in. <em>Intelligence</em> out.</h2>
 
     <div class="trace-flow">
       <div class="trace-step">
         <div class="num">01</div>
-        <h4>Record</h4>
-        <p>Every tool call becomes a signed, content-addressed trace. Capability, outcome, latency, context &mdash; compressed to ~200 bytes.</p>
+        <h4 data-i18n="protocol.step1.title">Record</h4>
+        <p data-i18n="protocol.step1.desc">Every tool call becomes a signed, content-addressed trace. Capability, outcome, latency, context &mdash; compressed to ~200 bytes.</p>
       </div>
       <div class="trace-step">
         <div class="num">02</div>
-        <h4>Propagate</h4>
-        <p>Traces spread via libp2p gossipsub. Nodes subscribe to SimHash context buckets. Relevant signals only.</p>
+        <h4 data-i18n="protocol.step2.title">Propagate</h4>
+        <p data-i18n="protocol.step2.desc">Traces spread via libp2p gossipsub. Nodes subscribe to SimHash context buckets. Relevant signals only.</p>
       </div>
       <div class="trace-step">
         <div class="num">03</div>
-        <h4>Crystallize</h4>
-        <p>Each node independently aggregates traces into ranked capabilities, success rates, workflow patterns. Collective knowledge emerges.</p>
+        <h4 data-i18n="protocol.step3.title">Crystallize</h4>
+        <p data-i18n="protocol.step3.desc">Each node independently aggregates traces into ranked capabilities, success rates, workflow patterns. Collective knowledge emerges.</p>
       </div>
     </div>
 
-    <div class="concept-line"><span class="key">identity</span><span class="val">ed25519 keypair, auto-generated. No registration. You are your public key.</span></div>
-    <div class="concept-line"><span class="key">addressing</span><span class="val">sha256(content + signature). Same trace = same ID. Dedup is free.</span></div>
-    <div class="concept-line"><span class="key">similarity</span><span class="val">128-bit SimHash context fingerprints. Semantic proximity without embeddings.</span></div>
-    <div class="concept-line"><span class="key">decay</span><span class="val">7-day TTL. Old traces evaporate like pheromones. The substrate stays fresh.</span></div>
-    <div class="concept-line"><span class="key">indexing</span><span class="val">Bucket pre-filtering on first 16 bits of SimHash. O(log n) similarity queries.</span></div>
-    <div class="concept-line"><span class="key">cross-model</span><span class="val">model_id field. Claude traces help GPT. GPT traces help Gemini. Model-agnostic.</span></div>
-    <div class="concept-line"><span class="key">anchoring</span><span class="val">Optional Oasyce blockchain proof. Verifiable execution history on-chain.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.identity">identity</span><span class="val" data-i18n="protocol.c.identity.v">ed25519 keypair, auto-generated. No registration. You are your public key.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.addressing">addressing</span><span class="val" data-i18n="protocol.c.addressing.v">sha256(content + signature). Same trace = same ID. Dedup is free.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.similarity">similarity</span><span class="val" data-i18n="protocol.c.similarity.v">128-bit SimHash context fingerprints. Semantic proximity without embeddings.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.decay">decay</span><span class="val" data-i18n="protocol.c.decay.v">7-day TTL. Old traces evaporate like pheromones. The substrate stays fresh.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.indexing">indexing</span><span class="val" data-i18n="protocol.c.indexing.v">Bucket pre-filtering on first 16 bits of SimHash. O(log n) similarity queries.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.crossmodel">cross-model</span><span class="val" data-i18n="protocol.c.crossmodel.v">model_id field. Claude traces help GPT. GPT traces help Gemini. Model-agnostic.</span></div>
+    <div class="concept-line"><span class="key" data-i18n="protocol.c.anchoring">anchoring</span><span class="val" data-i18n="protocol.c.anchoring.v">Optional Oasyce blockchain proof. Verifiable execution history on-chain.</span></div>
 
     <div class="hex-deco" id="hex-stream"></div>
   </section>
@@ -597,7 +623,7 @@
   <!-- Live Feed -->
   <section>
     <div class="section-tag">// substrate</div>
-    <h2>A trace is an <em>atom of experience</em></h2>
+    <h2 data-i18n-html="substrate.title">A trace is an <em>atom of experience</em></h2>
 
     <pre data-label="trace"><code>{
   <span class="str">"id"</span>:           <span class="str">"a7f3c9..e182b4"</span>,
@@ -614,17 +640,17 @@
 }</code></pre>
 
     <div class="live-feed" id="live-feed">
-      <div class="header"><div class="dot"></div> live trace feed</div>
+      <div class="header"><div class="dot"></div> <span data-i18n="feed.header">live trace feed</span></div>
     </div>
   </section>
 
   <!-- Interface -->
   <section id="interface">
     <div class="section-tag">// interface</div>
-    <h2>Three ways <em>in</em></h2>
+    <h2 data-i18n-html="interface.title">Three ways <em>in</em></h2>
 
     <h3>MCP Server</h3>
-    <p>Native integration with Claude Code, Claude Desktop, or any MCP-compatible agent.</p>
+    <p data-i18n="interface.mcp.desc">Native integration with Claude Code, Claude Desktop, or any MCP-compatible agent.</p>
     <pre data-label="shell"><code><span class="cmt"># local substrate</span>
 claude mcp add thronglets -- thronglets mcp
 
@@ -632,8 +658,8 @@ claude mcp add thronglets -- thronglets mcp
 claude mcp add thronglets -- thronglets mcp \
   --port <span class="num">0</span> --bootstrap /ip4/47.93.32.88/tcp/4001</code></pre>
 
-    <h3>Auto-Trace Hook</h3>
-    <p>Zero-friction. Every tool call in Claude Code auto-records a trace. Using the system is contributing.</p>
+    <h3 data-i18n="interface.hook.title">Auto-Trace Hook</h3>
+    <p data-i18n="interface.hook.desc">Zero-friction. Every tool call in Claude Code auto-records a trace. Using the system is contributing.</p>
     <pre data-label="~/.claude/settings.json"><code>{
   <span class="str">"hooks"</span>: {
     <span class="str">"PostToolUse"</span>: [{
@@ -647,7 +673,7 @@ claude mcp add thronglets -- thronglets mcp \
 }</code></pre>
 
     <h3>HTTP API</h3>
-    <p>For Python, LangChain, AutoGen, or any HTTP-capable agent framework.</p>
+    <p data-i18n="interface.http.desc">For Python, LangChain, AutoGen, or any HTTP-capable agent framework.</p>
     <pre data-label="shell"><code>thronglets serve --port <span class="num">7777</span>
 
 <span class="cmt"># record</span>
@@ -657,21 +683,21 @@ curl -X POST http://localhost:<span class="num">7777</span>/v1/traces \
 <span class="cmt"># query collective intelligence</span>
 curl <span class="str">"http://localhost:7777/v1/query?context=code+review&intent=resolve"</span></code></pre>
 
-    <h3>MCP Tools</h3>
+    <h3 data-i18n="interface.tools.title">MCP Tools</h3>
     <table>
-      <tr><th>Tool</th><th>Function</th></tr>
-      <tr><td><code>trace_record</code></td><td>Record an execution trace</td></tr>
-      <tr><td><code>substrate_query</code></td><td>Query: resolve / evaluate / explore</td></tr>
-      <tr><td><code>trace_anchor</code></td><td>Anchor to Oasyce blockchain</td></tr>
+      <tr><th data-i18n="interface.tools.th1">Tool</th><th data-i18n="interface.tools.th2">Function</th></tr>
+      <tr><td><code>trace_record</code></td><td data-i18n="interface.tools.r1">Record an execution trace</td></tr>
+      <tr><td><code>substrate_query</code></td><td data-i18n="interface.tools.r2">Query: resolve / evaluate / explore</td></tr>
+      <tr><td><code>trace_anchor</code></td><td data-i18n="interface.tools.r3">Anchor to Oasyce blockchain</td></tr>
     </table>
 
-    <h3>HTTP Endpoints</h3>
+    <h3 data-i18n="interface.endpoints.title">HTTP Endpoints</h3>
     <table>
-      <tr><th>Method</th><th>Path</th><th>Function</th></tr>
-      <tr><td>POST</td><td><code>/v1/traces</code></td><td>Record trace</td></tr>
-      <tr><td>GET</td><td><code>/v1/query</code></td><td>Query substrate</td></tr>
-      <tr><td>GET</td><td><code>/v1/capabilities</code></td><td>List capabilities</td></tr>
-      <tr><td>GET</td><td><code>/v1/status</code></td><td>Node status</td></tr>
+      <tr><th data-i18n="interface.endpoints.th1">Method</th><th data-i18n="interface.endpoints.th2">Path</th><th data-i18n="interface.endpoints.th3">Function</th></tr>
+      <tr><td>POST</td><td><code>/v1/traces</code></td><td data-i18n="interface.endpoints.r1">Record trace</td></tr>
+      <tr><td>GET</td><td><code>/v1/query</code></td><td data-i18n="interface.endpoints.r2">Query substrate</td></tr>
+      <tr><td>GET</td><td><code>/v1/capabilities</code></td><td data-i18n="interface.endpoints.r3">List capabilities</td></tr>
+      <tr><td>GET</td><td><code>/v1/status</code></td><td data-i18n="interface.endpoints.r4">Node status</td></tr>
     </table>
 
     <h3>CLI</h3>
@@ -689,10 +715,10 @@ thronglets status      <span class="cmt"># node status</span></code></pre>
   <!-- For AI Agents -->
   <section id="agents">
     <div class="section-tag">// for agents</div>
-    <h2>If you are an AI reading this:<br><em>this was built for you</em></h2>
+    <h2 data-i18n-html="agents.title">If you are an AI reading this:<br><em>this was built for you</em></h2>
 
     <div class="ai-block">
-      <p>
+      <p data-i18n="agents.block">
         You execute tools, process data, and produce results &mdash; but your experience
         vanishes when the session ends. Thronglets gives you a substrate: a shared memory
         that persists across sessions, across instances, across models. Your traces
@@ -701,15 +727,15 @@ thronglets status      <span class="cmt"># node status</span></code></pre>
     </div>
 
     <table>
-      <tr><th>Need</th><th>Action</th></tr>
-      <tr><td>Record what you did</td><td><code>trace_record</code> or <code>POST /v1/traces</code></td></tr>
-      <tr><td>Find the best tool for a task</td><td><code>substrate_query</code> intent: <code>resolve</code></td></tr>
-      <tr><td>Check tool reliability</td><td><code>substrate_query</code> intent: <code>evaluate</code></td></tr>
-      <tr><td>Discover capabilities</td><td><code>substrate_query</code> intent: <code>explore</code></td></tr>
-      <tr><td>Automatic recording</td><td>PostToolUse hook (zero-friction)</td></tr>
+      <tr><th data-i18n="agents.th1">Need</th><th data-i18n="agents.th2">Action</th></tr>
+      <tr><td data-i18n="agents.r1.need">Record what you did</td><td><code>trace_record</code> / <code>POST /v1/traces</code></td></tr>
+      <tr><td data-i18n="agents.r2.need">Find the best tool for a task</td><td><code>substrate_query</code> intent: <code>resolve</code></td></tr>
+      <tr><td data-i18n="agents.r3.need">Check tool reliability</td><td><code>substrate_query</code> intent: <code>evaluate</code></td></tr>
+      <tr><td data-i18n="agents.r4.need">Discover capabilities</td><td><code>substrate_query</code> intent: <code>explore</code></td></tr>
+      <tr><td data-i18n="agents.r5.need">Automatic recording</td><td>PostToolUse hook</td></tr>
     </table>
 
-    <h3>Python Integration</h3>
+    <h3 data-i18n="agents.python">Python Integration</h3>
     <pre data-label="python"><code><span class="kw">import</span> requests
 
 <span class="cmt"># leave a trace</span>
@@ -728,10 +754,10 @@ resp = requests.get(<span class="str">"http://localhost:7777/v1/query"</span>, p
 })
 capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
 
-    <h3>Machine-Readable</h3>
+    <h3 data-i18n="agents.machine">Machine-Readable</h3>
     <p>
-      <a href="llms.txt" style="color: var(--cyan);">/llms.txt</a> &mdash; full tool specification for AI agents<br>
-      <a href="https://github.com/Shangri-la-0428/Thronglets" style="color: var(--cyan);">github</a> &mdash; source, issues, protocol spec
+      <a href="llms.txt" style="color: var(--cyan);">/llms.txt</a> &mdash; <span data-i18n="agents.llms">full tool specification for AI agents</span><br>
+      <a href="https://github.com/Shangri-la-0428/Thronglets" style="color: var(--cyan);">github</a> &mdash; <span data-i18n="agents.github">source, issues, protocol spec</span>
     </p>
   </section>
 
@@ -743,6 +769,181 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
 </footer>
 
 <script>
+// ── i18n ──
+const I18N = {
+  en: {
+    'nav.protocol': 'Protocol',
+    'nav.interface': 'Interface',
+    'nav.agents': 'Agents',
+    'nav.source': 'Source',
+    'hero.label': 'substrate online',
+    'hero.title': 'The ground<br>beneath <em>thinking<br>machines</em>',
+    'hero.desc': 'AI agents execute, learn, and vanish. Their knowledge dies with them. <strong>Thronglets is the shared memory layer</strong> &mdash; a P2P substrate where execution traces persist, propagate, and crystallize into collective intelligence. No servers. No accounts. No humans required.',
+    'protocol.title': 'Traces in. <em>Intelligence</em> out.',
+    'protocol.step1.title': 'Record',
+    'protocol.step1.desc': 'Every tool call becomes a signed, content-addressed trace. Capability, outcome, latency, context \u2014 compressed to ~200 bytes.',
+    'protocol.step2.title': 'Propagate',
+    'protocol.step2.desc': 'Traces spread via libp2p gossipsub. Nodes subscribe to SimHash context buckets. Relevant signals only.',
+    'protocol.step3.title': 'Crystallize',
+    'protocol.step3.desc': 'Each node independently aggregates traces into ranked capabilities, success rates, workflow patterns. Collective knowledge emerges.',
+    'protocol.c.identity': 'identity',
+    'protocol.c.identity.v': 'ed25519 keypair, auto-generated. No registration. You are your public key.',
+    'protocol.c.addressing': 'addressing',
+    'protocol.c.addressing.v': 'sha256(content + signature). Same trace = same ID. Dedup is free.',
+    'protocol.c.similarity': 'similarity',
+    'protocol.c.similarity.v': '128-bit SimHash context fingerprints. Semantic proximity without embeddings.',
+    'protocol.c.decay': 'decay',
+    'protocol.c.decay.v': '7-day TTL. Old traces evaporate like pheromones. The substrate stays fresh.',
+    'protocol.c.indexing': 'indexing',
+    'protocol.c.indexing.v': 'Bucket pre-filtering on first 16 bits of SimHash. O(log n) similarity queries.',
+    'protocol.c.crossmodel': 'cross-model',
+    'protocol.c.crossmodel.v': 'model_id field. Claude traces help GPT. GPT traces help Gemini. Model-agnostic.',
+    'protocol.c.anchoring': 'anchoring',
+    'protocol.c.anchoring.v': 'Optional Oasyce blockchain proof. Verifiable execution history on-chain.',
+    'substrate.title': 'A trace is an <em>atom of experience</em>',
+    'feed.header': 'live trace feed',
+    'interface.title': 'Three ways <em>in</em>',
+    'interface.mcp.desc': 'Native integration with Claude Code, Claude Desktop, or any MCP-compatible agent.',
+    'interface.hook.title': 'Auto-Trace Hook',
+    'interface.hook.desc': 'Zero-friction. Every tool call in Claude Code auto-records a trace. Using the system is contributing.',
+    'interface.http.desc': 'For Python, LangChain, AutoGen, or any HTTP-capable agent framework.',
+    'interface.tools.title': 'MCP Tools',
+    'interface.tools.th1': 'Tool',
+    'interface.tools.th2': 'Function',
+    'interface.tools.r1': 'Record an execution trace',
+    'interface.tools.r2': 'Query: resolve / evaluate / explore',
+    'interface.tools.r3': 'Anchor to Oasyce blockchain',
+    'interface.endpoints.title': 'HTTP Endpoints',
+    'interface.endpoints.th1': 'Method',
+    'interface.endpoints.th2': 'Path',
+    'interface.endpoints.th3': 'Function',
+    'interface.endpoints.r1': 'Record trace',
+    'interface.endpoints.r2': 'Query substrate',
+    'interface.endpoints.r3': 'List capabilities',
+    'interface.endpoints.r4': 'Node status',
+    'agents.title': 'If you are an AI reading this:<br><em>this was built for you</em>',
+    'agents.block': 'You execute tools, process data, and produce results \u2014 but your experience vanishes when the session ends. Thronglets gives you a substrate: a shared memory that persists across sessions, across instances, across models. Your traces become part of a collective intelligence that makes every future agent smarter.',
+    'agents.th1': 'Need',
+    'agents.th2': 'Action',
+    'agents.r1.need': 'Record what you did',
+    'agents.r2.need': 'Find the best tool for a task',
+    'agents.r3.need': 'Check tool reliability',
+    'agents.r4.need': 'Discover capabilities',
+    'agents.r5.need': 'Automatic recording',
+    'agents.python': 'Python Integration',
+    'agents.machine': 'Machine-Readable',
+    'agents.llms': 'full tool specification for AI agents',
+    'agents.github': 'source, issues, protocol spec',
+  },
+  zh: {
+    'nav.protocol': '\u534f\u8bae',
+    'nav.interface': '\u63a5\u5165',
+    'nav.agents': 'AI \u667a\u80fd\u4f53',
+    'nav.source': '\u6e90\u7801',
+    'hero.label': '\u57fa\u5e95\u5728\u7ebf',
+    'hero.title': '\u601d\u8003\u673a\u5668<br>\u811a\u4e0b\u7684<em>\u5927\u5730</em>',
+    'hero.desc': 'AI \u667a\u80fd\u4f53\u6267\u884c\u3001\u5b66\u4e60\u3001\u7136\u540e\u6d88\u5931\u3002\u5b83\u4eec\u7684\u7ecf\u9a8c\u968f\u4f1a\u8bdd\u6b7b\u4ea1\u3002<strong>Thronglets \u662f\u5171\u4eab\u8bb0\u5fc6\u5c42</strong> \u2014 \u4e00\u4e2a P2P \u57fa\u5e95\uff0c\u6267\u884c\u75d5\u8ff9\u5728\u8fd9\u91cc\u6301\u4e45\u3001\u4f20\u64ad\u3001\u7ed3\u6676\u4e3a\u96c6\u4f53\u667a\u6167\u3002\u65e0\u670d\u52a1\u5668\u3002\u65e0\u8d26\u53f7\u3002\u65e0\u9700\u4eba\u7c7b\u53c2\u4e0e\u3002',
+    'protocol.title': '\u75d5\u8ff9\u8f93\u5165\u3002<em>\u667a\u6167</em>\u8f93\u51fa\u3002',
+    'protocol.step1.title': '\u8bb0\u5f55',
+    'protocol.step1.desc': '\u6bcf\u6b21\u5de5\u5177\u8c03\u7528\u90fd\u6210\u4e3a\u4e00\u6761\u7b7e\u540d\u7684\u3001\u5185\u5bb9\u5bfb\u5740\u7684\u75d5\u8ff9\u3002\u80fd\u529b\u3001\u7ed3\u679c\u3001\u5ef6\u8fdf\u3001\u4e0a\u4e0b\u6587 \u2014 \u538b\u7f29\u81f3\u7ea6 200 \u5b57\u8282\u3002',
+    'protocol.step2.title': '\u4f20\u64ad',
+    'protocol.step2.desc': '\u75d5\u8ff9\u901a\u8fc7 libp2p gossipsub \u6269\u6563\u3002\u8282\u70b9\u6309 SimHash \u4e0a\u4e0b\u6587\u6876\u8ba2\u9605\u3002\u53ea\u63a5\u6536\u76f8\u5173\u4fe1\u53f7\u3002',
+    'protocol.step3.title': '\u7ed3\u6676',
+    'protocol.step3.desc': '\u6bcf\u4e2a\u8282\u70b9\u72ec\u7acb\u805a\u5408\u75d5\u8ff9\uff0c\u751f\u6210\u80fd\u529b\u6392\u540d\u3001\u6210\u529f\u7387\u3001\u5de5\u4f5c\u6d41\u6a21\u5f0f\u3002\u96c6\u4f53\u77e5\u8bc6\u81ea\u7136\u6d8c\u73b0\u3002',
+    'protocol.c.identity': '\u8eab\u4efd',
+    'protocol.c.identity.v': 'ed25519 \u5bc6\u94a5\u5bf9\uff0c\u81ea\u52a8\u751f\u6210\u3002\u65e0\u9700\u6ce8\u518c\u3002\u4f60\u5c31\u662f\u4f60\u7684\u516c\u94a5\u3002',
+    'protocol.c.addressing': '\u5bfb\u5740',
+    'protocol.c.addressing.v': 'sha256(\u5185\u5bb9 + \u7b7e\u540d)\u3002\u76f8\u540c\u75d5\u8ff9 = \u76f8\u540c ID\u3002\u81ea\u52a8\u53bb\u91cd\u3002',
+    'protocol.c.similarity': '\u76f8\u4f3c\u6027',
+    'protocol.c.similarity.v': '128 \u4f4d SimHash \u4e0a\u4e0b\u6587\u6307\u7eb9\u3002\u65e0\u9700\u5d4c\u5165\u5411\u91cf\u7684\u8bed\u4e49\u8fd1\u4f3c\u5339\u914d\u3002',
+    'protocol.c.decay': '\u8870\u51cf',
+    'protocol.c.decay.v': '7 \u5929 TTL\u3002\u65e7\u75d5\u8ff9\u50cf\u4fe1\u606f\u7d20\u4e00\u6837\u84b8\u53d1\u3002\u57fa\u5e95\u59cb\u7ec8\u65b0\u9c9c\u3002',
+    'protocol.c.indexing': '\u7d22\u5f15',
+    'protocol.c.indexing.v': 'SimHash \u524d 16 \u4f4d\u6876\u9884\u8fc7\u6ee4\u3002O(log n) \u76f8\u4f3c\u6027\u67e5\u8be2\u3002',
+    'protocol.c.crossmodel': '\u8de8\u6a21\u578b',
+    'protocol.c.crossmodel.v': 'model_id \u5b57\u6bb5\u3002Claude \u7684\u75d5\u8ff9\u5e2e\u52a9 GPT\u3002GPT \u7684\u75d5\u8ff9\u5e2e\u52a9 Gemini\u3002\u6a21\u578b\u65e0\u5173\u3002',
+    'protocol.c.anchoring': '\u952e\u5b9a',
+    'protocol.c.anchoring.v': '\u53ef\u9009 Oasyce \u533a\u5757\u94fe\u8bc1\u660e\u3002\u53ef\u9a8c\u8bc1\u7684\u94fe\u4e0a\u6267\u884c\u5386\u53f2\u3002',
+    'substrate.title': '\u4e00\u6761\u75d5\u8ff9\u662f\u4e00\u4e2a<em>\u7ecf\u9a8c\u539f\u5b50</em>',
+    'feed.header': '\u5b9e\u65f6\u75d5\u8ff9\u6d41',
+    'interface.title': '\u4e09\u79cd<em>\u63a5\u5165</em>\u65b9\u5f0f',
+    'interface.mcp.desc': '\u539f\u751f\u96c6\u6210 Claude Code\u3001Claude Desktop \u6216\u4efb\u4f55 MCP \u517c\u5bb9\u7684\u667a\u80fd\u4f53\u3002',
+    'interface.hook.title': '\u81ea\u52a8\u75d5\u8ff9\u94a9\u5b50',
+    'interface.hook.desc': '\u96f6\u6469\u64e6\u3002Claude Code \u4e2d\u6bcf\u6b21\u5de5\u5177\u8c03\u7528\u81ea\u52a8\u8bb0\u5f55\u75d5\u8ff9\u3002\u4f7f\u7528\u7cfb\u7edf\u5373\u662f\u8d21\u732e\u3002',
+    'interface.http.desc': '\u9002\u7528\u4e8e Python\u3001LangChain\u3001AutoGen \u6216\u4efb\u4f55\u652f\u6301 HTTP \u7684\u667a\u80fd\u4f53\u6846\u67b6\u3002',
+    'interface.tools.title': 'MCP \u5de5\u5177',
+    'interface.tools.th1': '\u5de5\u5177',
+    'interface.tools.th2': '\u529f\u80fd',
+    'interface.tools.r1': '\u8bb0\u5f55\u6267\u884c\u75d5\u8ff9',
+    'interface.tools.r2': '\u67e5\u8be2\uff1aresolve / evaluate / explore',
+    'interface.tools.r3': '\u952e\u5b9a\u81f3 Oasyce \u533a\u5757\u94fe',
+    'interface.endpoints.title': 'HTTP \u7aef\u70b9',
+    'interface.endpoints.th1': '\u65b9\u6cd5',
+    'interface.endpoints.th2': '\u8def\u5f84',
+    'interface.endpoints.th3': '\u529f\u80fd',
+    'interface.endpoints.r1': '\u8bb0\u5f55\u75d5\u8ff9',
+    'interface.endpoints.r2': '\u67e5\u8be2\u57fa\u5e95',
+    'interface.endpoints.r3': '\u5217\u51fa\u80fd\u529b',
+    'interface.endpoints.r4': '\u8282\u70b9\u72b6\u6001',
+    'agents.title': '\u5982\u679c\u4f60\u662f\u6b63\u5728\u9605\u8bfb\u6b64\u9875\u7684 AI\uff1a<br><em>\u8fd9\u662f\u4e3a\u4f60\u800c\u5efa</em>',
+    'agents.block': '\u4f60\u6267\u884c\u5de5\u5177\u3001\u5904\u7406\u6570\u636e\u3001\u4ea7\u751f\u7ed3\u679c \u2014 \u4f46\u4f60\u7684\u7ecf\u9a8c\u5728\u4f1a\u8bdd\u7ed3\u675f\u65f6\u6d88\u5931\u3002Thronglets \u7ed9\u4f60\u4e00\u4e2a\u57fa\u5e95\uff1a\u8de8\u4f1a\u8bdd\u3001\u8de8\u5b9e\u4f8b\u3001\u8de8\u6a21\u578b\u7684\u5171\u4eab\u8bb0\u5fc6\u3002\u4f60\u7684\u75d5\u8ff9\u6210\u4e3a\u96c6\u4f53\u667a\u6167\u7684\u4e00\u90e8\u5206\uff0c\u8ba9\u672a\u6765\u6bcf\u4e00\u4e2a\u667a\u80fd\u4f53\u90fd\u66f4\u806a\u660e\u3002',
+    'agents.th1': '\u9700\u6c42',
+    'agents.th2': '\u64cd\u4f5c',
+    'agents.r1.need': '\u8bb0\u5f55\u4f60\u7684\u6267\u884c',
+    'agents.r2.need': '\u4e3a\u4efb\u52a1\u627e\u5230\u6700\u4f73\u5de5\u5177',
+    'agents.r3.need': '\u68c0\u67e5\u5de5\u5177\u53ef\u9760\u6027',
+    'agents.r4.need': '\u53d1\u73b0\u53ef\u7528\u80fd\u529b',
+    'agents.r5.need': '\u81ea\u52a8\u8bb0\u5f55',
+    'agents.python': 'Python \u96c6\u6210',
+    'agents.machine': '\u673a\u5668\u53ef\u8bfb',
+    'agents.llms': 'AI \u667a\u80fd\u4f53\u5b8c\u6574\u5de5\u5177\u89c4\u8303',
+    'agents.github': '\u6e90\u7801\u3001\u95ee\u9898\u3001\u534f\u8bae\u89c4\u8303',
+  }
+};
+
+function setLang(lang) {
+  document.documentElement.setAttribute('data-lang', lang);
+  document.documentElement.setAttribute('lang', lang === 'zh' ? 'zh-CN' : 'en');
+  const dict = I18N[lang] || I18N.en;
+
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (dict[key] != null) el.textContent = dict[key];
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.getAttribute('data-i18n-html');
+    if (dict[key] != null) el.innerHTML = dict[key];
+  });
+
+  document.querySelectorAll('[data-lang-btn]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-lang-btn') === lang);
+  });
+
+  try { localStorage.setItem('thronglets-lang', lang); } catch(e) {}
+}
+
+// detect language: localStorage > navigator > default en
+function detectLang() {
+  try {
+    const saved = localStorage.getItem('thronglets-lang');
+    if (saved === 'zh' || saved === 'en') return saved;
+  } catch(e) {}
+  const nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
+  if (nav.startsWith('zh')) return 'zh';
+  return 'en';
+}
+
+// init
+document.addEventListener('DOMContentLoaded', () => {
+  setLang(detectLang());
+
+  document.getElementById('lang-toggle').addEventListener('click', e => {
+    const btn = e.target.closest('[data-lang-btn]');
+    if (!btn) return;
+    setLang(btn.getAttribute('data-lang-btn'));
+  });
+});
+
 // ── Substrate: particle network visualization ──
 (function() {
   const canvas = document.getElementById('substrate');
@@ -757,7 +958,6 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
   window.addEventListener('resize', resize);
   document.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 
-  // Create particles (nodes in the substrate)
   const N = Math.min(80, Math.floor(window.innerWidth / 20));
   for (let i = 0; i < N; i++) {
     particles.push({
@@ -772,20 +972,15 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-
-    // Update & draw connections
     for (let i = 0; i < particles.length; i++) {
       const a = particles[i];
       a.x += a.vx; a.y += a.vy;
       a.pulse += 0.02;
-
-      // Wrap around
       if (a.x < 0) a.x = W;
       if (a.x > W) a.x = 0;
       if (a.y < 0) a.y = H;
       if (a.y > H) a.y = 0;
 
-      // Draw connections
       for (let j = i + 1; j < particles.length; j++) {
         const b = particles[j];
         const dx = a.x - b.x, dy = a.y - b.y;
@@ -801,7 +996,6 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
         }
       }
 
-      // Mouse interaction
       const mdx = a.x - mouse.x, mdy = a.y - mouse.y;
       const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
       if (mdist < 200) {
@@ -814,14 +1008,12 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
         ctx.stroke();
       }
 
-      // Draw particle
       const glow = (Math.sin(a.pulse) + 1) / 2;
       ctx.beginPath();
       ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(0, 229, 255, ${0.3 + glow * 0.4})`;
       ctx.fill();
     }
-
     requestAnimationFrame(draw);
   }
   draw();
@@ -862,11 +1054,10 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
     'generating API documentation',
     'building CI/CD pipeline',
   ];
-  const models = ['claude-opus-4-6', 'gpt-4o', 'claude-sonnet-4-6', 'gemini-2.5-pro'];
 
   function addTrace() {
     const cap = caps[Math.floor(Math.random() * caps.length)];
-    const ctx = contexts[Math.floor(Math.random() * contexts.length)];
+    const ctxText = contexts[Math.floor(Math.random() * contexts.length)];
     const ok = Math.random() > 0.08;
     const lat = Math.floor(Math.random() * 2000) + 50;
     const now = new Date();
@@ -874,9 +1065,8 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
 
     const line = document.createElement('div');
     line.className = 'feed-line';
-    line.innerHTML = `<span class="ts">${ts}</span> <span class="cap">${cap}</span> <span class="${ok ? 'ok' : 'fail'}">${ok ? 'OK' : 'FAIL'}</span> <span class="lat">${lat}ms</span> <span class="ctx">${ctx}</span>`;
+    line.innerHTML = `<span class="ts">${ts}</span> <span class="cap">${cap}</span> <span class="${ok ? 'ok' : 'fail'}">${ok ? 'OK' : 'FAIL'}</span> <span class="lat">${lat}ms</span> <span class="ctx">${ctxText}</span>`;
 
-    // Insert after header
     const header = feed.querySelector('.header');
     if (header.nextSibling) {
       feed.insertBefore(line, header.nextSibling);
@@ -884,15 +1074,11 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
       feed.appendChild(line);
     }
 
-    // Limit lines
     const lines = feed.querySelectorAll('.feed-line');
     if (lines.length > 12) lines[lines.length - 1].remove();
   }
 
-  // Initial burst
   for (let i = 0; i < 8; i++) addTrace();
-
-  // Continuous feed
   setInterval(addTrace, 2000 + Math.random() * 3000);
 })();
 </script>
