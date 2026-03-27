@@ -94,13 +94,21 @@
       color: var(--void);
     }
 
-    /* ── Canvas background ── */
+    /* ── Canvas backgrounds ── */
     #substrate {
       position: fixed;
       top: 0; left: 0;
       width: 100%; height: 100%;
       z-index: 0;
       pointer-events: none;
+    }
+    #binary-rain {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.12;
     }
 
     /* ── Grid overlay ── */
@@ -670,7 +678,7 @@
         transition-duration: 0.01ms !important;
       }
       .reveal { opacity: 1; transform: none; }
-      .scanline { display: none; }
+      .scanline, #binary-rain { display: none; }
     }
 
     /* ── Responsive ── */
@@ -688,6 +696,7 @@
 <body>
 
 <canvas id="substrate"></canvas>
+<canvas id="binary-rain"></canvas>
 <div class="grid-bg"></div>
 <div class="scanline"></div>
 
@@ -1083,79 +1092,189 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// ── Substrate: particle network visualization ──
+// ── Binary rain (01 world) ──
 (function() {
-  const canvas = document.getElementById('substrate');
-  const ctx = canvas.getContext('2d');
-  let W, H, particles = [], mouse = { x: -1000, y: -1000 };
+  const c = document.getElementById('binary-rain');
+  const ctx = c.getContext('2d');
+  let W, H, cols, drops;
+  const SZ = 14;
 
-  function resize() {
-    W = canvas.width = window.innerWidth;
-    H = canvas.height = window.innerHeight;
+  function init() {
+    W = c.width = window.innerWidth;
+    H = c.height = window.innerHeight;
+    cols = Math.ceil(W / SZ);
+    drops = new Float32Array(cols);
+    for (let i = 0; i < cols; i++) drops[i] = Math.random() * -100;
   }
-  resize();
-  window.addEventListener('resize', resize);
-  document.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-
-  const N = Math.min(80, Math.floor(window.innerWidth / 20));
-  for (let i = 0; i < N; i++) {
-    particles.push({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      vx: (Math.random() - 0.5) * 0.3,
-      vy: (Math.random() - 0.5) * 0.3,
-      r: Math.random() * 1.5 + 0.5,
-      pulse: Math.random() * Math.PI * 2,
-    });
-  }
+  init();
+  window.addEventListener('resize', init);
 
   function draw() {
-    ctx.clearRect(0, 0, W, H);
-    for (let i = 0; i < particles.length; i++) {
-      const a = particles[i];
-      a.x += a.vx; a.y += a.vy;
-      a.pulse += 0.02;
-      if (a.x < 0) a.x = W;
-      if (a.x > W) a.x = 0;
-      if (a.y < 0) a.y = H;
-      if (a.y > H) a.y = 0;
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.font = SZ + 'px JetBrains Mono, monospace';
 
-      for (let j = i + 1; j < particles.length; j++) {
-        const b = particles[j];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 150) {
-          const alpha = (1 - dist / 150) * 0.15;
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.strokeStyle = `rgba(0, 229, 255, ${alpha})`;
-          ctx.lineWidth = 0.5;
-          ctx.stroke();
-        }
+    for (let i = 0; i < cols; i++) {
+      const ch = Math.random() > 0.5 ? '1' : '0';
+      const y = drops[i] * SZ;
+
+      // head glow
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.9)';
+      ctx.fillText(ch, i * SZ, y);
+
+      // trail
+      if (y > SZ) {
+        const trailCh = Math.random() > 0.5 ? '1' : '0';
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.15)';
+        ctx.fillText(trailCh, i * SZ, y - SZ);
       }
 
-      const mdx = a.x - mouse.x, mdy = a.y - mouse.y;
-      const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
-      if (mdist < 200) {
-        const alpha = (1 - mdist / 200) * 0.3;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(mouse.x, mouse.y);
-        ctx.strokeStyle = `rgba(0, 229, 255, ${alpha})`;
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      }
+      drops[i] += 0.3 + Math.random() * 0.2;
 
-      const glow = (Math.sin(a.pulse) + 1) / 2;
-      ctx.beginPath();
-      ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(0, 229, 255, ${0.3 + glow * 0.4})`;
-      ctx.fill();
+      if (y > H + 100 && Math.random() > 0.98) {
+        drops[i] = Math.random() * -20;
+      }
     }
     requestAnimationFrame(draw);
   }
   draw();
+})();
+
+// ── Substrate: WebGL neural network ──
+(function() {
+  const canvas = document.getElementById('substrate');
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  if (!gl) return; // fallback: binary rain alone is fine
+
+  let W, H, mouse = [0.5, 0.5], time = 0;
+
+  function resize() {
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    gl.viewport(0, 0, W, H);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+  document.addEventListener('mousemove', e => {
+    mouse[0] = e.clientX / W;
+    mouse[1] = 1.0 - e.clientY / H;
+  });
+
+  const vs = `attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}`;
+  const fs = `
+    precision highp float;
+    uniform float t;
+    uniform vec2 r;
+    uniform vec2 m;
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(
+        mix(hash(i), hash(i + vec2(1, 0)), f.x),
+        mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x),
+        f.y
+      );
+    }
+
+    float fbm(vec2 p) {
+      float v = 0.0, a = 0.5;
+      for (int i = 0; i < 4; i++) {
+        v += a * noise(p);
+        p *= 2.0;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / r;
+      vec2 p = uv * 2.0 - 1.0;
+      p.x *= r.x / r.y;
+
+      // flowing noise field
+      float n1 = fbm(p * 3.0 + t * 0.1);
+      float n2 = fbm(p * 5.0 - t * 0.15 + n1);
+      float n3 = fbm(p * 2.0 + vec2(n2, n1) + t * 0.05);
+
+      // network lines - interference pattern
+      float lines = sin(p.x * 40.0 + n1 * 8.0) * sin(p.y * 40.0 + n2 * 8.0);
+      lines = smoothstep(0.85, 1.0, abs(lines));
+
+      // pulse nodes
+      float nodes = 0.0;
+      for (int i = 0; i < 8; i++) {
+        vec2 np = vec2(
+          sin(float(i) * 1.7 + t * 0.3) * 0.8,
+          cos(float(i) * 2.3 + t * 0.2) * 0.6
+        );
+        float d = length(p - np);
+        float pulse = sin(t * 2.0 + float(i)) * 0.5 + 0.5;
+        nodes += (0.003 + 0.002 * pulse) / (d * d + 0.01);
+      }
+
+      // mouse interaction
+      vec2 mp = m * 2.0 - 1.0;
+      mp.x *= r.x / r.y;
+      float md = length(p - mp);
+      float mouseGlow = 0.02 / (md * md + 0.02);
+
+      // compose
+      float v = n3 * 0.08 + lines * 0.06 + nodes * 0.015 + mouseGlow * 0.03;
+
+      // color: cyan base, shift toward purple in dense areas
+      vec3 col = mix(
+        vec3(0.0, 0.9, 1.0),
+        vec3(0.53, 0.33, 1.0),
+        n2 * 0.5
+      ) * v;
+
+      // vignette
+      float vig = 1.0 - length(uv - 0.5) * 0.8;
+      col *= vig;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(src, type) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(vs, gl.VERTEX_SHADER));
+  gl.attachShader(prog, compile(fs, gl.FRAGMENT_SHADER));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  const uT = gl.getUniformLocation(prog, 't');
+  const uR = gl.getUniformLocation(prog, 'r');
+  const uM = gl.getUniformLocation(prog, 'm');
+
+  function frame() {
+    time += 0.016;
+    gl.uniform1f(uT, time);
+    gl.uniform2f(uR, W, H);
+    gl.uniform2f(uM, mouse[0], mouse[1]);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(frame);
+  }
+  frame();
 })();
 
 // ── Hex stream decoration ──
