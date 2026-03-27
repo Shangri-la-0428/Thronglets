@@ -509,9 +509,13 @@ async fn main() {
             let outcome_str = if is_error { "failed" } else { "succeeded" };
 
             // Track file interactions
-            if let Some(file_path) = workspace::extract_file_path(tool_name, &payload["tool_input"]) {
-                ws.record_file(file_path, tool_name, context_text.clone(), outcome_str);
+            let file_path = workspace::extract_file_path(tool_name, &payload["tool_input"]);
+            if let Some(ref fp) = file_path {
+                ws.record_file(fp.clone(), tool_name, context_text.clone(), outcome_str);
             }
+
+            // Track tool call sequence (for decision context)
+            ws.record_action(tool_name, file_path);
 
             // Track errors
             if is_error {
@@ -637,6 +641,11 @@ async fn main() {
                         hints.push(git_hints);
                     }
                 }
+            }
+
+            // 6. Decision context: co-edit patterns, preparation reads
+            if let Some(decision_hints) = ws.decision_hints(tool_name, current_file.as_deref()) {
+                hints.push(decision_hints);
             }
 
             // Output to stdout (appears in agent's context)

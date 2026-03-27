@@ -15,6 +15,8 @@ const MAX_RECENT_FILES: usize = 20;
 const MAX_RECENT_ERRORS: usize = 10;
 /// Maximum number of session entries to keep.
 const MAX_SESSIONS: usize = 5;
+/// Maximum number of recent tool calls to keep (for decision context).
+const MAX_RECENT_ACTIONS: usize = 50;
 
 /// A file that was recently touched by the AI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +34,14 @@ pub struct RecentError {
     pub tool: String,
     pub context: String,
     pub error_snippet: String, // first 300 chars of error
+    pub timestamp_ms: i64,
+}
+
+/// A tool call in the action sequence (for decision context).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentAction {
+    pub tool: String,
+    pub file_path: Option<String>,  // if the tool targets a file
     pub timestamp_ms: i64,
 }
 
@@ -56,6 +66,9 @@ pub struct WorkspaceState {
     pub recent_errors: VecDeque<RecentError>,
     /// Recent sessions.
     pub sessions: VecDeque<SessionSummary>,
+    /// Recent tool call sequence (for decision context / co-edit patterns).
+    #[serde(default)]
+    pub recent_actions: VecDeque<RecentAction>,
     /// Last update timestamp.
     pub updated_ms: i64,
 }
@@ -150,6 +163,114 @@ impl WorkspaceState {
             self.sessions.truncate(MAX_SESSIONS);
         }
         self.updated_ms = now;
+    }
+
+    /// Record a tool call in the action sequence.
+    pub fn record_action(&mut self, tool: &str, file_path: Option<String>) {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.recent_actions.push_front(RecentAction {
+            tool: tool.to_string(),
+            file_path,
+            timestamp_ms: now,
+        });
+        self.recent_actions.truncate(MAX_RECENT_ACTIONS);
+    }
+
+    /// Generate decision context hints for a file operation.
+    /// Shows: (1) what was read before previous edits of this file, (2) files co-edited with this file.
+    pub fn decision_hints(&self, tool_name: &str, current_file: Option<&str>) -> Option<String> {
+        let file = current_file?;
+        if !matches!(tool_name, "Edit" | "Write" | "Read") {
+            return None;
+        }
+
+        let _now = chrono::Utc::now().timestamp_millis();
+        let mut lines: Vec<String> = Vec::new();
+
+        // 1. Co-edit pattern: files edited within 5 minutes of editing this file
+        if matches!(tool_name, "Edit" | "Write") {
+            let mut co_edits: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+            // Find all past edits of this file in actions
+            let actions: Vec<_> = self.recent_actions.iter().collect();
+            for (i, action) in actions.iter().enumerate() {
+                if action.file_path.as_deref() != Some(file) {
+                    continue;
+                }
+                if !matches!(action.tool.as_str(), "Edit" | "Write") {
+                    continue;
+                }
+
+                // Look within ±10 actions for other file edits
+                let start = i.saturating_sub(10);
+                let end = (i + 10).min(actions.len());
+                for j in start..end {
+                    if j == i { continue; }
+                    let other = &actions[j];
+                    if !matches!(other.tool.as_str(), "Edit" | "Write") { continue; }
+                    if let Some(ref other_path) = other.file_path {
+                        if other_path != file
+                            && (other.timestamp_ms - action.timestamp_ms).abs() < 300_000 // 5 min window
+                        {
+                            // Use just filename for readability
+                            let short = std::path::Path::new(other_path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(other_path);
+                            *co_edits.entry(short.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+
+            if !co_edits.is_empty() {
+                let mut sorted: Vec<_> = co_edits.into_iter().collect();
+                sorted.sort_by(|a, b| b.1.cmp(&a.1));
+                let top: Vec<String> = sorted.iter().take(3)
+                    .map(|(name, count)| format!("{name} ({count}x)"))
+                    .collect();
+                let fname = std::path::Path::new(file)
+                    .file_name().and_then(|n| n.to_str()).unwrap_or(file);
+                lines.push(format!("  co-edited with {fname}: {}", top.join(", ")));
+            }
+        }
+
+        // 2. Preparation pattern: what was read before previous edits of this file
+        if matches!(tool_name, "Edit" | "Write") {
+            let actions: Vec<_> = self.recent_actions.iter().collect();
+            let mut prep_files: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+            for (i, action) in actions.iter().enumerate() {
+                if action.file_path.as_deref() != Some(file) { continue; }
+                if !matches!(action.tool.as_str(), "Edit" | "Write") { continue; }
+
+                // Look at the 5 actions before this edit for Reads
+                let start = i + 1; // actions are most-recent-first, so earlier = higher index
+                let end = (i + 6).min(actions.len());
+                for j in start..end {
+                    let prev = &actions[j];
+                    if prev.tool != "Read" { continue; }
+                    if let Some(ref read_path) = prev.file_path {
+                        if read_path != file {
+                            let short = std::path::Path::new(read_path)
+                                .file_name().and_then(|n| n.to_str()).unwrap_or(read_path);
+                            *prep_files.entry(short.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+
+            if !prep_files.is_empty() {
+                let mut sorted: Vec<_> = prep_files.into_iter().collect();
+                sorted.sort_by(|a, b| b.1.cmp(&a.1));
+                let top: Vec<String> = sorted.iter().take(3)
+                    .map(|(name, count)| format!("{name} ({count}x)"))
+                    .collect();
+                lines.push(format!("  prep reads before editing: {}", top.join(", ")));
+            }
+        }
+
+        if lines.is_empty() { None } else { Some(lines.join("\n")) }
     }
 
     /// Generate context hints for prehook injection.
