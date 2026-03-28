@@ -1,3 +1,4 @@
+use crate::contracts::PREHOOK_MAX_HINTS;
 use std::collections::BTreeMap;
 
 const PREHOOK_PROFILE_PREFIX: &str = "[thronglets:prehook] ";
@@ -23,6 +24,8 @@ pub struct PrehookProfileSummary {
     pub avg_stdout_bytes: f64,
     pub p95_stdout_bytes: usize,
     pub avg_collective_queries_used: f64,
+    pub emitted_counts: BTreeMap<usize, usize>,
+    pub saturated_samples: usize,
     pub tools: BTreeMap<String, usize>,
     pub output_modes: BTreeMap<String, usize>,
     pub decision_paths: BTreeMap<String, usize>,
@@ -109,6 +112,7 @@ pub fn summarize_prehook_profiles(input: &str) -> Option<PrehookProfileSummary> 
 
     let mut tools = BTreeMap::new();
     let mut output_modes = BTreeMap::new();
+    let mut emitted_counts = BTreeMap::new();
     let mut decision_paths = BTreeMap::new();
     let mut evidence_scopes = BTreeMap::new();
     let mut file_guidance_gates = BTreeMap::new();
@@ -118,6 +122,7 @@ pub fn summarize_prehook_profiles(input: &str) -> Option<PrehookProfileSummary> 
     for sample in samples {
         let decision_path = sample.decision_path.clone();
         *tools.entry(sample.tool).or_insert(0) += 1;
+        *emitted_counts.entry(sample.emitted).or_insert(0) += 1;
         *output_modes.entry(sample.output_mode).or_insert(0) += 1;
         *decision_paths.entry(decision_path.clone()).or_insert(0) += 1;
         *evidence_scopes.entry(sample.evidence_scope).or_insert(0) += 1;
@@ -144,6 +149,8 @@ pub fn summarize_prehook_profiles(input: &str) -> Option<PrehookProfileSummary> 
         avg_stdout_bytes: stdout_bytes_sum as f64 / sample_count as f64,
         p95_stdout_bytes: percentile_95(&stdout_byte_values),
         avg_collective_queries_used: collective_sum as f64 / sample_count as f64,
+        saturated_samples: *emitted_counts.get(&PREHOOK_MAX_HINTS).unwrap_or(&0),
+        emitted_counts,
         tools,
         output_modes,
         decision_paths,
@@ -165,6 +172,13 @@ impl PrehookProfileSummary {
             format!(
                 "avg collective_queries_used: {:.2}",
                 self.avg_collective_queries_used
+            ),
+            format!("emitted lines: {}", render_emitted_counts(&self.emitted_counts)),
+            format!(
+                "max-hint saturation: {:.1}% ({}/{})",
+                self.saturated_samples as f64 / self.samples as f64 * 100.0,
+                self.saturated_samples,
+                self.samples,
             ),
             format!("tools: {}", render_counts(&self.tools)),
             format!("output modes: {}", render_counts(&self.output_modes)),
@@ -218,6 +232,14 @@ fn render_counts(counts: &BTreeMap<String, usize>) -> String {
     entries
         .into_iter()
         .map(|(label, count)| format!("{label}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_emitted_counts(counts: &BTreeMap<usize, usize>) -> String {
+    counts
+        .iter()
+        .map(|(emitted, count)| format!("{emitted}={count}"))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -314,6 +336,8 @@ mod tests {
         assert_eq!(summary.samples, 3);
         assert_eq!(summary.p95_total_us, 300);
         assert_eq!(summary.p95_stdout_bytes, 88);
+        assert_eq!(summary.emitted_counts[&2], 1);
+        assert_eq!(summary.saturated_samples, 0);
         assert_eq!(summary.tools["Edit"], 2);
         assert_eq!(summary.output_modes["silent"], 1);
         assert_eq!(summary.decision_paths["repair"], 1);
