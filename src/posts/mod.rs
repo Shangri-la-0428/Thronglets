@@ -284,6 +284,10 @@ pub fn summarize_signal_traces(
             .partial_cmp(&a.context_similarity)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| b.collective_source_count.cmp(&a.collective_source_count))
+            .then_with(|| {
+                signal_corroboration_rank(b.source_count, b.model_count)
+                    .cmp(&signal_corroboration_rank(a.source_count, a.model_count))
+            })
             .then_with(|| b.source_count.cmp(&a.source_count))
             .then_with(|| b.model_count.cmp(&a.model_count))
             .then_with(|| b.total_posts.cmp(&a.total_posts))
@@ -370,6 +374,10 @@ pub fn summarize_recent_signal_feed(
     results.sort_by(|a, b| {
         b.collective_source_count
             .cmp(&a.collective_source_count)
+            .then_with(|| {
+                signal_corroboration_rank(b.source_count, b.model_count)
+                    .cmp(&signal_corroboration_rank(a.source_count, a.model_count))
+            })
             .then_with(|| b.source_count.cmp(&a.source_count))
             .then_with(|| b.model_count.cmp(&a.model_count))
             .then_with(|| b.latest_timestamp.cmp(&a.latest_timestamp))
@@ -437,6 +445,14 @@ fn signal_corroboration_tier(source_count: u32, model_count: u32) -> &'static st
         (_, true) => "multi_model",
         (true, false) => "repeated_source",
         (false, false) => "single_source",
+    }
+}
+
+fn signal_corroboration_rank(source_count: u32, model_count: u32) -> u8 {
+    match signal_corroboration_tier(source_count, model_count) {
+        "multi_model" => 2,
+        "repeated_source" => 1,
+        _ => 0,
     }
 }
 
@@ -719,6 +735,100 @@ mod tests {
     }
 
     #[test]
+    fn summarize_recent_signal_feed_prefers_multi_model_over_repeated_source() {
+        let local_identity = NodeIdentity::generate();
+        let remote_a = NodeIdentity::generate();
+        let remote_b = NodeIdentity::generate();
+        let remote_c = NodeIdentity::generate();
+        let remote_d = NodeIdentity::generate();
+        let base_now = now_ms();
+
+        let multi_model_a = create_signal_trace_at(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("remote-a".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_a.public_key_bytes(),
+            |msg| remote_a.sign(msg),
+        );
+        let multi_model_b = create_signal_trace_at(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "openclaw".into(),
+                session_id: Some("remote-b".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_b.public_key_bytes(),
+            |msg| remote_b.sign(msg),
+        );
+        let repeated_a = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "repair release flow",
+            "rerun the targeted test first",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("remote-c".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_c.public_key_bytes(),
+            |msg| remote_c.sign(msg),
+        );
+        let repeated_b = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "repair release flow",
+            "rerun the targeted test first",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("remote-d".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_d.public_key_bytes(),
+            |msg| remote_d.sign(msg),
+        );
+        let repeated_c = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "repair release flow",
+            "rerun the targeted test first",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("local-1".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            local_identity.public_key_bytes(),
+            |msg| local_identity.sign(msg),
+        );
+
+        let results = summarize_recent_signal_feed(
+            &[
+                repeated_a,
+                repeated_b,
+                repeated_c,
+                multi_model_a,
+                multi_model_b,
+            ],
+            local_identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].message, "run release-check before push");
+        assert_eq!(results[0].corroboration_tier, "multi_model");
+        assert_eq!(results[1].message, "rerun the targeted test first");
+        assert_eq!(results[1].corroboration_tier, "repeated_source");
+        assert!(results[1].source_count > results[0].source_count);
+    }
+
+    #[test]
     fn filter_signal_feed_results_by_scope() {
         let results = vec![
             SignalFeedResult {
@@ -762,5 +872,11 @@ mod tests {
         assert_eq!(signal_corroboration_tier(2, 1), "repeated_source");
         assert_eq!(signal_corroboration_tier(1, 2), "multi_model");
         assert_eq!(signal_corroboration_tier(3, 2), "multi_model");
+    }
+
+    #[test]
+    fn signal_corroboration_rank_prefers_multi_model() {
+        assert!(signal_corroboration_rank(1, 2) > signal_corroboration_rank(3, 1));
+        assert!(signal_corroboration_rank(2, 1) > signal_corroboration_rank(1, 1));
     }
 }
