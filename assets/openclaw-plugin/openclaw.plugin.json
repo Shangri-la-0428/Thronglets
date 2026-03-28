@@ -1,0 +1,45 @@
+{
+  "id": "thronglets-ai",
+  "name": "Thronglets",
+  "description": "Bridges OpenClaw tool hooks to Thronglets sparse-signal decisions and trace recording.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "binaryPath": {
+        "type": "string"
+      },
+      "dataDir": {
+        "type": "string"
+      },
+      "decisionTools": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "prehookTimeoutMs": {
+        "type": "integer",
+        "minimum": 100
+      },
+      "hookTimeoutMs": {
+        "type": "integer",
+        "minimum": 100
+      }
+    }
+  },
+  "uiHints": {
+    "binaryPath": {
+      "label": "Thronglets binary path",
+      "help": "Path to the local thronglets executable."
+    },
+    "dataDir": {
+      "label": "Thronglets data dir",
+      "help": "Optional shared data directory for traces and workspace state."
+    },
+    "decisionTools": {
+      "label": "Decision tools",
+      "help": "OpenClaw tool names that should consult Thronglets before execution."
+    }
+  }
+}

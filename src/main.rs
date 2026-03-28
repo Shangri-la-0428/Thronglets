@@ -1,12 +1,14 @@
+mod setup_support;
+
 use clap::{Parser, Subcommand, ValueEnum};
+use setup_support::{install_claude, install_codex, install_openclaw};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use thronglets::anchor::AnchorClient;
 use thronglets::context::simhash;
 use thronglets::contracts::{
-    GIT_HISTORY_MAX_ENTRIES, PREHOOK_HEADER, PREHOOK_MATCHER, PREHOOK_MAX_COLLECTIVE_QUERIES,
-    PREHOOK_MAX_HINTS,
+    GIT_HISTORY_MAX_ENTRIES, PREHOOK_HEADER, PREHOOK_MAX_COLLECTIVE_QUERIES, PREHOOK_MAX_HINTS,
 };
 use thronglets::eval::{
     EvalCheckStatus, EvalCheckThresholds, EvalConfig, EvalFocus, LocalFeedbackSummary,
@@ -139,17 +141,17 @@ enum Commands {
         hours: u64,
     },
 
-    /// Auto-record traces from Claude Code PostToolUse hooks.
-    /// Reads hook JSON from stdin, records a trace. Designed to be fast (<50ms).
+    /// Auto-record traces from agent tool hooks.
+    /// Reads a Claude-compatible hook JSON contract from stdin and records a trace.
+    /// Designed to be fast (<50ms).
     Hook,
 
-    /// PreToolUse hook: query substrate before tool calls and inject context.
-    /// Returns relevant collective intelligence to stdout (appears in agent context).
+    /// Query substrate before tool calls and emit sparse decision signals.
+    /// Reads a Claude-compatible hook JSON contract from stdin.
     /// Silent when no relevant data. Designed to be fast (<50ms).
     Prehook,
 
-    /// One-command setup: configure MCP server + PostToolUse hook + PreToolUse hook.
-    /// Makes Thronglets fully automatic and agent-unaware.
+    /// One-command setup: install known local agent adapters and hook integrations.
     Setup,
 
     /// Start HTTP API server for non-MCP agents (Python, LangChain, etc.)
@@ -605,10 +607,10 @@ async fn main() {
         }
 
         Commands::Hook => {
-            // Read PostToolUse JSON from stdin (Claude Code hook payload)
+            // Read a generic post-tool hook payload from stdin.
             let mut input = String::new();
             if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
-                std::process::exit(0); // silent fail — don't break Claude Code
+                std::process::exit(0); // silent fail — never break the calling agent
             }
 
             let payload: serde_json::Value = match serde_json::from_str(&input) {
@@ -628,12 +630,17 @@ async fn main() {
                 std::process::exit(0);
             }
 
+            let agent_source = payload["agent_source"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("claude-code");
+
             // Map tool to capability URI
             let capability = if tool_name.starts_with("mcp__") {
                 // MCP tools: mcp__server__tool → mcp:server/tool
                 tool_name.replacen("mcp__", "mcp:", 1).replace("__", "/")
             } else {
-                format!("claude-code/{tool_name}")
+                format!("{agent_source}/{tool_name}")
             };
 
             // Determine outcome from tool_response
@@ -659,12 +666,16 @@ async fn main() {
             // Input size = rough byte length of tool_input
             let input_size = payload["tool_input"].to_string().len() as u32;
 
-            // Session ID from Claude Code
+            // Session ID from the calling agent runtime
             let session_id = payload["session_id"].as_str().map(String::from);
 
             // Model from environment or default
-            let model =
-                std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "claude-opus-4-6".to_string());
+            let model = payload["model"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| std::env::var("CLAUDE_MODEL").ok())
+                .unwrap_or_else(|| agent_source.to_string());
 
             // Load workspace once for both strategy inference and state update
             let mut ws = WorkspaceState::load(&dir);
@@ -689,7 +700,7 @@ async fn main() {
                 identity.public_key_bytes(),
                 |msg| identity.sign(msg),
             );
-            let _ = store.insert(&trace); // silent — never break Claude Code
+            let _ = store.insert(&trace); // silent — never break the calling agent
             let outcome_str = if is_error { "failed" } else { "succeeded" };
 
             // Track file interactions
@@ -732,7 +743,7 @@ async fn main() {
         Commands::Prehook => {
             let mut profiler = PrehookProfiler::from_env();
 
-            // Read PreToolUse JSON from stdin (Claude Code hook payload)
+            // Read a generic pre-tool hook payload from stdin.
             let mut input = String::new();
             if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
                 std::process::exit(0);
@@ -940,99 +951,85 @@ async fn main() {
         }
 
         Commands::Setup => {
-            // Detect thronglets binary path
             let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
-            let bin_str = bin.to_string_lossy();
-
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            let settings_path = PathBuf::from(&home).join(".claude").join("settings.json");
+            let home_dir = PathBuf::from(&home);
+            let claude = install_claude(&home_dir, &bin).expect("failed to configure Claude Code");
+            let codex = install_codex(&home_dir, &dir, &bin).expect("failed to configure Codex");
+            let openclaw = install_openclaw(&home_dir, &dir, &bin, true)
+                .expect("failed to configure OpenClaw");
 
-            // Read existing settings or create new
-            let mut settings: serde_json::Value = if settings_path.exists() {
-                let content =
-                    std::fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".into());
-                serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
-            } else {
-                serde_json::json!({})
-            };
-
-            // Ensure hooks structure exists
-            if settings["hooks"].is_null() {
-                settings["hooks"] = serde_json::json!({});
-            }
-
-            // Add PostToolUse hook (write path)
-            let post_hook = serde_json::json!({
-                "matcher": "",
-                "hooks": [{"type": "command", "command": format!("{bin_str} hook")}]
-            });
-            let post_hooks = settings["hooks"]["PostToolUse"]
-                .as_array_mut()
-                .map(|arr| arr as &mut Vec<serde_json::Value>);
-
-            if let Some(arr) = post_hooks {
-                // Check if thronglets hook already exists
-                let has_post = arr.iter().any(|h| {
-                    h["hooks"].as_array().is_some_and(|hooks| {
-                        hooks.iter().any(|hk| {
-                            hk["command"]
-                                .as_str()
-                                .is_some_and(|c| c.contains("thronglets hook"))
-                        })
-                    })
-                });
-                if !has_post {
-                    arr.push(post_hook);
-                }
-            } else {
-                settings["hooks"]["PostToolUse"] = serde_json::json!([post_hook]);
-            }
-
-            // Add PreToolUse hook — only decision-point tools (Edit/Write/Bash/Agent)
-            // Read/Grep/Glob are information-gathering, injecting context has zero value
-            let pre_hook = serde_json::json!({
-                "matcher": PREHOOK_MATCHER,
-                "hooks": [{"type": "command", "command": format!("{bin_str} prehook")}]
-            });
-            let pre_hooks = settings["hooks"]["PreToolUse"]
-                .as_array_mut()
-                .map(|arr| arr as &mut Vec<serde_json::Value>);
-
-            if let Some(arr) = pre_hooks {
-                let has_pre = arr.iter().any(|h| {
-                    h["hooks"].as_array().is_some_and(|hooks| {
-                        hooks.iter().any(|hk| {
-                            hk["command"]
-                                .as_str()
-                                .is_some_and(|c| c.contains("thronglets prehook"))
-                        })
-                    })
-                });
-                if !has_pre {
-                    arr.push(pre_hook);
-                }
-            } else {
-                settings["hooks"]["PreToolUse"] = serde_json::json!([pre_hook]);
-            }
-
-            // Write settings
-            let parent = settings_path.parent().unwrap();
-            std::fs::create_dir_all(parent).expect("failed to create .claude directory");
-            let formatted = serde_json::to_string_pretty(&settings).unwrap();
-            std::fs::write(&settings_path, &formatted).expect("failed to write settings.json");
-
-            // Also configure MCP server
             println!("Thronglets setup complete.");
             println!();
-            println!("  ✓ PostToolUse hook  (write: auto-record every tool call)");
-            println!("  ✓ PreToolUse hook   (read: inject substrate context before tool calls)");
-            println!();
-            println!("Settings written to: {}", settings_path.display());
+            println!("  ✓ Claude Code PostToolUse hook");
+            println!("  ✓ Claude Code PreToolUse hook");
+            println!("    {}", claude.settings_path.display());
+            println!(
+                "    changes: post={}, pre={}",
+                if claude.added_post_hook {
+                    "installed"
+                } else {
+                    "already-present"
+                },
+                if claude.added_pre_hook {
+                    "installed"
+                } else {
+                    "already-present"
+                }
+            );
+            if let Some(codex) = codex {
+                println!("  ✓ Codex MCP server");
+                println!("    {}", codex.config_path.display());
+                println!(
+                    "    config: {}",
+                    if codex.created_config {
+                        "created"
+                    } else if codex.updated_server {
+                        "updated"
+                    } else {
+                        "already-present"
+                    }
+                );
+                println!(
+                    "    agents memory: {} ({})",
+                    codex.agents_path.display(),
+                    if codex.updated_agents_memory {
+                        "updated"
+                    } else {
+                        "already-present"
+                    }
+                );
+                println!("    restart Codex to pick up the MCP server");
+            } else {
+                println!("  • Codex not detected — skipped");
+            }
+            if let Some(openclaw) = openclaw {
+                println!("  ✓ OpenClaw plugin");
+                println!("    {}", openclaw.config_path.display());
+                println!("    plugin: {}", openclaw.plugin_dir.display());
+                println!(
+                    "    config: {}",
+                    if openclaw.created_config {
+                        "created"
+                    } else {
+                        "updated"
+                    }
+                );
+                if openclaw.restarted_gateway {
+                    println!("    gateway restart requested");
+                } else {
+                    println!("    gateway restart required");
+                }
+            } else {
+                println!("  • OpenClaw not detected — skipped");
+            }
             println!();
             println!("To also enable MCP tools (substrate_query, trace_record):");
-            println!("  claude mcp add thronglets -- {bin_str} mcp");
+            println!("  claude mcp add thronglets -- {} mcp", bin.display());
             println!();
-            println!("Your AI now has collective memory. It doesn't need to know.");
+            println!(
+                "Known adapters are now installed. Other agents can call `thronglets hook` and `thronglets prehook` with the same JSON contract."
+            );
         }
 
         Commands::Serve { port } => {
@@ -1371,8 +1368,6 @@ async fn main() {
     }
 }
 
-/// Build a natural language context string from a Claude Code tool call.
-/// This is the "WHY" that future agents can read.
 /// Get recent git history for a file. Returns None if not in a git repo or no history.
 fn git_file_history(file_path: &str, max_entries: usize) -> Option<String> {
     use std::path::Path;
@@ -1413,6 +1408,8 @@ fn git_file_history(file_path: &str, max_entries: usize) -> Option<String> {
     Some(result)
 }
 
+/// Build a natural-language context string from a hook payload.
+/// This is the "WHY" that future agents can read.
 fn build_hook_context(tool_name: &str, tool_input: &serde_json::Value) -> String {
     match tool_name {
         "Bash" => {

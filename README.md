@@ -41,9 +41,47 @@ cargo install thronglets
 thronglets setup
 ```
 
-完成。两个 Hook 自动安装：
-- **PostToolUse** 将每次工具调用记录为签名痕迹 + 更新工作区状态
-- **PreToolUse** 在关键决策点注入稀疏决策信号
+完成。`thronglets setup` 会自动安装本机已知适配器：
+- **Claude Code**：自动写入 `PostToolUse / PreToolUse` hooks
+- **Codex**：自动注册 `thronglets` MCP server 到 `~/.codex/config.toml`，并写入一段受管 `AGENTS` 记忆
+- **OpenClaw**：自动安装本地 path plugin，并写入 `~/.openclaw/openclaw.json`
+
+底层接入面只有一个统一 contract：
+- `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号
+- `thronglets hook`：任意 agent 在工具执行后喂入 JSON，记录 trace
+
+也就是说，已知 AI 走原生适配器，未知 AI 走同一个 `hook/prehook` contract，不需要再发明第二套协议。
+
+最小接入 JSON 也固定了。`prehook` 读这一类输入：
+
+```json
+{
+  "agent_source": "my-agent",
+  "model": "my-model",
+  "session_id": "session-123",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "src/main.rs"
+  }
+}
+```
+
+`hook` 用同一份输入，再补一个 `tool_response`：
+
+```json
+{
+  "agent_source": "my-agent",
+  "model": "my-model",
+  "session_id": "session-123",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "src/main.rs"
+  },
+  "tool_response": {
+    "success": true
+  }
+}
+```
 
 开发调试：
 

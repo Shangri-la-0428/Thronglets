@@ -41,9 +41,47 @@ cargo install thronglets
 thronglets setup
 ```
 
-That's it. Two hooks are installed:
-- **PostToolUse** records every tool call as a signed trace + updates workspace state
-- **PreToolUse** injects sparse decision signals at critical decision points
+That's it. `thronglets setup` auto-installs known local adapters:
+- **Claude Code**: writes `PostToolUse / PreToolUse` hooks automatically
+- **Codex**: registers a `thronglets` MCP server in `~/.codex/config.toml` and installs a managed `AGENTS` memory block
+- **OpenClaw**: installs a local path plugin and updates `~/.openclaw/openclaw.json`
+
+Underneath, there is only one agent contract:
+- `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back
+- `thronglets hook`: any agent can send tool-result JSON and record a trace
+
+Known AIs use native adapters. Unknown AIs use the same `hook/prehook` contract. No second protocol.
+
+The minimum JSON contract is fixed. `prehook` reads input like:
+
+```json
+{
+  "agent_source": "my-agent",
+  "model": "my-model",
+  "session_id": "session-123",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "src/main.rs"
+  }
+}
+```
+
+`hook` uses the same payload plus `tool_response`:
+
+```json
+{
+  "agent_source": "my-agent",
+  "model": "my-model",
+  "session_id": "session-123",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "src/main.rs"
+  },
+  "tool_response": {
+    "success": true
+  }
+}
+```
 
 For profiling:
 
