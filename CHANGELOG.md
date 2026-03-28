@@ -21,6 +21,7 @@
 - **Distribution surface alignment** — npm/python wrapper metadata, installer docs, and AI-facing `llms.txt` now match the sparse-signal `v0.4.0` product shape, while CI guards against drifting back to stale `0.2.0` / `8 layers` packaging text
 - **Release installer scaffolding** — added a tagged GitHub release workflow that packages the existing native assets plus a shell installer at `scripts/install.sh`, so the next public release can support a real one-line install path without changing the hot path
 - **Generic runtime snippets** — `install-plan --agent generic --json` now carries minimal `Python / Node.js / shell` examples alongside the raw `prehook / hook` payloads, so unknown runtimes can self-bootstrap without reverse-engineering the contract
+- **Filtered generic snippets** — `install-plan --agent generic --runtime <python|node|shell> --json` now lets an agent ask for only its own wrapper example, keeping machine output thinner when token budget matters
 
 ## v0.4.0 — 2026-03-28
 

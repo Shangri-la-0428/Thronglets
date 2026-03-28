@@ -134,6 +134,38 @@ fn install_plan_generic_json_includes_contract_examples() {
 }
 
 #[test]
+fn install_plan_generic_can_filter_runtime_snippets() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+
+    let output = run_bin(
+        &[
+            "install-plan",
+            "--agent",
+            "generic",
+            "--runtime",
+            "python",
+            "--json",
+        ],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        output.status.success(),
+        "install-plan failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let summary = parse_command_data(&output, "install-plan");
+    let runtimes = summary["plans"][0]["contract"]["runtimes"]
+        .as_object()
+        .unwrap();
+    assert_eq!(runtimes.len(), 1);
+    assert!(runtimes.contains_key("python"));
+}
+
+#[test]
 fn apply_plan_codex_then_doctor_reports_restart_pending() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");

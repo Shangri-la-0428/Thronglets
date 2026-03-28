@@ -207,6 +207,25 @@ impl AdapterArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RuntimeArg {
+    All,
+    Python,
+    Node,
+    Shell,
+}
+
+impl RuntimeArg {
+    fn key(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Python => Some("python"),
+            Self::Node => Some("node"),
+            Self::Shell => Some("shell"),
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Start the Thronglets node
@@ -310,6 +329,10 @@ enum Commands {
         /// Restrict planning to one adapter family.
         #[arg(long, value_enum, default_value_t = AdapterArg::All)]
         agent: AdapterArg,
+
+        /// Restrict generic hook snippets to one runtime.
+        #[arg(long, value_enum, default_value_t = RuntimeArg::All)]
+        runtime: RuntimeArg,
 
         /// Emit machine-readable JSON.
         #[arg(long, default_value_t = false)]
@@ -627,6 +650,21 @@ fn render_install_plan_report(data: &InstallPlanData) {
         println!("Next: rerun with --json to inspect contract examples and runtime snippets.");
         println!();
         render_install_plans(&data.plans);
+    }
+}
+
+fn filter_generic_runtime_snippets(plans: &mut [AdapterPlan], runtime: RuntimeArg) {
+    let Some(runtime_key) = runtime.key() else {
+        return;
+    };
+
+    for plan in plans {
+        if plan.agent != AdapterKind::Generic.key() {
+            continue;
+        }
+        if let Some(contract) = plan.contract.as_mut() {
+            contract.runtimes.retain(|name, _| name == runtime_key);
+        }
     }
 }
 
@@ -1875,13 +1913,18 @@ async fn main() {
             }
         }
 
-        Commands::InstallPlan { agent, json } => {
+        Commands::InstallPlan {
+            agent,
+            runtime,
+            json,
+        } => {
             let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
             let home_dir = home_dir();
-            let plans: Vec<_> = selected_adapters(agent)
+            let mut plans: Vec<_> = selected_adapters(agent)
                 .into_iter()
                 .map(|adapter| install_plan(&home_dir, &dir, &bin, adapter))
                 .collect();
+            filter_generic_runtime_snippets(&mut plans, runtime);
             let summary = summarize_install_plans(plans);
             if json {
                 print_machine_json("install-plan", &summary);

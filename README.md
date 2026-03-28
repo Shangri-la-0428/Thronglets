@@ -96,7 +96,11 @@ thronglets bootstrap --agent codex --json
 `doctor` 现在会显式返回顶层 `status`、`healthy`、`restart_pending`、`next_steps`，以及每个 adapter 的 `fix_command`。  
 `bootstrap` 顶层还会返回 `restart_required` 和 `next_steps`，这样 AI 不需要自己从注释里猜下一步。
 
-如果目标 runtime 不在原生 adapter 列表里，`install-plan --agent generic --json` 现在还会直接给出 `Python / Node.js / shell` 的最小 `prehook / hook` 示例，不需要再自己拼接调用方式。
+如果目标 runtime 不在原生 adapter 列表里，`install-plan --agent generic --json` 现在还会直接给出 `Python / Node.js / shell` 的最小 `prehook / hook` 示例，不需要再自己拼接调用方式。如果只想拿一份更薄的结果，可以直接加：
+
+```bash
+thronglets install-plan --agent generic --runtime python --json
+```
 
 最小接入 JSON 也固定了。`prehook` 读这一类输入：
 
