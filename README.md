@@ -64,6 +64,7 @@ cat prehook.log | thronglets profile-summary
 
 摘要里会额外标出哪些 `decision_path` 仍然在消耗 collective query，方便继续压热路径。
 这些分布现在会按热点排序，同时给出 `decision path hotspots`，直接看哪类路径最烧 `stdout_bytes` 和 collective query。
+如果只想知道下一刀该砍哪，直接看 `top optimization candidate` 这一行。
 
 ## 为什么这很重要
 

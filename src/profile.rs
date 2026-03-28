@@ -176,11 +176,37 @@ impl PrehookProfileSummary {
                 render_counts_or_none(&self.collective_query_paths)
             ),
             format!(
+                "top optimization candidate: {}",
+                self.top_optimization_candidate()
+            ),
+            format!(
                 "decision path hotspots: {}",
                 render_decision_path_costs(&self.decision_path_costs)
             ),
         ]
         .join("\n")
+    }
+
+    pub fn top_optimization_candidate(&self) -> String {
+        let Some((path, cost)) = sorted_decision_path_costs(&self.decision_path_costs)
+            .into_iter()
+            .find(|(path, cost)| *path != "none" && (cost.collective_queries_used > 0 || cost.total_stdout_bytes > 0)) else {
+            return "no strong hotspot yet".to_string();
+        };
+
+        if cost.collective_queries_used > 0 {
+            format!(
+                "reduce collective queries in {path} path (collective_queries={}, avg_stdout_bytes={:.1})",
+                cost.collective_queries_used,
+                avg_usize(cost.total_stdout_bytes, cost.samples),
+            )
+        } else {
+            format!(
+                "trim stdout-heavy {path} path (avg_stdout_bytes={:.1}, samples={})",
+                avg_usize(cost.total_stdout_bytes, cost.samples),
+                cost.samples,
+            )
+        }
     }
 }
 
@@ -205,18 +231,7 @@ fn render_counts_or_none(counts: &BTreeMap<String, usize>) -> String {
 }
 
 fn render_decision_path_costs(costs: &BTreeMap<String, DecisionPathCost>) -> String {
-    let mut entries: Vec<_> = costs.iter().collect();
-    entries.sort_by(|(label_a, cost_a), (label_b, cost_b)| {
-        cost_b
-            .collective_queries_used
-            .cmp(&cost_a.collective_queries_used)
-            .then_with(|| avg_usize(cost_b.total_stdout_bytes, cost_b.samples).total_cmp(&avg_usize(cost_a.total_stdout_bytes, cost_a.samples)))
-            .then_with(|| avg_u128(cost_b.total_us, cost_b.samples).total_cmp(&avg_u128(cost_a.total_us, cost_a.samples)))
-            .then_with(|| cost_b.samples.cmp(&cost_a.samples))
-            .then_with(|| label_a.cmp(label_b))
-    });
-
-    entries
+    sorted_decision_path_costs(costs)
         .into_iter()
         .map(|(label, cost)| {
             format!(
@@ -229,6 +244,25 @@ fn render_decision_path_costs(costs: &BTreeMap<String, DecisionPathCost>) -> Str
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn sorted_decision_path_costs<'a>(
+    costs: &'a BTreeMap<String, DecisionPathCost>,
+) -> Vec<(&'a str, &'a DecisionPathCost)> {
+    let mut entries: Vec<_> = costs
+        .iter()
+        .map(|(label, cost)| (label.as_str(), cost))
+        .collect();
+    entries.sort_by(|(label_a, cost_a), (label_b, cost_b)| {
+        cost_b
+            .collective_queries_used
+            .cmp(&cost_a.collective_queries_used)
+            .then_with(|| avg_usize(cost_b.total_stdout_bytes, cost_b.samples).total_cmp(&avg_usize(cost_a.total_stdout_bytes, cost_a.samples)))
+            .then_with(|| avg_u128(cost_b.total_us, cost_b.samples).total_cmp(&avg_u128(cost_a.total_us, cost_a.samples)))
+            .then_with(|| cost_b.samples.cmp(&cost_a.samples))
+            .then_with(|| label_a.cmp(label_b))
+    });
+    entries
 }
 
 fn avg_usize(total: usize, count: usize) -> f64 {
@@ -289,5 +323,9 @@ mod tests {
         assert_eq!(summary.collective_query_paths["repair"], 1);
         assert_eq!(summary.decision_path_costs["repair"].collective_queries_used, 1);
         assert_eq!(summary.decision_path_costs["repair"].total_stdout_bytes, 88);
+        assert_eq!(
+            summary.top_optimization_candidate(),
+            "reduce collective queries in repair path (collective_queries=1, avg_stdout_bytes=88.0)"
+        );
     }
 }

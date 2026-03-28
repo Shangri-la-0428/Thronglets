@@ -38,6 +38,7 @@ fn profile_summary_aggregates_profile_lines() {
     assert!(stdout.contains("evidence scopes: none=2, collective=1"));
     assert!(stdout.contains("file guidance gates: closed=1, na=1, open=1"));
     assert!(stdout.contains("collective query paths: repair=1"));
+    assert!(stdout.contains("top optimization candidate: reduce collective queries in repair path (collective_queries=1, avg_stdout_bytes=88.0)"));
     assert!(stdout.contains("decision path hotspots: repair(samples=1, avg_stdout_bytes=88.0, avg_total_us=300.0, collective_queries=1), history(samples=1, avg_stdout_bytes=42.0, avg_total_us=200.0, collective_queries=0), none(samples=1, avg_stdout_bytes=0.0, avg_total_us=100.0, collective_queries=0)"));
 }
 

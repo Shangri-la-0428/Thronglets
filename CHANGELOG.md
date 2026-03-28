@@ -15,6 +15,7 @@
 - **Profiler gate visibility** — prehook profiling and `profile-summary` now expose `file_guidance_gate=open|closed|na` so hot-path tuning can distinguish skipped file mining from non-file tools
 - **Hotspot-sorted profile summaries** — `profile-summary` now ranks distributions by frequency and reports per-`decision_path` hotspot cost summaries
 - **True last-resort git fallback** — `git history` now runs only when prehook has no higher-value signal at all, including danger-only cases
+- **Top optimization candidate** — `profile-summary` now emits a single highest-value tuning target derived from path hotspots
 
 ### Collective Learning
 

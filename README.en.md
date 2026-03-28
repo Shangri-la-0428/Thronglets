@@ -64,6 +64,7 @@ cat prehook.log | thronglets profile-summary
 
 The summary also highlights which `decision_path` values are still spending collective queries, so you can keep trimming the hot path.
 Those distributions are now hotspot-sorted, and `decision path hotspots` shows which paths cost the most stdout bytes and collective queries.
+If you only want the next cut to make, read the single `top optimization candidate` line.
 
 ## Why This Matters
 
