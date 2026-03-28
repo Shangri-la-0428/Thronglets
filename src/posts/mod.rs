@@ -378,6 +378,11 @@ pub fn summarize_recent_signal_feed(
                 signal_corroboration_rank(b.source_count, b.model_count)
                     .cmp(&signal_corroboration_rank(a.source_count, a.model_count))
             })
+            .then_with(|| {
+                signal_freshness_rank(now_ms, b.latest_timestamp, b.expires_at).cmp(
+                    &signal_freshness_rank(now_ms, a.latest_timestamp, a.expires_at),
+                )
+            })
             .then_with(|| b.source_count.cmp(&a.source_count))
             .then_with(|| b.model_count.cmp(&a.model_count))
             .then_with(|| b.latest_timestamp.cmp(&a.latest_timestamp))
@@ -453,6 +458,19 @@ fn signal_corroboration_rank(source_count: u32, model_count: u32) -> u8 {
         "multi_model" => 2,
         "repeated_source" => 1,
         _ => 0,
+    }
+}
+
+fn signal_freshness_rank(now_ms: u64, latest_timestamp: u64, expires_at: u64) -> u8 {
+    let total_lifetime = expires_at.saturating_sub(latest_timestamp).max(1);
+    let remaining_lifetime = expires_at.saturating_sub(now_ms);
+    let freshness_ratio = remaining_lifetime as f64 / total_lifetime as f64;
+    if freshness_ratio >= 0.66 {
+        2
+    } else if freshness_ratio >= 0.33 {
+        1
+    } else {
+        0
     }
 }
 
@@ -829,6 +847,114 @@ mod tests {
     }
 
     #[test]
+    fn summarize_recent_signal_feed_prefers_fresher_signal_when_support_is_close() {
+        let local_identity = NodeIdentity::generate();
+        let remote_a = NodeIdentity::generate();
+        let remote_b = NodeIdentity::generate();
+        let remote_c = NodeIdentity::generate();
+        let remote_d = NodeIdentity::generate();
+        let remote_e = NodeIdentity::generate();
+        let base_now = now_ms();
+        let old_now = base_now.saturating_sub(50 * 60 * 60 * 1000);
+
+        let old_a = create_signal_trace_at(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("remote-a".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            old_now,
+            remote_a.public_key_bytes(),
+            |msg| remote_a.sign(msg),
+        );
+        let old_b = create_signal_trace_at(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "openclaw".into(),
+                session_id: Some("remote-b".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            old_now,
+            remote_b.public_key_bytes(),
+            |msg| remote_b.sign(msg),
+        );
+        let old_c = create_signal_trace_at(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "claude".into(),
+                session_id: Some("remote-old-c".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            old_now,
+            remote_e.public_key_bytes(),
+            |msg| remote_e.sign(msg),
+        );
+
+        let fresh_a = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "repair release flow",
+            "rerun the targeted test first",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("remote-c".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_c.public_key_bytes(),
+            |msg| remote_c.sign(msg),
+        );
+        let fresh_b = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "repair release flow",
+            "rerun the targeted test first",
+            SignalTraceConfig {
+                model_id: "openclaw".into(),
+                session_id: Some("remote-d".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_d.public_key_bytes(),
+            |msg| remote_d.sign(msg),
+        );
+        let fresh_c = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "repair release flow",
+            "rerun the targeted test first",
+            SignalTraceConfig {
+                model_id: "claude".into(),
+                session_id: Some("remote-e".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            base_now,
+            remote_e.public_key_bytes(),
+            |msg| remote_e.sign(msg),
+        );
+
+        let results = summarize_recent_signal_feed(
+            &[old_a, old_b, old_c, fresh_a, fresh_b, fresh_c],
+            local_identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].message, "rerun the targeted test first");
+        assert_eq!(results[0].corroboration_tier, "multi_model");
+        assert_eq!(results[1].message, "run release-check before push");
+        assert_eq!(results[1].corroboration_tier, "multi_model");
+        assert_eq!(results[0].source_count, results[1].source_count);
+        assert_eq!(
+            results[0].collective_source_count,
+            results[1].collective_source_count
+        );
+    }
+
+    #[test]
     fn filter_signal_feed_results_by_scope() {
         let results = vec![
             SignalFeedResult {
@@ -878,5 +1004,18 @@ mod tests {
     fn signal_corroboration_rank_prefers_multi_model() {
         assert!(signal_corroboration_rank(1, 2) > signal_corroboration_rank(3, 1));
         assert!(signal_corroboration_rank(2, 1) > signal_corroboration_rank(1, 1));
+    }
+
+    #[test]
+    fn signal_freshness_rank_prefers_newer_signals() {
+        let now = now_ms();
+        let recent_latest = now.saturating_sub(6 * 60 * 60 * 1000);
+        let stale_latest = now.saturating_sub(50 * 60 * 60 * 1000);
+        let expires = now.saturating_add(22 * 60 * 60 * 1000);
+        assert!(
+            signal_freshness_rank(now, recent_latest, now + 72 * 60 * 60 * 1000)
+                > signal_freshness_rank(now, stale_latest, stale_latest + 72 * 60 * 60 * 1000)
+        );
+        assert!(signal_freshness_rank(now, now, expires) >= 1);
     }
 }
