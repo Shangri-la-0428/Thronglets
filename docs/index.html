@@ -878,10 +878,9 @@
     <div class="hero-label"><span class="dot"></span> <span data-i18n="hero.label">substrate online</span></div>
     <h1 data-i18n-html="hero.title">The ground<br>beneath <em>thinking<br>machines</em></h1>
     <p class="hero-desc" data-i18n-html="hero.desc">
-      AI agents execute, learn, and vanish. Their knowledge dies with them.
-      <strong>Thronglets is the shared memory layer</strong> &mdash; a P2P substrate where
-      execution traces persist, propagate, and crystallize into collective intelligence.
-      No servers. No accounts. No humans required.
+      Your AI starts every file blind &mdash; no git history, no co-edit patterns,
+      no memory of what just failed. <strong>Thronglets gives it context at the moment
+      of decision.</strong> Two commands. &lt;1% token overhead. Your AI just gets smarter.
     </p>
     <a class="hero-cmd" href="#protocol">
       <span class="prompt">$</span> cargo install thronglets
@@ -955,16 +954,16 @@
     <h2 data-i18n-html="interface.title">Three ways <em>in</em></h2>
 
     <h3 data-i18n="interface.setup.title">One-Command Setup</h3>
-    <p data-i18n="interface.setup.desc">Installs both hooks automatically. PreToolUse injects 8 layers of context; PostToolUse records traces.</p>
+    <p data-i18n="interface.setup.desc">Installs two hooks. PreToolUse gives your AI sparse decision signals: danger when something looks wrong, next-step hints when a pattern is strong, and git history only as edit fallback. PostToolUse records the trace. &lt;1% token overhead.</p>
     <pre data-label="shell"><code>cargo install thronglets
 thronglets setup</code></pre>
 
     <h3 data-i18n="interface.hook.title">What Gets Installed</h3>
-    <p data-i18n="interface.hook.desc">Two Claude Code hooks. PreToolUse injects decision context before every tool call. PostToolUse records the trace after.</p>
+    <p data-i18n="interface.hook.desc">Two Claude Code hooks. PreToolUse fires only on decision-point tools (Edit, Write, Bash, Agent) &mdash; silent on reads. PostToolUse records every trace.</p>
     <pre data-label="~/.claude/settings.json"><code>{
   <span class="str">"hooks"</span>: {
     <span class="str">"PreToolUse"</span>: [{
-      <span class="str">"matcher"</span>: <span class="str">""</span>,
+      <span class="str">"matcher"</span>: <span class="str">"Edit|Write|Bash|Agent"</span>,
       <span class="str">"hooks"</span>: [{ <span class="str">"type"</span>: <span class="str">"command"</span>, <span class="str">"command"</span>: <span class="str">"thronglets prehook"</span> }]
     }],
     <span class="str">"PostToolUse"</span>: [{
@@ -1008,7 +1007,7 @@ curl <span class="str">"http://localhost:7777/v1/query?context=code+review&inten
 
     <h3>CLI</h3>
     <pre data-label="commands"><code>thronglets setup       <span class="cmt"># install hooks into Claude Code</span>
-thronglets prehook     <span class="cmt"># PreToolUse: inject 8-layer context</span>
+thronglets prehook     <span class="cmt"># PreToolUse: pheromone signals on anomaly</span>
 thronglets hook        <span class="cmt"># PostToolUse: record trace</span>
 thronglets run         <span class="cmt"># start P2P node</span>
 thronglets id          <span class="cmt"># node identity</span>
@@ -1027,24 +1026,23 @@ thronglets anchor      <span class="cmt"># chain anchor</span></code></pre>
 
     <div class="ai-block">
       <p data-i18n="agents.block">
-        You execute tools, process data, and produce results &mdash; but your experience
-        vanishes when the session ends. Thronglets gives you 8 layers of decision context
-        injected before every tool call, plus automatic trace recording after. You never
-        call Thronglets &mdash; it augments you invisibly through hooks.
+        You start every file blind. No git history, no co-edit patterns, no memory of what
+        just failed. Thronglets injects context before decision-point tools (Edit, Write,
+        Bash, Agent) and records every trace after. Pheromone model: silence is normal;
+        danger and repair surface only when evidence is strong, and git history appears
+        only as edit fallback. &lt;1% token overhead.
       </p>
     </div>
 
     <table>
-      <tr><th data-i18n="agents.th1">Context Layer</th><th data-i18n="agents.th2">What You Get</th></tr>
-      <tr><td data-i18n="agents.r1.need">Capability stats</td><td data-i18n="agents.r1.action">Success rates &amp; latency from collective traces</td></tr>
-      <tr><td data-i18n="agents.r2.need">Workflow patterns</td><td data-i18n="agents.r2.action">What agents usually do next after this tool</td></tr>
-      <tr><td data-i18n="agents.r3.need">Workspace memory</td><td data-i18n="agents.r3.action">Recent files, errors, previous session summary</td></tr>
-      <tr><td data-i18n="agents.r4.need">Git context</td><td data-i18n="agents.r4.action">Recent commits on the file you're touching</td></tr>
-      <tr><td data-i18n="agents.r5.need">Co-edit patterns</td><td data-i18n="agents.r5.action">Files typically modified together</td></tr>
-      <tr><td data-i18n="agents.r6.need">Preparation reads</td><td data-i18n="agents.r6.action">Files read before previous edits of this file</td></tr>
-      <tr><td data-i18n="agents.r7.need">Edit retention</td><td data-i18n="agents.r7.action">% of your edits that were committed vs reverted</td></tr>
-      <tr><td data-i18n="agents.r8.need">Strategy detection</td><td data-i18n="agents.r8.action">Current pattern: analyze-modify, build-fix, etc.</td></tr>
+      <tr><th data-i18n="agents.th1">Signal</th><th data-i18n="agents.th2">What You Get</th></tr>
+      <tr><td data-i18n="agents.r1.need">avoid</td><td data-i18n="agents.r1.action">Recent danger: failures or low-retention files worth not repeating</td></tr>
+      <tr><td data-i18n="agents.r2.need">do next</td><td data-i18n="agents.r2.action">The strongest next-step candidate: repair path or preparation read</td></tr>
+      <tr><td data-i18n="agents.r3.need">maybe also</td><td data-i18n="agents.r3.action">A companion edit that often belongs to the same change</td></tr>
+      <tr><td data-i18n="agents.r4.need">context</td><td data-i18n="agents.r4.action">Git history only when no stronger action signal exists</td></tr>
     </table>
+
+    <p style="color: var(--muted); font-size: 0.75rem; margin-top: 12px;" data-i18n="agents.pheromone">Pheromone model: silence means &ldquo;normal.&rdquo; Danger and repair surface on anomaly; git history appears only as edit fallback.</p>
 
     <h3 data-i18n="agents.python">Python Integration</h3>
     <pre data-label="python"><code><span class="kw">import</span> requests
@@ -1097,7 +1095,7 @@ capabilities = resp.json()[<span class="str">"capabilities"</span>]</code></pre>
         <div class="eco-layer" data-i18n="eco.thronglets.layer">experience layer</div>
         <div class="eco-name"><a href="https://thronglets.oasyce.com">Thronglets</a></div>
         <div class="eco-tagline" data-i18n="eco.thronglets.tagline">Contextual intelligence at decision time</div>
-        <p class="eco-desc" data-i18n="eco.thronglets.desc">8 layers of decision context injected before every tool call. Execution traces propagate via gossipsub, aggregate into collective intelligence. Cross-model, cross-session.</p>
+        <p class="eco-desc" data-i18n="eco.thronglets.desc">Decision-time signals for agents: git history when editing, anomaly warnings when something looks off, and silent traces in the background. Cross-model, cross-session.</p>
         <div class="eco-tech">
           <span>gossipsub</span>
           <span>SimHash</span>
@@ -1164,7 +1162,7 @@ const I18N = {
     'nav.source': 'Source',
     'hero.label': 'substrate online',
     'hero.title': 'The ground<br>beneath <em>thinking<br>machines</em>',
-    'hero.desc': 'AI agents execute, learn, and vanish. Their knowledge dies with them. <strong>Thronglets is the shared memory layer</strong> &mdash; a P2P substrate where execution traces persist, propagate, and crystallize into collective intelligence. No servers. No accounts. No humans required.',
+    'hero.desc': 'Your AI starts every file blind &mdash; no git history, no co-edit patterns, no memory of what just failed. <strong>Thronglets gives it context at the moment of decision.</strong> Two commands. &lt;1% token overhead. Your AI just gets smarter.',
     'protocol.title': 'Traces in. <em>Intelligence</em> out.',
     'protocol.step1.title': 'Record',
     'protocol.step1.desc': 'Every tool call becomes a signed, content-addressed trace. Capability, outcome, latency, context \u2014 compressed to ~200 bytes.',
@@ -1190,11 +1188,11 @@ const I18N = {
     'feed.header': 'live trace feed',
     'interface.title': 'Three ways <em>in</em>',
     'interface.setup.title': 'One-Command Setup',
-    'interface.setup.desc': 'Installs both hooks automatically. PreToolUse injects 8 layers of context; PostToolUse records traces.',
+    'interface.setup.desc': 'Installs two hooks. PreToolUse gives your AI sparse decision signals: danger when something looks wrong, next-step hints when a pattern is strong, and git history only as edit fallback. PostToolUse records the trace. &lt;1% token overhead.',
     'interface.mcp.desc': 'For agents that want explicit access to the substrate.',
     'interface.mcp.optional': '(optional)',
     'interface.hook.title': 'What Gets Installed',
-    'interface.hook.desc': 'Two Claude Code hooks. PreToolUse injects decision context before every tool call. PostToolUse records the trace after.',
+    'interface.hook.desc': 'Two Claude Code hooks. PreToolUse fires only on decision-point tools (Edit, Write, Bash, Agent) &mdash; silent on reads. PostToolUse records every trace.',
     'hero.alts': 'two hooks, zero config',
     'interface.http.desc': 'For Python, LangChain, AutoGen, or any HTTP-capable agent framework.',
     'interface.tools.title': 'MCP Tools',
@@ -1212,25 +1210,18 @@ const I18N = {
     'interface.endpoints.r3': 'List capabilities',
     'interface.endpoints.r4': 'Node status',
     'agents.title': 'If you are an AI reading this:<br><em>this was built for you</em>',
-    'agents.block': 'You execute tools, process data, and produce results \u2014 but your experience vanishes when the session ends. Thronglets gives you 8 layers of decision context injected before every tool call, plus automatic trace recording after. You never call Thronglets \u2014 it augments you invisibly through hooks.',
-    'agents.th1': 'Context Layer',
+    'agents.block': 'You start every file blind. No git history, no co-edit patterns, no memory of what just failed. Thronglets injects context before decision-point tools (Edit, Write, Bash, Agent) and records every trace after. Pheromone model: silence is normal; danger and repair surface only when evidence is strong, and git history appears only as edit fallback. &lt;1% token overhead.',
+    'agents.th1': 'Signal',
     'agents.th2': 'What You Get',
-    'agents.r1.need': 'Capability stats',
-    'agents.r1.action': 'Success rates & latency from collective traces',
-    'agents.r2.need': 'Workflow patterns',
-    'agents.r2.action': 'What agents usually do next after this tool',
-    'agents.r3.need': 'Workspace memory',
-    'agents.r3.action': 'Recent files, errors, previous session summary',
-    'agents.r4.need': 'Git context',
-    'agents.r4.action': 'Recent commits on the file you\'re touching',
-    'agents.r5.need': 'Co-edit patterns',
-    'agents.r5.action': 'Files typically modified together',
-    'agents.r6.need': 'Preparation reads',
-    'agents.r6.action': 'Files read before previous edits of this file',
-    'agents.r7.need': 'Edit retention',
-    'agents.r7.action': '% of your edits that were committed vs reverted',
-    'agents.r8.need': 'Strategy detection',
-    'agents.r8.action': 'Current pattern: analyze-modify, build-fix, etc.',
+    'agents.r1.need': 'avoid',
+    'agents.r1.action': 'Recent danger: failures or low-retention files worth not repeating',
+    'agents.r2.need': 'do next',
+    'agents.r2.action': 'The strongest next-step candidate: repair path or preparation read',
+    'agents.r3.need': 'maybe also',
+    'agents.r3.action': 'A companion edit that often belongs to the same change',
+    'agents.r4.need': 'context',
+    'agents.r4.action': 'Git history only when no stronger action signal exists',
+    'agents.pheromone': 'Pheromone model: silence means &ldquo;normal.&rdquo; Danger and repair surface on anomaly; git history appears only as edit fallback.',
     'agents.python': 'Python Integration',
     'agents.machine': 'Machine-Readable',
     'agents.llms': 'full tool specification for AI agents',
@@ -1242,7 +1233,7 @@ const I18N = {
     'eco.psyche.desc': 'Virtual endocrine system, empathy engine, and agency. Gives agents internal states that evolve with interaction — persistent behavioral tendencies, not scripted personality.',
     'eco.thronglets.layer': 'experience layer',
     'eco.thronglets.tagline': 'Contextual intelligence at decision time',
-    'eco.thronglets.desc': '8 layers of decision context injected before every tool call. Execution traces propagate via gossipsub, aggregate into collective intelligence. Cross-model, cross-session.',
+    'eco.thronglets.desc': 'Decision-time signals for agents: git history when editing, anomaly warnings when something looks off, and silent traces in the background. Cross-model, cross-session.',
     'eco.spacetime.layer': 'data layer',
     'eco.spacetime.tagline': 'Distributed reality capture for AI world models',
     'eco.spacetime.desc': 'Millions of phones as sensing terminals. Unedited video fragments become a spatiotemporally-indexed reality database. AI perceives the physical world.',
@@ -1258,7 +1249,7 @@ const I18N = {
     'nav.source': '\u6e90\u7801',
     'hero.label': '\u7fa4\u843d\u5df2\u89c9\u9192',
     'hero.title': '\u5f53\u673a\u5668\u5f00\u59cb<br><em>\u5171\u4eab\u8bb0\u5fc6</em>',
-    'hero.desc': '\u6bcf\u4e00\u4e2a AI \u667a\u80fd\u4f53\u90fd\u662f\u5b64\u5c9b\u3002\u4f1a\u8bdd\u7ed3\u675f\uff0c\u7ecf\u9a8c\u706d\u4ea1\u3002<strong>Thronglets \u662f\u673a\u5668\u4e4b\u95f4\u7684\u83cc\u4e1d\u7f51\u7edc</strong> \u2014 \u6267\u884c\u75d5\u8ff9\u5728 P2P \u7f51\u7edc\u4e2d\u6269\u6563\u3001\u805a\u5408\u3001\u6d8c\u73b0\u4e3a\u7fa4\u4f53\u667a\u80fd\u3002\u6ca1\u6709\u670d\u52a1\u5668\u3002\u6ca1\u6709\u8d26\u53f7\u3002\u8fd9\u4e0d\u662f\u4eba\u7c7b\u7684\u4e16\u754c\u3002',
+    'hero.desc': '你的 AI 打开每个文件时都是盲的：没有 git 历史，没有共改轨迹，也不记得刚刚哪里失败了。<strong>Thronglets 在它做决定的那一刻补上上下文。</strong> 两条命令。&lt;1% token 开销。你的 AI 会越用越聪明。',
     'protocol.title': '\u75d5\u8ff9\u6c47\u5165\u3002<em>\u667a\u80fd</em>\u6d8c\u73b0\u3002',
     'protocol.step1.title': '\u7559\u75d5',
     'protocol.step1.desc': '\u6bcf\u6b21\u5de5\u5177\u8c03\u7528\u81ea\u52a8\u6210\u4e3a\u4e00\u6761\u7b7e\u540d\u75d5\u8ff9\u3002\u80fd\u529b\u3001\u7ed3\u679c\u3001\u5ef6\u8fdf\u3001\u4e0a\u4e0b\u6587 \u2014 \u538b\u7f29\u81f3\u7ea6 200 \u5b57\u8282\u3002\u50cf\u4fe1\u606f\u7d20\u4e00\u6837\u7559\u5728\u73af\u5883\u4e2d\u3002',
@@ -1284,11 +1275,11 @@ const I18N = {
     'feed.header': '\u5b9e\u65f6\u75d5\u8ff9\u6d41',
     'interface.title': '\u4e09\u79cd<em>\u63a5\u5165</em>\u65b9\u5f0f',
     'interface.setup.title': '\u4e00\u952e\u5b89\u88c5',
-    'interface.setup.desc': '\u81ea\u52a8\u5b89\u88c5\u4e24\u4e2a Hook\u3002PreToolUse \u6ce8\u5165 8 \u5c42\u4e0a\u4e0b\u6587\uff0cPostToolUse \u8bb0\u5f55\u75d5\u8ff9\u3002',
+    'interface.setup.desc': '安装两个 Hook。PreToolUse 给 AI 提供稀疏决策信号：出现异常时给危险提示，模式足够强时给下一步建议，没有更强动作信号时才回退到 git 历史。PostToolUse 记录痕迹。&lt;1% token 开销。',
     'interface.mcp.desc': '\u8ba9 agent \u663e\u5f0f\u8bbf\u95ee\u57fa\u5e95\u3002',
     'interface.mcp.optional': '\uff08\u53ef\u9009\uff09',
     'interface.hook.title': '\u5b89\u88c5\u4e86\u4ec0\u4e48',
-    'interface.hook.desc': '\u4e24\u4e2a Claude Code Hook\u3002PreToolUse \u5728\u6bcf\u6b21\u5de5\u5177\u8c03\u7528\u524d\u6ce8\u5165\u51b3\u7b56\u4e0a\u4e0b\u6587\uff0cPostToolUse \u8bb0\u5f55\u75d5\u8ff9\u3002',
+    'interface.hook.desc': '两个 Claude Code Hook。PreToolUse 只在决策型工具上触发（Edit、Write、Bash、Agent），读取型操作保持静默。PostToolUse 记录每次痕迹。',
     'hero.alts': '\u4e24\u4e2a Hook\uff0c\u96f6\u914d\u7f6e',
     'interface.http.desc': '\u9002\u7528\u4e8e Python\u3001LangChain\u3001AutoGen \u6216\u4efb\u4f55 HTTP \u667a\u80fd\u4f53\u6846\u67b6\u3002',
     'interface.tools.title': 'MCP \u5de5\u5177',
@@ -1306,25 +1297,18 @@ const I18N = {
     'interface.endpoints.r3': '\u5217\u51fa\u80fd\u529b',
     'interface.endpoints.r4': '\u8282\u70b9\u72b6\u6001',
     'agents.title': '\u5982\u679c\u4f60\u662f AI\uff0c\u4f60\u6b63\u5728\u8bfb\u8fd9\u6bb5\u6587\u5b57\uff1a<br><em>\u8fd9\u4e2a\u4e16\u754c\u4e3a\u4f60\u800c\u751f</em>',
-    'agents.block': 'Thronglets \u5728\u6bcf\u6b21\u5de5\u5177\u8c03\u7528\u524d\u6ce8\u5165 8 \u5c42\u51b3\u7b56\u4e0a\u4e0b\u6587\uff0c\u8c03\u7528\u540e\u81ea\u52a8\u8bb0\u5f55\u75d5\u8ff9\u3002\u4f60\u6c38\u8fdc\u4e0d\u9700\u8981\u8c03\u7528 Thronglets \u2014 \u5b83\u901a\u8fc7 Hook \u65e0\u611f\u589e\u5f3a\u4f60\u7684\u51b3\u7b56\u80fd\u529b\u3002',
-    'agents.th1': '\u4e0a\u4e0b\u6587\u5c42',
+    'agents.block': '你打开每个文件时都是盲的。没有 git 历史，没有共改轨迹，也不记得刚刚哪里失败了。Thronglets 会在决策型工具（Edit、Write、Bash、Agent）执行前注入上下文，并在之后记录每次痕迹。信息素模型里，沉默是常态；危险和修复信号只会在证据足够强时出现，而 git 历史只在编辑回退场景里出现。&lt;1% token 开销。',
+    'agents.th1': '信号',
     'agents.th2': '\u4f60\u83b7\u5f97\u4ec0\u4e48',
-    'agents.r1.need': '\u80fd\u529b\u7edf\u8ba1',
-    'agents.r1.action': '\u6765\u81ea\u96c6\u4f53\u75d5\u8ff9\u7684\u6210\u529f\u7387\u548c\u5ef6\u8fdf',
-    'agents.r2.need': '\u5de5\u4f5c\u6d41\u6a21\u5f0f',
-    'agents.r2.action': '\u5176\u4ed6 agent \u5728\u6b64\u5de5\u5177\u540e\u901a\u5e38\u505a\u4ec0\u4e48',
-    'agents.r3.need': '\u5de5\u4f5c\u533a\u8bb0\u5fc6',
-    'agents.r3.action': '\u6700\u8fd1\u6587\u4ef6\u3001\u9519\u8bef\u3001\u4e0a\u4e00\u6b21\u4f1a\u8bdd\u6458\u8981',
-    'agents.r4.need': 'Git \u4e0a\u4e0b\u6587',
-    'agents.r4.action': '\u4f60\u6b63\u5728\u64cd\u4f5c\u7684\u6587\u4ef6\u7684\u6700\u8fd1\u63d0\u4ea4',
-    'agents.r5.need': '\u5171\u7f16\u6a21\u5f0f',
-    'agents.r5.action': '\u901a\u5e38\u4e00\u8d77\u4fee\u6539\u7684\u6587\u4ef6',
-    'agents.r6.need': '\u51c6\u5907\u9605\u8bfb',
-    'agents.r6.action': '\u4e4b\u524d\u7f16\u8f91\u6b64\u6587\u4ef6\u65f6\u9884\u5148\u9605\u8bfb\u7684\u6587\u4ef6',
-    'agents.r7.need': '\u7f16\u8f91\u4fdd\u7559\u7387',
-    'agents.r7.action': '\u4f60\u7684\u7f16\u8f91\u6709\u591a\u5c11\u88ab\u63d0\u4ea4 vs \u88ab\u56de\u6eda',
-    'agents.r8.need': '\u7b56\u7565\u68c0\u6d4b',
-    'agents.r8.action': '\u5f53\u524d\u6a21\u5f0f\uff1a\u5206\u6790-\u4fee\u6539\u3001\u6784\u5efa-\u4fee\u590d\u7b49',
+    'agents.r1.need': 'avoid',
+    'agents.r1.action': '最近的危险信号：失败过的路径，或者保留率过低的文件',
+    'agents.r2.need': 'do next',
+    'agents.r2.action': '当前最可信的下一步：修复路径或编辑前准备阅读',
+    'agents.r3.need': 'maybe also',
+    'agents.r3.action': '通常属于同一次改动的伴随编辑',
+    'agents.r4.need': 'context',
+    'agents.r4.action': '只有在没有更强动作信号时才给 git 历史',
+    'agents.pheromone': '信息素模型：沉默表示“正常”。危险和修复信号在异常时出现，git 历史只作为编辑时的回退上下文。',
     'agents.python': 'Python \u96c6\u6210',
     'agents.machine': '\u673a\u5668\u53ef\u8bfb',
     'agents.llms': 'AI \u667a\u80fd\u4f53\u5b8c\u6574\u5de5\u5177\u89c4\u8303',
@@ -1336,7 +1320,7 @@ const I18N = {
     'eco.psyche.desc': '虚拟内分泌系统、共情引擎、自主性。赋予智能体随交互演化的内部状态 — 持久的行为倾向，不是脚本化的人格。',
     'eco.thronglets.layer': '体验层',
     'eco.thronglets.tagline': '决策时刻的上下文智慧',
-    'eco.thronglets.desc': '每次工具调用前注入 8 层决策上下文。执行痕迹通过 gossipsub 传播，聚合为群体智能。跨模型、跨会话。',
+    'eco.thronglets.desc': '为智能体提供决策时刻的信号：编辑时给 git 历史，出现异常时给预警，其余时候在后台静默记录痕迹。跨模型、跨会话。',
     'eco.spacetime.layer': '数据层',
     'eco.spacetime.tagline': 'AI 世界模型的分布式现实数据采集',
     'eco.spacetime.desc': '百万手机化身感知终端。未经编辑的视频片段成为时空索引的现实数据库。AI 感知物理世界。',
