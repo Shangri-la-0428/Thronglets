@@ -218,3 +218,75 @@ fn bootstrap_codex_json_applies_and_reports_healthy() {
         Value::Bool(true)
     );
 }
+
+#[test]
+fn detect_text_stays_summary_first_when_adapters_are_present() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::create_dir_all(home.join(".openclaw")).unwrap();
+
+    let output = run_bin(&["detect"], &home, &data_dir);
+    assert!(
+        output.status.success(),
+        "detect failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Detect status: ready"));
+    assert!(stdout.contains("Detected: claude-code, codex, openclaw, generic"));
+    assert!(stdout.contains("Recommended: claude-code, codex, openclaw"));
+    assert!(!stdout.contains("Detected adapters:"));
+}
+
+#[test]
+fn doctor_text_stays_summary_first_when_healthy() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let apply_output = run_bin(&["apply-plan", "--agent", "codex"], &home, &data_dir);
+    assert!(
+        apply_output.status.success(),
+        "apply-plan failed: {}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+
+    let output = run_bin(&["doctor", "--agent", "codex"], &home, &data_dir);
+    assert!(
+        output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Doctor status: healthy"));
+    assert!(stdout.contains("Healthy: codex"));
+    assert!(!stdout.contains("Adapter health:"));
+}
+
+#[test]
+fn setup_text_stays_summary_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::create_dir_all(home.join(".openclaw")).unwrap();
+
+    let output = run_bin(&["setup"], &home, &data_dir);
+    assert!(
+        output.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Thronglets setup: healthy"));
+    assert!(stdout.contains("Installed: claude-code, codex, openclaw"));
+    assert!(!stdout.contains("Applied adapter plan:"));
+}

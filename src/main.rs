@@ -470,14 +470,28 @@ fn render_detections(detections: &[AdapterDetection]) {
 
 fn render_detect_report(summary: &DetectReport) {
     println!("Detect status: {}", summary.status);
-    if !summary.detected_agents.is_empty() {
-        println!("Detected: {}", summary.detected_agents.join(", "));
-    }
+    println!(
+        "Detected: {}",
+        if summary.detected_agents.is_empty() {
+            "none".into()
+        } else {
+            summary.detected_agents.join(", ")
+        }
+    );
     if !summary.recommended_agents.is_empty() {
         println!("Recommended: {}", summary.recommended_agents.join(", "));
     }
-    println!();
-    render_detections(&summary.detections);
+    let attention: Vec<_> = summary
+        .detections
+        .iter()
+        .filter(|detection| detection.agent != AdapterKind::Generic.key())
+        .filter(|detection| !detection.present || !detection.configurable)
+        .cloned()
+        .collect();
+    if !attention.is_empty() {
+        println!();
+        render_detections(&attention);
+    }
 }
 
 fn render_install_plans(plans: &[AdapterPlan]) {
@@ -502,14 +516,21 @@ fn render_install_plans(plans: &[AdapterPlan]) {
 
 fn render_install_plan_report(summary: &InstallPlanReport) {
     println!("Install plan status: {}", summary.status);
+    let planned_agents: Vec<_> = summary.plans.iter().map(|plan| plan.agent.as_str()).collect();
+    if !planned_agents.is_empty() {
+        println!("Plan: {}", planned_agents.join(", "));
+    }
     if summary.restart_required {
         println!("Restart required: yes");
     }
     for step in &summary.next_steps {
         println!("Next: {step}");
     }
-    println!();
-    render_install_plans(&summary.plans);
+    if summary.plans.iter().any(|plan| plan.contract.is_some()) {
+        println!("Next: rerun with --json to inspect contract examples.");
+        println!();
+        render_install_plans(&summary.plans);
+    }
 }
 
 fn render_doctor_reports(reports: &[AdapterDoctor]) {
@@ -535,11 +556,28 @@ fn render_doctor_reports(reports: &[AdapterDoctor]) {
 
 fn render_doctor_report(summary: &DoctorReport) {
     println!("Doctor status: {}", summary.status);
+    let healthy_agents: Vec<_> = summary
+        .reports
+        .iter()
+        .filter(|report| report.healthy)
+        .map(|report| report.agent.as_str())
+        .collect();
+    if !healthy_agents.is_empty() {
+        println!("Healthy: {}", healthy_agents.join(", "));
+    }
     for step in &summary.next_steps {
         println!("Next: {step}");
     }
-    println!();
-    render_doctor_reports(&summary.reports);
+    let unhealthy: Vec<_> = summary
+        .reports
+        .iter()
+        .filter(|report| !report.healthy)
+        .cloned()
+        .collect();
+    if !unhealthy.is_empty() {
+        println!();
+        render_doctor_reports(&unhealthy);
+    }
 }
 
 fn render_apply_results(results: &[AdapterApplyResult]) {
@@ -567,34 +605,62 @@ fn render_apply_results(results: &[AdapterApplyResult]) {
 
 fn render_apply_plan_report(summary: &ApplyPlanReport) {
     println!("Apply status: {}", summary.status);
+    let applied_agents: Vec<_> = summary
+        .results
+        .iter()
+        .filter(|result| result.applied)
+        .map(|result| result.agent.as_str())
+        .collect();
+    if !applied_agents.is_empty() {
+        println!("Applied: {}", applied_agents.join(", "));
+    }
     if summary.restart_required {
         println!("Restart required: yes");
     }
     for step in &summary.next_steps {
         println!("Next: {step}");
     }
-    println!();
-    render_apply_results(&summary.results);
+    let skipped: Vec<_> = summary
+        .results
+        .iter()
+        .filter(|result| !result.applied)
+        .cloned()
+        .collect();
+    if !skipped.is_empty() {
+        println!();
+        render_apply_results(&skipped);
+    }
 }
 
 fn render_bootstrap_report(report: &BootstrapReport) {
     println!("Bootstrap status: {}", report.status);
+    let installed: Vec<_> = report
+        .applied
+        .iter()
+        .filter(|result| result.applied)
+        .map(|result| result.agent.as_str())
+        .collect();
+    if !installed.is_empty() {
+        println!("Installed: {}", installed.join(", "));
+    }
     if report.restart_required {
         println!("Restart required: yes");
     }
     for step in &report.next_steps {
         println!("Next: {step}");
     }
-    println!();
-    render_detections(&report.detections);
-    println!();
-    render_install_plans(&report.plans);
-    println!();
-    if !report.applied.is_empty() {
-        render_apply_results(&report.applied);
-        println!();
+    if !report.healthy {
+        let unhealthy: Vec<_> = report
+            .doctor
+            .iter()
+            .filter(|doctor| !doctor.healthy)
+            .cloned()
+            .collect();
+        if !unhealthy.is_empty() {
+            println!();
+            render_doctor_reports(&unhealthy);
+        }
     }
-    render_doctor_reports(&report.doctor);
 }
 
 fn render_setup_report(report: &BootstrapReport) {
