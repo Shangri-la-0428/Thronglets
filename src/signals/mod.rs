@@ -35,6 +35,7 @@ pub enum RecommendationKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recommendation {
     pub kind: RecommendationKind,
+    pub source_kind: SignalKind,
     pub body: String,
     pub candidate: Option<StepCandidate>,
 }
@@ -249,6 +250,7 @@ pub fn select(signals: Vec<Signal>, max: usize) -> Vec<Recommendation> {
         if seen.insert(kind) {
             recommendations.push(Recommendation {
                 kind,
+                source_kind: signal.kind,
                 body: signal.body,
                 candidate: signal.candidate,
             });
@@ -427,6 +429,7 @@ mod tests {
     fn render_recommendation_uses_ai_facing_labels() {
         let rendered = Recommendation {
             kind: RecommendationKind::Avoid,
+            source_kind: SignalKind::Danger,
             body: "  ⚠ recent error: build failed".into(),
             candidate: None,
         }
@@ -439,6 +442,7 @@ mod tests {
     fn render_repair_as_direct_next_step() {
         let rendered = Recommendation {
             kind: RecommendationKind::DoNext,
+            source_kind: SignalKind::Repair,
             body: String::new(),
             candidate: Some(StepCandidate::sequence(
                 vec![
@@ -459,6 +463,7 @@ mod tests {
     fn render_adjacency_as_direct_followup() {
         let rendered = Recommendation {
             kind: RecommendationKind::MaybeAlso,
+            source_kind: SignalKind::Adjacency,
             body: String::new(),
             candidate: Some(StepCandidate::single(
                 "Edit",
@@ -477,6 +482,7 @@ mod tests {
     fn render_candidate_includes_independent_sources_when_present() {
         let rendered = Recommendation {
             kind: RecommendationKind::DoNext,
+            source_kind: SignalKind::Preparation,
             body: String::new(),
             candidate: Some(StepCandidate::single(
                 "Read",

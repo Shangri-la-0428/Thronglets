@@ -163,6 +163,10 @@ fn prehook_profile_uses_stderr_only() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("[thronglets:prehook]"));
     assert!(stderr.contains("tool=Bash"));
+    assert!(stderr.contains("stdout_bytes=0"));
+    assert!(stderr.contains("output_mode=silent"));
+    assert!(stderr.contains("decision_path=none"));
+    assert!(stderr.contains("evidence_scope=none"));
     assert!(stderr.contains("collective_queries_used=0"));
     assert!(stderr.contains("git=skipped"));
 }
@@ -251,6 +255,10 @@ fn prehook_profile_keeps_stdout_shape_when_signals_exist() {
     assert!(stderr.contains("[thronglets:prehook]"));
     assert!(stderr.contains("tool=Edit"));
     assert!(stderr.contains("emitted=2"));
+    assert!(stderr.contains(&format!("stdout_bytes={}", stdout.len())));
+    assert!(stderr.contains("output_mode=next-step"));
+    assert!(stderr.contains("decision_path=repair"));
+    assert!(stderr.contains("evidence_scope=collective"));
     assert!(stderr.contains("collective_queries_used=0"));
     assert!(stderr.contains("git=skipped"));
 }
@@ -327,9 +335,50 @@ fn prehook_profile_reports_collective_query_usage() {
     );
 
     assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("tool=Edit"));
+    assert!(stderr.contains(&format!("stdout_bytes={}", stdout.len())));
+    assert!(stderr.contains("output_mode=next-step"));
+    assert!(stderr.contains("decision_path=preparation"));
+    assert!(stderr.contains("evidence_scope=collective"));
     assert!(stderr.contains("collective_queries_used=1"));
+}
+
+#[test]
+fn prehook_profile_reports_context_only_mode() {
+    let repo = tempfile::tempdir().unwrap();
+    init_git_repo(repo.path());
+
+    let main_rs = repo.path().join("main.rs");
+    std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+    git_commit_all(repo.path(), "init");
+
+    std::fs::write(&main_rs, "fn main() { println!(\"v2\"); }\n").unwrap();
+    git_commit_all(repo.path(), "edit main");
+
+    let data_dir = repo.path().join(".thronglets-data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let payload = format!(
+        r#"{{"tool_name":"Edit","tool_input":{{"file_path":"{}"}}}}"#,
+        main_rs.display()
+    );
+    let output = run_bin_env(
+        &["--data-dir", data_dir.to_str().unwrap(), "prehook"],
+        Some(&payload),
+        None,
+        &[("THRONGLETS_PROFILE_PREHOOK", "1")],
+    );
+
+    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("context: git history for main.rs:"));
+    assert!(stderr.contains("output_mode=context-only"));
+    assert!(stderr.contains("decision_path=history"));
+    assert!(stderr.contains("evidence_scope=none"));
+    assert!(stderr.contains(&format!("stdout_bytes={}", stdout.len())));
 }
 
 #[test]

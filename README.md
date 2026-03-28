@@ -52,6 +52,7 @@ THRONGLETS_PROFILE_PREHOOK=1 thronglets prehook
 ```
 
 这会把阶段级耗时写到 `stderr`，不会污染 AI 看到的 `stdout`。
+输出还会标出 `stdout_bytes`、`output_mode`、`decision_path` 和 `evidence_scope`，方便判断一次 prehook 到底说了多少、走的是哪条决策路径。
 
 ## 为什么这很重要
 

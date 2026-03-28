@@ -14,7 +14,7 @@ use thronglets::context::simhash;
 use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
-use thronglets::signals::{select as select_signals, Signal, SignalKind, StepCandidate};
+use thronglets::signals::{select as select_signals, Recommendation, Signal, SignalKind, StepCandidate};
 use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
 use thronglets::workspace::{self, WorkspaceState};
@@ -763,15 +763,20 @@ async fn main() {
             profiler.stage("select");
 
             // Output: only when there's something worth saying
+            let mut stdout_bytes = 0;
             if !recommendations.is_empty() {
+                stdout_bytes += PREHOOK_HEADER.len() + 1;
                 println!("{PREHOOK_HEADER}");
                 for recommendation in &recommendations {
-                    println!("{}", recommendation.render());
+                    let rendered = recommendation.render();
+                    stdout_bytes += rendered.len() + 1;
+                    println!("{rendered}");
                 }
             }
             profiler.finish(
                 tool_name,
-                recommendations.len(),
+                &recommendations,
+                stdout_bytes,
                 PREHOOK_MAX_COLLECTIVE_QUERIES - collective_queries_remaining,
             );
             // Normal state → complete silence. Zero tokens.
@@ -1107,14 +1112,24 @@ impl PrehookProfiler {
         }
     }
 
-    fn finish(&self, tool_name: &str, emitted: usize, collective_queries_used: usize) {
+    fn finish(
+        &self,
+        tool_name: &str,
+        recommendations: &[Recommendation],
+        stdout_bytes: usize,
+        collective_queries_used: usize,
+    ) {
         if !self.enabled {
             return;
         }
 
         let mut parts = vec![
             format!("tool={tool_name}"),
-            format!("emitted={emitted}"),
+            format!("emitted={}", recommendations.len()),
+            format!("stdout_bytes={stdout_bytes}"),
+            format!("output_mode={}", profile_output_mode(recommendations)),
+            format!("decision_path={}", profile_decision_path(recommendations)),
+            format!("evidence_scope={}", profile_evidence_scope(recommendations)),
             format!("collective_queries_used={collective_queries_used}"),
             format!("total_us={}", self.started_at.elapsed().as_micros()),
         ];
@@ -1130,6 +1145,50 @@ impl PrehookProfiler {
         }
         eprintln!("[thronglets:prehook] {}", parts.join(" "));
     }
+}
+
+fn profile_output_mode(recommendations: &[Recommendation]) -> &'static str {
+    if recommendations.is_empty() {
+        "silent"
+    } else if recommendations.iter().any(|r| matches!(
+        r.source_kind,
+        SignalKind::Repair | SignalKind::Preparation | SignalKind::Adjacency
+    )) {
+        "next-step"
+    } else if recommendations.iter().any(|r| r.source_kind == SignalKind::Danger) {
+        "caution"
+    } else {
+        "context-only"
+    }
+}
+
+fn profile_decision_path(recommendations: &[Recommendation]) -> &'static str {
+    recommendations
+        .iter()
+        .find(|r| matches!(
+            r.source_kind,
+            SignalKind::Repair | SignalKind::Preparation | SignalKind::Adjacency
+        ))
+        .or_else(|| recommendations.first())
+        .map(|r| match r.source_kind {
+            SignalKind::Danger => "danger",
+            SignalKind::Repair => "repair",
+            SignalKind::Preparation => "preparation",
+            SignalKind::Adjacency => "adjacency",
+            SignalKind::History => "history",
+        })
+        .unwrap_or("none")
+}
+
+fn profile_evidence_scope(recommendations: &[Recommendation]) -> &'static str {
+    recommendations
+        .iter()
+        .find_map(|r| r.candidate.as_ref())
+        .map(|candidate| match candidate.evidence_scope {
+            thronglets::signals::EvidenceScope::Local => "local",
+            thronglets::signals::EvidenceScope::Collective => "collective",
+        })
+        .unwrap_or("none")
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
