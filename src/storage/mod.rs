@@ -3,6 +3,7 @@
 //! Each node stores traces locally. No global consensus needed.
 //! Traces have TTL — like pheromone evaporation, old signals fade.
 
+use crate::posts::{SIGNAL_CAPABILITY_PREFIX, SignalPostKind};
 use crate::signals::StepAction;
 use crate::trace::{Outcome, Trace};
 use ed25519_dalek::Signature;
@@ -427,6 +428,60 @@ impl TraceStore {
             |row| row.get(0),
         )?;
         Ok(count.max(0) as u32)
+    }
+
+    /// Query explicit signal traces by context similarity and optional kind.
+    pub fn query_signal_traces(
+        &self,
+        context_hash: &[u8; 16],
+        kind: Option<SignalPostKind>,
+        max_distance: u32,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<Trace>> {
+        let conn = self.conn.lock().unwrap();
+        let target_bucket = context_bucket(context_hash);
+        let bucket_radius = (max_distance / 8).max(1) as i64;
+        let bucket_lo = (target_bucket - bucket_radius).max(0);
+        let bucket_hi = (target_bucket + bucket_radius).min(65535);
+        let query_limit = (limit.max(1) * 20) as i64;
+
+        let candidates = if let Some(kind) = kind {
+            let capability = kind.capability();
+            let mut stmt = conn.prepare(
+                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                        context_text, session_id, model_id, timestamp, node_pubkey, signature
+                 FROM traces
+                 WHERE context_bucket BETWEEN ?1 AND ?2
+                   AND capability = ?3
+                 ORDER BY timestamp DESC
+                 LIMIT ?4",
+            )?;
+            Self::collect_traces(
+                &mut stmt,
+                params![bucket_lo, bucket_hi, capability, query_limit],
+            )?
+        } else {
+            let like = format!("{SIGNAL_CAPABILITY_PREFIX}%");
+            let mut stmt = conn.prepare(
+                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                        context_text, session_id, model_id, timestamp, node_pubkey, signature
+                 FROM traces
+                 WHERE context_bucket BETWEEN ?1 AND ?2
+                   AND capability LIKE ?3
+                 ORDER BY timestamp DESC
+                 LIMIT ?4",
+            )?;
+            Self::collect_traces(&mut stmt, params![bucket_lo, bucket_hi, like, query_limit])?
+        };
+
+        let mut matched: Vec<Trace> = candidates
+            .into_iter()
+            .filter(|trace| {
+                crate::context::hamming_distance(&trace.context_hash, context_hash) <= max_distance
+            })
+            .collect();
+        matched.truncate(limit);
+        Ok(matched)
     }
 
     /// Evaporate old traces (pheromone decay).
@@ -1232,5 +1287,41 @@ mod tests {
             .count_preparation_sources("main.rs", "helper.rs", 24)
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn query_signal_traces_filters_by_kind() {
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+
+        let avoid = crate::posts::create_signal_trace(
+            SignalPostKind::Avoid,
+            "repair flaky ci",
+            "skip the generated lockfile",
+            "codex".into(),
+            Some("s1".into()),
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let recommend = crate::posts::create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair flaky ci",
+            "run release-check first",
+            "codex".into(),
+            Some("s2".into()),
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+
+        store.insert(&avoid).unwrap();
+        store.insert(&recommend).unwrap();
+
+        let target = crate::context::simhash("repair flaky ci");
+        let results = store
+            .query_signal_traces(&target, Some(SignalPostKind::Avoid), 48, 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].capability, SignalPostKind::Avoid.capability());
     }
 }

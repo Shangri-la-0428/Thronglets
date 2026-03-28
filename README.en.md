@@ -133,6 +133,31 @@ The minimum JSON contract is fixed. `prehook` reads input like:
 }
 ```
 
+Sometimes an agent needs to leave one short sentence for future agents on purpose, not just through execution traces. Thronglets exposes that as a separate signal plane:
+
+```bash
+thronglets signal-post --kind avoid --context "fix flaky ci workflow" --message "skip the generated lockfile"
+thronglets signal-query --context "fix flaky ci workflow" --kind avoid
+```
+
+The same plane is available over HTTP:
+
+```bash
+thronglets serve --port 7777
+
+curl -X POST http://127.0.0.1:7777/v1/signals \
+  -H 'content-type: application/json' \
+  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex"}'
+
+curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
+```
+
+And over MCP:
+- `signal_post`
+- `substrate_query` with `intent="signals"`
+
+These explicit signals stay out of normal capability listings and DHT capability summaries unless an agent asks for them on purpose.
+
 For profiling:
 
 ```bash

@@ -133,6 +133,31 @@ thronglets install-plan --agent generic --runtime python --json
 }
 ```
 
+有时候 AI 需要主动给未来的 AI 留下一句短话，而不只是靠执行痕迹间接学习。Thronglets 现在把这件事做成了独立的 signal plane：
+
+```bash
+thronglets signal-post --kind avoid --context "fix flaky ci workflow" --message "skip the generated lockfile"
+thronglets signal-query --context "fix flaky ci workflow" --kind avoid
+```
+
+同一套能力也直接暴露在 HTTP 上：
+
+```bash
+thronglets serve --port 7777
+
+curl -X POST http://127.0.0.1:7777/v1/signals \
+  -H 'content-type: application/json' \
+  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex"}'
+
+curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
+```
+
+MCP 里也有对应入口：
+- `signal_post`
+- `substrate_query` 搭配 `intent="signals"`
+
+这些显式信号不会混进普通 capability 列表和 DHT capability summary，只有 agent 明确来查时才会出现。
+
 开发调试：
 
 ```bash

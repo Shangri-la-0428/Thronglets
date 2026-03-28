@@ -22,6 +22,9 @@ use thronglets::eval::{
 use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
+use thronglets::posts::{
+    SignalPostKind, create_signal_trace, is_signal_capability, summarize_signal_traces,
+};
 use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
     Recommendation, Signal, SignalKind, StepCandidate, select as select_signals,
@@ -226,6 +229,25 @@ impl RuntimeArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SignalKindArg {
+    Recommend,
+    Avoid,
+    Watch,
+    Info,
+}
+
+impl From<SignalKindArg> for SignalPostKind {
+    fn from(value: SignalKindArg) -> Self {
+        match value {
+            SignalKindArg::Recommend => SignalPostKind::Recommend,
+            SignalKindArg::Avoid => SignalPostKind::Avoid,
+            SignalKindArg::Watch => SignalPostKind::Watch,
+            SignalKindArg::Info => SignalPostKind::Info,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Start the Thronglets node
@@ -272,6 +294,44 @@ enum Commands {
     Query {
         /// Capability URI to query
         capability: String,
+    },
+
+    /// Leave an explicit short signal for future agents.
+    SignalPost {
+        /// Signal type.
+        #[arg(long, value_enum)]
+        kind: SignalKindArg,
+
+        /// Task context this signal applies to.
+        #[arg(long)]
+        context: String,
+
+        /// The short message to leave for future agents.
+        #[arg(long)]
+        message: String,
+
+        /// Model identifier.
+        #[arg(long, default_value = "cli")]
+        model: String,
+
+        /// Optional session identifier.
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Query explicit short signals left by other agents.
+    SignalQuery {
+        /// Task context to search against.
+        #[arg(long)]
+        context: String,
+
+        /// Restrict to one signal kind.
+        #[arg(long, value_enum)]
+        kind: Option<SignalKindArg>,
+
+        /// Maximum results to return.
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
     },
 
     /// Start MCP server for AI agent integration (JSON-RPC over stdio)
@@ -650,6 +710,25 @@ fn render_install_plan_report(data: &InstallPlanData) {
         println!("Next: rerun with --json to inspect contract examples and runtime snippets.");
         println!();
         render_install_plans(&data.plans);
+    }
+}
+
+fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult]) {
+    if results.is_empty() {
+        println!("No explicit signals found.");
+        return;
+    }
+
+    println!("Explicit signals:");
+    for result in results {
+        println!("  {}: {}", result.kind, result.message,);
+        println!(
+            "    similarity={:.2} posts={} sources={}",
+            result.context_similarity, result.total_posts, result.source_count
+        );
+        for context in &result.contexts {
+            println!("    context: {context}");
+        }
     }
 }
 
@@ -1297,6 +1376,44 @@ async fn main() {
             }
         }
 
+        Commands::SignalPost {
+            kind,
+            context,
+            message,
+            model,
+            session_id,
+        } => {
+            let store = open_store(&dir);
+            let trace = create_signal_trace(
+                kind.into(),
+                &context,
+                &message,
+                model,
+                session_id,
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&trace).expect("failed to insert signal trace");
+            println!("Signal posted:");
+            println!("  Kind:      {}", SignalPostKind::from(kind).as_str());
+            println!("  Message:   {}", message);
+            println!("  Trace ID:  {}", hex_encode(&trace.id[..8]));
+        }
+
+        Commands::SignalQuery {
+            context,
+            kind,
+            limit,
+        } => {
+            let store = open_store(&dir);
+            let query_hash = simhash(&context);
+            let traces = store
+                .query_signal_traces(&query_hash, kind.map(Into::into), 48, limit)
+                .expect("failed to query signal traces");
+            let results = summarize_signal_traces(&traces, &context, limit);
+            render_signal_query_results(&results);
+        }
+
         Commands::Run { port, bootstrap } => {
             let store = open_store(&dir);
 
@@ -1372,6 +1489,9 @@ async fn main() {
                     _ = dht_publish_interval.tick() => {
                         if let Ok(caps) = store.distinct_capabilities(100) {
                             for cap in caps {
+                                if is_signal_capability(&cap) {
+                                    continue;
+                                }
                                 if let Ok(Some(stats)) = store.aggregate(&cap) {
                                     let _ = cmd_tx.send(NetworkCommand::PublishSummary {
                                         capability: cap,
@@ -1996,6 +2116,8 @@ async fn main() {
             });
             println!("Thronglets HTTP API on http://0.0.0.0:{port}");
             println!("  POST /v1/traces       — record a trace");
+            println!("  POST /v1/signals      — leave an explicit short signal");
+            println!("  GET  /v1/signals      — query explicit short signals");
             println!("  GET  /v1/query        — query the substrate");
             println!("  GET  /v1/capabilities — list capabilities");
             println!("  GET  /v1/status       — node status");
@@ -2014,7 +2136,11 @@ async fn main() {
             let trace_count = store.count().unwrap_or(0);
             let cap_count = store
                 .distinct_capabilities(1000)
-                .map(|s| s.len())
+                .map(|caps| {
+                    caps.into_iter()
+                        .filter(|capability| !is_signal_capability(capability))
+                        .count()
+                })
                 .unwrap_or(0);
             let db_path = dir.join("traces.db");
             let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);

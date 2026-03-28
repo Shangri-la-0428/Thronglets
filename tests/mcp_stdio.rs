@@ -93,7 +93,7 @@ async fn mcp_full_protocol_handshake() {
     )
     .await;
 
-    // 3. List tools — should have exactly 3 (trace_record, substrate_query, trace_anchor)
+    // 3. List tools — should expose the full machine-facing MCP surface.
     let resp = rpc_call(
         &mut stdin,
         &mut lines,
@@ -106,11 +106,12 @@ async fn mcp_full_protocol_handshake() {
     .await;
 
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 3);
+    assert_eq!(tools.len(), 4);
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(tool_names.contains(&"trace_record"));
     assert!(tool_names.contains(&"substrate_query"));
     assert!(tool_names.contains(&"trace_anchor"));
+    assert!(tool_names.contains(&"signal_post"));
 
     // 4. Record a trace
     let resp = rpc_call(

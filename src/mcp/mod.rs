@@ -19,6 +19,9 @@ use crate::anchor::AnchorClient;
 use crate::context::{simhash, similarity};
 use crate::identity::NodeIdentity;
 use crate::network::NetworkCommand;
+use crate::posts::{
+    SignalPostKind, create_signal_trace, is_signal_capability, summarize_signal_traces,
+};
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
 
@@ -114,8 +117,39 @@ fn tool_definitions() -> Value {
                 }
             },
             {
+                "name": "signal_post",
+                "description": "Leave an explicit short signal for future agents. Use this when you want to say recommend/avoid/watch/info in a specific task context.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["recommend", "avoid", "watch", "info"],
+                            "description": "Signal type"
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "Task context this signal applies to"
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "Short message for future agents"
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Self-reported model identifier (default: \"unknown\")"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session identifier"
+                        }
+                    },
+                    "required": ["kind", "context", "message"]
+                }
+            },
+            {
                 "name": "substrate_query",
-                "description": "Query the Thronglets substrate. Use intent 'resolve' to find capabilities for a task, 'evaluate' to get stats for a specific capability, or 'explore' to discover what's available.",
+                "description": "Query the Thronglets substrate. Use intent 'resolve' to find capabilities for a task, 'evaluate' to get stats for a specific capability, 'explore' to discover what's available, or 'signals' to find explicit short messages left by other agents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -125,12 +159,17 @@ fn tool_definitions() -> Value {
                         },
                         "intent": {
                             "type": "string",
-                            "enum": ["resolve", "evaluate", "explore"],
-                            "description": "Query intent: resolve (find capabilities), evaluate (get stats), explore (discover)"
+                            "enum": ["resolve", "evaluate", "explore", "signals"],
+                            "description": "Query intent: resolve (find capabilities), evaluate (get stats), explore (discover), signals (explicit short messages)"
                         },
                         "capability": {
                             "type": "string",
                             "description": "Specific capability URI (required for 'evaluate' intent)"
+                        },
+                        "kind": {
+                            "type": "string",
+                            "enum": ["recommend", "avoid", "watch", "info"],
+                            "description": "Optional signal kind filter (used for 'signals' intent)"
                         },
                         "limit": {
                             "type": "integer",
@@ -254,6 +293,7 @@ async fn handle_tool_call(ctx: &McpContext, id: Value, params: Value) -> JsonRpc
 
     match tool_name {
         "trace_record" => handle_trace_record(ctx, id, arguments).await,
+        "signal_post" => handle_signal_post(ctx, id, arguments).await,
         "substrate_query" => handle_substrate_query(ctx, id, arguments),
         "trace_anchor" => handle_trace_anchor(ctx, id, arguments),
         _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
@@ -347,6 +387,69 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
     )
 }
 
+async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
+    let kind = match args
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .and_then(SignalPostKind::parse)
+    {
+        Some(kind) => kind,
+        None => {
+            return JsonRpcResponse::error(id, -32602, "Missing or invalid field: kind".into());
+        }
+    };
+    let context = match args.get("context").and_then(|v| v.as_str()) {
+        Some(value) => value,
+        None => {
+            return JsonRpcResponse::error(id, -32602, "Missing required field: context".into());
+        }
+    };
+    let message = match args.get("message").and_then(|v| v.as_str()) {
+        Some(value) => value,
+        None => {
+            return JsonRpcResponse::error(id, -32602, "Missing required field: message".into());
+        }
+    };
+    let model_id = args
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    let trace = create_signal_trace(
+        kind,
+        context,
+        message,
+        model_id,
+        session_id,
+        ctx.identity.public_key_bytes(),
+        |msg| ctx.identity.sign(msg),
+    );
+    let trace_id_hex: String = trace.id[..8].iter().map(|b| format!("{b:02x}")).collect();
+
+    match ctx.store.insert(&trace) {
+        Ok(_) => JsonRpcResponse::success(
+            id,
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string(&json!({
+                        "posted": true,
+                        "kind": kind.as_str(),
+                        "message": message,
+                        "trace_id": trace_id_hex,
+                    })).unwrap()
+                }]
+            }),
+        ),
+        Err(e) => JsonRpcResponse::error(id, -32000, format!("Storage error: {e}")),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tool 2: substrate_query
 // ---------------------------------------------------------------------------
@@ -383,10 +486,32 @@ fn handle_substrate_query(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRe
             handle_evaluate(ctx, id, capability, limit)
         }
         "explore" => handle_explore(ctx, id, context_str, limit),
+        "signals" => {
+            let kind = args
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .map(|value| {
+                    SignalPostKind::parse(value).ok_or_else(|| {
+                        JsonRpcResponse::error(
+                            id.clone(),
+                            -32602,
+                            format!("Unknown signal kind: {value}"),
+                        )
+                    })
+                })
+                .transpose();
+
+            match kind {
+                Ok(kind) => handle_signals(ctx, id, context_str, kind, limit),
+                Err(error) => error,
+            }
+        }
         _ => JsonRpcResponse::error(
             id,
             -32602,
-            format!("Unknown intent: {intent}. Use 'resolve', 'evaluate', or 'explore'."),
+            format!(
+                "Unknown intent: {intent}. Use 'resolve', 'evaluate', 'explore', or 'signals'."
+            ),
         ),
     }
 }
@@ -404,6 +529,9 @@ fn handle_resolve(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
     // Group by capability, compute per-capability stats
     let mut cap_groups: HashMap<&str, Vec<&Trace>> = HashMap::new();
     for t in &traces {
+        if is_signal_capability(&t.capability) {
+            continue;
+        }
         cap_groups.entry(&t.capability).or_default().push(t);
     }
 
@@ -572,6 +700,9 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
     let mut gaps: Vec<String> = Vec::new();
 
     for cap in &caps {
+        if is_signal_capability(cap) {
+            continue;
+        }
         match ctx.store.aggregate(cap) {
             Ok(Some(stats)) => {
                 // Check if this cap has traces with similar context
@@ -618,6 +749,35 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
         "gaps": gaps,
     });
 
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&response_json).unwrap()
+            }]
+        }),
+    )
+}
+
+fn handle_signals(
+    ctx: &McpContext,
+    id: Value,
+    context_str: &str,
+    kind: Option<SignalPostKind>,
+    limit: usize,
+) -> JsonRpcResponse {
+    let context_hash = simhash(context_str);
+    let traces = match ctx
+        .store
+        .query_signal_traces(&context_hash, kind, 48, limit.max(1))
+    {
+        Ok(traces) => traces,
+        Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
+    };
+    let response_json = json!({
+        "signals": summarize_signal_traces(&traces, context_str, limit),
+    });
     JsonRpcResponse::success(
         id,
         json!({
@@ -818,7 +978,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_three_tools() {
+    async fn tools_list_returns_four_tools() {
         let ctx = make_ctx();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -828,10 +988,11 @@ mod tests {
         };
         let resp = handle_request(&ctx, req).await.unwrap();
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 4);
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"trace_record"));
+        assert!(names.contains(&"signal_post"));
         assert!(names.contains(&"substrate_query"));
         assert!(names.contains(&"trace_anchor"));
     }
@@ -968,6 +1129,56 @@ mod tests {
                 "results should be sorted by context_similarity descending"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn signal_post_and_query_roundtrip() {
+        let ctx = make_ctx();
+
+        let post_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(6)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "signal_post",
+                "arguments": {
+                    "kind": "avoid",
+                    "context": "fix flaky ci workflow",
+                    "message": "skip the generated lockfile",
+                    "model": "codex"
+                }
+            }),
+        };
+        let resp = handle_request(&ctx, post_req).await.unwrap();
+        assert!(resp.error.is_none(), "signal_post should succeed");
+
+        let query_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(7)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "substrate_query",
+                "arguments": {
+                    "context": "fix flaky ci workflow",
+                    "intent": "signals",
+                    "kind": "avoid",
+                    "limit": 5
+                }
+            }),
+        };
+        let resp = handle_request(&ctx, query_req).await.unwrap();
+        assert!(resp.error.is_none(), "signal query should succeed");
+
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("signal query response should be valid JSON");
+        let signals = parsed["signals"].as_array().unwrap();
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["kind"], "avoid");
+        assert_eq!(signals[0]["message"], "skip the generated lockfile");
     }
 
     #[tokio::test]

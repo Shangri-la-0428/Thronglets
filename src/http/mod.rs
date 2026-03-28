@@ -5,15 +5,20 @@
 //!
 //! Endpoints:
 //! - POST /v1/traces       — record a trace
+//! - POST /v1/signals      — leave an explicit short signal
+//! - GET  /v1/signals      — query explicit short signals
 //! - GET  /v1/query        — query the substrate
 //! - GET  /v1/capabilities — list known capabilities
 //! - GET  /v1/status       — node status
 
 use crate::context::{simhash, similarity};
 use crate::identity::NodeIdentity;
+use crate::posts::{
+    SignalPostKind, create_signal_trace, is_signal_capability, summarize_signal_traces,
+};
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -46,7 +51,11 @@ pub async fn serve(ctx: Arc<HttpContext>, port: u16) -> std::io::Result<()> {
 
             let http_response = format!(
                 "HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
-                if response.contains("\"error\"") { "400" } else { "200" },
+                if response.contains("\"error\"") {
+                    "400"
+                } else {
+                    "200"
+                },
                 response.len(),
                 response,
             );
@@ -58,31 +67,34 @@ pub async fn serve(ctx: Arc<HttpContext>, port: u16) -> std::io::Result<()> {
 }
 
 fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
-    // Parse HTTP method and path from first line
     let first_line = raw.lines().next().unwrap_or("");
     let parts: Vec<&str> = first_line.split_whitespace().collect();
     let method = parts.first().copied().unwrap_or("");
     let path = parts.get(1).copied().unwrap_or("");
+    let path_only = path.split('?').next().unwrap_or(path);
 
-    // Handle CORS preflight
     if method == "OPTIONS" {
         return "{}".to_string();
     }
 
-    // Extract JSON body (everything after the blank line)
     let body = raw.split("\r\n\r\n").nth(1).unwrap_or("");
 
-    match (method, path) {
+    match (method, path_only) {
         ("POST", "/v1/traces") => handle_post_trace(ctx, body),
-        ("GET", p) if p.starts_with("/v1/query") => handle_get_query(ctx, p),
+        ("POST", "/v1/signals") => handle_post_signal(ctx, body),
+        ("GET", "/v1/signals") => handle_get_signals(ctx, path),
+        ("GET", "/v1/query") => handle_get_query(ctx, path),
         ("GET", "/v1/capabilities") => handle_get_capabilities(ctx),
         ("GET", "/v1/status") => handle_get_status(ctx),
         _ => json!({"error": "not found", "endpoints": [
             "POST /v1/traces",
-            "GET /v1/query?context=...&intent=resolve|evaluate|explore",
+            "POST /v1/signals",
+            "GET /v1/signals?context=...&kind=avoid|recommend|watch|info&limit=5",
+            "GET /v1/query?context=...&intent=resolve|evaluate|explore|signals",
             "GET /v1/capabilities",
             "GET /v1/status"
-        ]}).to_string(),
+        ]})
+        .to_string(),
     }
 }
 
@@ -112,7 +124,11 @@ fn handle_post_trace(ctx: &HttpContext, body: &str) -> String {
     let session_id = args["session_id"].as_str().map(String::from);
 
     let context_hash = simhash(context_str);
-    let context_text = if context_str.is_empty() { None } else { Some(context_str.to_string()) };
+    let context_text = if context_str.is_empty() {
+        None
+    } else {
+        Some(context_str.to_string())
+    };
 
     let trace = Trace::new(
         capability.clone(),
@@ -134,23 +150,66 @@ fn handle_post_trace(ctx: &HttpContext, body: &str) -> String {
             "recorded": true,
             "trace_id": trace_id_hex,
             "capability": capability,
-        }).to_string(),
+        })
+        .to_string(),
+        Err(e) => json!({"error": format!("storage: {e}")}).to_string(),
+    }
+}
+
+fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
+    let args: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return json!({"error": format!("invalid JSON: {e}")}).to_string(),
+    };
+
+    let kind = match args["kind"].as_str().and_then(SignalPostKind::parse) {
+        Some(kind) => kind,
+        None => return json!({"error": "missing or invalid field: kind"}).to_string(),
+    };
+    let context = match args["context"].as_str() {
+        Some(context) => context,
+        None => return json!({"error": "missing field: context"}).to_string(),
+    };
+    let message = match args["message"].as_str() {
+        Some(message) => message,
+        None => return json!({"error": "missing field: message"}).to_string(),
+    };
+    let model = args["model"].as_str().unwrap_or("unknown").to_string();
+    let session_id = args["session_id"].as_str().map(str::to_string);
+
+    let trace = create_signal_trace(
+        kind,
+        context,
+        message,
+        model,
+        session_id,
+        ctx.identity.public_key_bytes(),
+        |msg| ctx.identity.sign(msg),
+    );
+    let trace_id_hex: String = trace.id[..8].iter().map(|b| format!("{b:02x}")).collect();
+
+    match ctx.store.insert(&trace) {
+        Ok(_) => json!({
+            "posted": true,
+            "kind": kind.as_str(),
+            "message": message,
+            "trace_id": trace_id_hex,
+        })
+        .to_string(),
         Err(e) => json!({"error": format!("storage: {e}")}).to_string(),
     }
 }
 
 fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
-    // Parse query string from path
-    let query_str = path.split('?').nth(1).unwrap_or("");
-    let params: HashMap<&str, &str> = query_str
-        .split('&')
-        .filter_map(|p| p.split_once('='))
-        .collect();
-
-    let context_str = params.get("context").copied().unwrap_or("");
-    let intent = params.get("intent").copied().unwrap_or("explore");
-    let capability = params.get("capability").copied().unwrap_or("");
-    let limit: usize = params.get("limit")
+    let params = parse_query_params(path);
+    let context_str = params.get("context").map(String::as_str).unwrap_or("");
+    let intent = params
+        .get("intent")
+        .map(String::as_str)
+        .unwrap_or("explore");
+    let capability = params.get("capability").map(String::as_str).unwrap_or("");
+    let limit: usize = params
+        .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
 
@@ -163,33 +222,50 @@ fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
             };
 
             let mut cap_groups: HashMap<&str, Vec<&Trace>> = HashMap::new();
-            for t in &traces {
-                cap_groups.entry(&t.capability).or_default().push(t);
+            for trace in &traces {
+                if is_signal_capability(&trace.capability) {
+                    continue;
+                }
+                cap_groups.entry(&trace.capability).or_default().push(trace);
             }
 
-            let mut capabilities: Vec<Value> = cap_groups.iter().map(|(cap, group)| {
-                let total = group.len() as u64;
-                let successes = group.iter().filter(|t| matches!(t.outcome, Outcome::Succeeded)).count() as f64;
-                let success_rate = if total > 0 { successes / total as f64 } else { 0.0 };
-                let best_sim = group.iter()
-                    .map(|t| similarity(&context_hash, &t.context_hash))
-                    .fold(0.0_f64, f64::max);
-                let samples: Vec<&str> = group.iter()
-                    .filter_map(|t| t.context_text.as_deref())
-                    .take(3)
-                    .collect();
+            let mut capabilities: Vec<Value> = cap_groups
+                .iter()
+                .map(|(cap, group)| {
+                    let total = group.len() as u64;
+                    let successes = group
+                        .iter()
+                        .filter(|trace| matches!(trace.outcome, Outcome::Succeeded))
+                        .count() as f64;
+                    let success_rate = if total > 0 {
+                        successes / total as f64
+                    } else {
+                        0.0
+                    };
+                    let best_sim = group
+                        .iter()
+                        .map(|trace| similarity(&context_hash, &trace.context_hash))
+                        .fold(0.0_f64, f64::max);
+                    let samples: Vec<&str> = group
+                        .iter()
+                        .filter_map(|trace| trace.context_text.as_deref())
+                        .take(3)
+                        .collect();
 
-                json!({
-                    "capability": cap,
-                    "context_similarity": round2(best_sim),
-                    "success_rate": round2(success_rate),
-                    "total_traces": total,
-                    "context_samples": samples,
+                    json!({
+                        "capability": cap,
+                        "context_similarity": round2(best_sim),
+                        "success_rate": round2(success_rate),
+                        "total_traces": total,
+                        "context_samples": samples,
+                    })
                 })
-            }).collect();
+                .collect();
 
             capabilities.sort_by(|a, b| {
-                b["context_similarity"].as_f64().unwrap_or(0.0)
+                b["context_similarity"]
+                    .as_f64()
+                    .unwrap_or(0.0)
                     .partial_cmp(&a["context_similarity"].as_f64().unwrap_or(0.0))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
@@ -211,19 +287,57 @@ fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
                         "p95_latency_ms": stats.p95_latency_ms,
                         "confidence": round2(stats.confidence),
                     }
-                }).to_string(),
+                })
+                .to_string(),
                 Ok(None) => json!({"capability": capability, "stats": null}).to_string(),
                 Err(e) => json!({"error": format!("query: {e}")}).to_string(),
             }
         }
+        "signals" => handle_signals_query(ctx, &params),
         _ => handle_get_capabilities(ctx),
     }
+}
+
+fn handle_get_signals(ctx: &HttpContext, path: &str) -> String {
+    let params = parse_query_params(path);
+    handle_signals_query(ctx, &params)
+}
+
+fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> String {
+    let context_str = params.get("context").map(String::as_str).unwrap_or("");
+    let kind = match params.get("kind") {
+        Some(value) => match SignalPostKind::parse(value) {
+            Some(kind) => Some(kind),
+            None => return json!({"error": format!("invalid signal kind: {value}")}).to_string(),
+        },
+        None => None,
+    };
+    let limit: usize = params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+    let context_hash = simhash(context_str);
+    let traces = match ctx
+        .store
+        .query_signal_traces(&context_hash, kind, 48, limit.max(1))
+    {
+        Ok(traces) => traces,
+        Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
+    };
+
+    json!({
+        "signals": summarize_signal_traces(&traces, context_str, limit),
+    })
+    .to_string()
 }
 
 fn handle_get_capabilities(ctx: &HttpContext) -> String {
     let caps = ctx.store.distinct_capabilities(100).unwrap_or_default();
     let mut result = Vec::new();
     for cap in &caps {
+        if is_signal_capability(cap) {
+            continue;
+        }
         if let Ok(Some(stats)) = ctx.store.aggregate(cap) {
             result.push(json!({
                 "capability": cap,
@@ -239,8 +353,14 @@ fn handle_get_capabilities(ctx: &HttpContext) -> String {
 
 fn handle_get_status(ctx: &HttpContext) -> String {
     let trace_count = ctx.store.count().unwrap_or(0);
-    let cap_count = ctx.store.distinct_capabilities(1000)
-        .map(|s| s.len())
+    let cap_count = ctx
+        .store
+        .distinct_capabilities(1000)
+        .map(|caps| {
+            caps.into_iter()
+                .filter(|capability| !is_signal_capability(capability))
+                .count()
+        })
         .unwrap_or(0);
 
     json!({
@@ -248,7 +368,58 @@ fn handle_get_status(ctx: &HttpContext) -> String {
         "node_id": hex_encode(&ctx.identity.public_key_bytes()[..4]),
         "trace_count": trace_count,
         "capabilities": cap_count,
-    }).to_string()
+    })
+    .to_string()
+}
+
+fn parse_query_params(path: &str) -> HashMap<String, String> {
+    let query_str = path.split('?').nth(1).unwrap_or("");
+    query_str
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, value)| (percent_decode(key), percent_decode(value)))
+        .collect()
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'+' => {
+                decoded.push(b' ');
+                idx += 1;
+            }
+            b'%' if idx + 2 < bytes.len() => {
+                let hi = from_hex(bytes[idx + 1]);
+                let lo = from_hex(bytes[idx + 2]);
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    decoded.push((hi << 4) | lo);
+                    idx += 3;
+                } else {
+                    decoded.push(bytes[idx]);
+                    idx += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                idx += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn from_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn round2(v: f64) -> f64 {
@@ -257,4 +428,98 @@ fn round2(v: f64) -> f64 {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx() -> HttpContext {
+        HttpContext {
+            identity: Arc::new(NodeIdentity::generate()),
+            store: Arc::new(TraceStore::in_memory().unwrap()),
+        }
+    }
+
+    fn parse_body(raw_response: &str) -> Value {
+        serde_json::from_str(raw_response).expect("response should be valid json")
+    }
+
+    #[test]
+    fn signal_post_and_query_roundtrip_decodes_context() {
+        let ctx = make_ctx();
+
+        let post_request = concat!(
+            "POST /v1/signals HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"kind\":\"avoid\",\"context\":\"fix flaky ci workflow\",\"message\":\"skip the generated lockfile\",\"model\":\"codex\"}",
+        );
+        let post_response = parse_body(&handle_http_request(&ctx, post_request));
+        assert_eq!(post_response["posted"], true);
+
+        let get_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=5 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        let signals = get_response["signals"].as_array().unwrap();
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["kind"], "avoid");
+        assert_eq!(signals[0]["message"], "skip the generated lockfile");
+
+        let query_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/query?context=fix%20flaky%20ci%20workflow&intent=signals&kind=avoid&limit=5 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        let signals = query_response["signals"].as_array().unwrap();
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["kind"], "avoid");
+    }
+
+    #[test]
+    fn resolve_capabilities_and_status_ignore_signal_capabilities() {
+        let ctx = make_ctx();
+
+        let post_signal = concat!(
+            "POST /v1/signals HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"kind\":\"info\",\"context\":\"inspect src/main.rs\",\"message\":\"main.rs is noisy\",\"model\":\"codex\"}",
+        );
+        let _ = handle_http_request(&ctx, post_signal);
+
+        let post_trace = concat!(
+            "POST /v1/traces HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"capability\":\"claude-code/Edit\",\"outcome\":\"succeeded\",\"latency_ms\":12,\"input_size\":34,\"context\":\"inspect src/main.rs\",\"model\":\"codex\"}",
+        );
+        let _ = handle_http_request(&ctx, post_trace);
+
+        let caps_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/capabilities HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        let caps = caps_response["capabilities"].as_array().unwrap();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0]["capability"], "claude-code/Edit");
+
+        let resolve_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/query?context=inspect%20src%2Fmain.rs&intent=resolve&limit=5 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        let resolved = resolve_response["capabilities"].as_array().unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0]["capability"], "claude-code/Edit");
+
+        let status_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/status HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        assert_eq!(status_response["trace_count"], 2);
+        assert_eq!(status_response["capabilities"], 1);
+    }
 }

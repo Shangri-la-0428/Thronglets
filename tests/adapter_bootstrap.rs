@@ -110,26 +110,23 @@ fn install_plan_generic_json_includes_contract_examples() {
     assert_eq!(plan["agent"], Value::String("generic".into()));
     assert_eq!(plan["contract"]["prehook_stdin"]["tool_name"], "Edit");
     assert!(plan["contract"]["hook_stdin"]["tool_response"].is_object());
-    assert_eq!(
+    assert!(
         plan["contract"]["runtimes"]["node"]["prehook"]
             .as_str()
             .unwrap()
-            .contains("execFileSync"),
-        true
+            .contains("execFileSync")
     );
-    assert_eq!(
+    assert!(
         plan["contract"]["runtimes"]["python"]["prehook"]
             .as_str()
             .unwrap()
-            .contains("subprocess.run"),
-        true
+            .contains("subprocess.run")
     );
-    assert_eq!(
+    assert!(
         plan["contract"]["runtimes"]["shell"]["hook"]
             .as_str()
             .unwrap()
-            .contains("thronglets hook"),
-        true
+            .contains("thronglets hook")
     );
 }
 
