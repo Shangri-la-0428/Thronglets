@@ -8,4 +8,5 @@ pub mod trace;
 pub mod storage;
 pub mod network;
 pub mod mcp;
+pub mod profile;
 pub mod workspace;

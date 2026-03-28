@@ -14,6 +14,7 @@ use thronglets::context::simhash;
 use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
+use thronglets::profile::summarize_prehook_profiles;
 use thronglets::signals::{select as select_signals, Recommendation, Signal, SignalKind, StepCandidate};
 use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
@@ -130,6 +131,10 @@ enum Commands {
 
     /// Show node status and statistics
     Status,
+
+    /// Summarize stderr lines emitted by THRONGLETS_PROFILE_PREHOOK=1.
+    /// Reads log lines from stdin and prints aggregate stats.
+    ProfileSummary,
 }
 
 fn data_dir(cli_override: &Option<PathBuf>) -> PathBuf {
@@ -922,6 +927,19 @@ async fn main() {
             println!("  Trace count:      {}", trace_count);
             println!("  Capabilities:     {}", cap_count);
             println!("  Database size:    {}", size_display);
+        }
+
+        Commands::ProfileSummary => {
+            let mut input = String::new();
+            if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
+                std::process::exit(0);
+            }
+
+            if let Some(summary) = summarize_prehook_profiles(&input) {
+                println!("{}", summary.render());
+            } else {
+                println!("no prehook profile samples found");
+            }
         }
     }
 }

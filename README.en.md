@@ -54,6 +54,12 @@ THRONGLETS_PROFILE_PREHOOK=1 thronglets prehook
 This writes stage timings to `stderr` and keeps AI-facing `stdout` unchanged.
 It also reports `stdout_bytes`, `output_mode`, `decision_path`, and `evidence_scope` so you can see how much the hook said and which path it took.
 
+To summarize those profiling lines:
+
+```bash
+cat prehook.log | thronglets profile-summary
+```
+
 ## Why This Matters
 
 Without Thronglets, your AI approaches every file blind. It doesn't know:

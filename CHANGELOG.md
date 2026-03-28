@@ -9,6 +9,7 @@
 - **Collective corroboration budget** — The hot path spends at most 1 collective lookup, prioritized toward the strongest action candidate
 - **Lazy git fallback** — `git log` now runs only when no action signal is available
 - **Optional prehook profiling** — `THRONGLETS_PROFILE_PREHOOK=1` emits stage timings plus `stdout_bytes`, `output_mode`, `decision_path`, and `evidence_scope` to `stderr` without polluting AI-facing `stdout`
+- **Profile summary command** — `thronglets profile-summary` reads those stderr lines from stdin and prints aggregate hot-path cost stats
 
 ### Collective Learning
 
