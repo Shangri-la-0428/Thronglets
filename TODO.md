@@ -20,20 +20,16 @@ Thronglets 现在的主线已经明确：
 - CI 里对 `schema_version`、`data.summary`、detail keys 做稳定性检查
 - 如果后面还要改 shape，必须升 `v3`
 
-### 2. Persist restart-needed state
-
-目标：AI 不只知道“怎么重启”，还知道“现在是否仍然没重启完”。
+### 2. Auto-clear restart state when runtimes can prove they reloaded
 
 当前状态：
 - `apply-plan / doctor / bootstrap` 已经暴露显式 `restart_commands`
-- `codex / openclaw` 已覆盖
+- `doctor` 已区分 `healthy` 和 `restart-pending`
+- `clear-restart` 已提供显式清除路径
 
 剩余完成标准：
-- 为 adapter 安装流程增加轻量 `restart_pending` 状态
-- `doctor` 区分：
-  - `healthy`
-  - `healthy but restart pending`
-- 在完成重启后可以自动清除或显式清除
+- 如果某个 native adapter 能可靠观测“已经真正重启完成”，就自动清除 `restart_pending`
+- 否则继续保持现在这条显式、可验证的清除路径
 
 ### 3. Harden setup/bootstrap matrix
 

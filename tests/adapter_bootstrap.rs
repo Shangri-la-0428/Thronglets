@@ -27,6 +27,10 @@ fn parse_doctor_envelope(output: &Output) -> Value {
     parse_command_data(output, "doctor")
 }
 
+fn parse_clear_restart_envelope(output: &Output) -> Value {
+    parse_command_data(output, "clear-restart")
+}
+
 #[test]
 fn detect_json_reports_present_adapters_and_generic_contract() {
     let temp = tempfile::tempdir().unwrap();
@@ -101,7 +105,7 @@ fn install_plan_generic_json_includes_contract_examples() {
 }
 
 #[test]
-fn apply_plan_codex_then_doctor_reports_healthy() {
+fn apply_plan_codex_then_doctor_reports_restart_pending() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
     let data_dir = temp.path().join("data");
@@ -146,17 +150,31 @@ fn apply_plan_codex_then_doctor_reports_healthy() {
         String::from_utf8_lossy(&doctor_output.stderr)
     );
     let summary = parse_doctor_envelope(&doctor_output);
-    assert_eq!(summary["summary"]["status"], Value::String("healthy".into()));
+    assert_eq!(
+        summary["summary"]["status"],
+        Value::String("restart-pending".into())
+    );
     assert_eq!(summary["summary"]["healthy"], Value::Bool(true));
+    assert_eq!(summary["summary"]["restart_pending"], Value::Bool(true));
     assert_eq!(
         summary["summary"]["restart_commands"].as_array().unwrap()[0],
         Value::String("Restart Codex".into())
     );
-    assert!(summary["summary"]["next_steps"].as_array().unwrap().is_empty());
+    assert!(
+        summary["summary"]["next_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step == "thronglets clear-restart --agent codex")
+    );
     let reports = summary["reports"].as_array().unwrap();
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["healthy"], Value::Bool(true));
-    assert_eq!(reports[0]["status"], Value::String("healthy".into()));
+    assert_eq!(reports[0]["restart_pending"], Value::Bool(true));
+    assert_eq!(
+        reports[0]["status"],
+        Value::String("restart-pending".into())
+    );
     assert!(reports[0]["fix_command"].is_null());
     assert_eq!(
         reports[0]["restart_command"],
@@ -181,6 +199,7 @@ fn doctor_fails_for_unconfigured_specific_adapter() {
     let summary = parse_doctor_envelope(&output);
     assert_eq!(summary["summary"]["status"], Value::String("needs-fix".into()));
     assert_eq!(summary["summary"]["healthy"], Value::Bool(false));
+    assert_eq!(summary["summary"]["restart_pending"], Value::Bool(false));
     assert_eq!(
         summary["summary"]["restart_commands"].as_array().unwrap()[0],
         Value::String("Restart Codex".into())
@@ -192,6 +211,7 @@ fn doctor_fails_for_unconfigured_specific_adapter() {
     let reports = summary["reports"].as_array().unwrap();
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["healthy"], Value::Bool(false));
+    assert_eq!(reports[0]["restart_pending"], Value::Bool(false));
     assert_eq!(reports[0]["status"], Value::String("needs-fix".into()));
     assert_eq!(
         reports[0]["fix_command"],
@@ -204,7 +224,7 @@ fn doctor_fails_for_unconfigured_specific_adapter() {
 }
 
 #[test]
-fn bootstrap_codex_json_applies_and_reports_healthy() {
+fn bootstrap_codex_json_applies_and_reports_restart_pending() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
     let data_dir = temp.path().join("data");
@@ -227,8 +247,15 @@ fn bootstrap_codex_json_applies_and_reports_healthy() {
         Value::String(SCHEMA_VERSION.into())
     );
     assert_eq!(envelope["command"], Value::String("bootstrap".into()));
-    assert_eq!(envelope["data"]["summary"]["status"], Value::String("healthy".into()));
+    assert_eq!(
+        envelope["data"]["summary"]["status"],
+        Value::String("restart-pending".into())
+    );
     assert_eq!(envelope["data"]["summary"]["healthy"], Value::Bool(true));
+    assert_eq!(
+        envelope["data"]["summary"]["restart_pending"],
+        Value::Bool(true)
+    );
     assert_eq!(envelope["data"]["summary"]["restart_required"], Value::Bool(true));
     assert_eq!(
         envelope["data"]["summary"]["restart_commands"].as_array().unwrap()[0],
@@ -246,6 +273,57 @@ fn bootstrap_codex_json_applies_and_reports_healthy() {
         envelope["data"]["reports"].as_array().unwrap()[0]["healthy"],
         Value::Bool(true)
     );
+    assert_eq!(
+        envelope["data"]["reports"].as_array().unwrap()[0]["restart_pending"],
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn clear_restart_codex_restores_healthy() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let apply_output = run_bin(
+        &["apply-plan", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        apply_output.status.success(),
+        "apply-plan failed: {}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+
+    let clear_output = run_bin(
+        &["clear-restart", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        clear_output.status.success(),
+        "clear-restart failed: {}",
+        String::from_utf8_lossy(&clear_output.stderr)
+    );
+    let summary = parse_clear_restart_envelope(&clear_output);
+    assert_eq!(summary["summary"]["status"], Value::String("cleared".into()));
+    assert_eq!(
+        summary["summary"]["cleared_agents"].as_array().unwrap()[0],
+        Value::String("codex".into())
+    );
+
+    let doctor_output = run_bin(&["doctor", "--agent", "codex", "--json"], &home, &data_dir);
+    assert!(
+        doctor_output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&doctor_output.stderr)
+    );
+    let summary = parse_doctor_envelope(&doctor_output);
+    assert_eq!(summary["summary"]["status"], Value::String("healthy".into()));
+    assert_eq!(summary["summary"]["healthy"], Value::Bool(true));
+    assert_eq!(summary["summary"]["restart_pending"], Value::Bool(false));
 }
 
 #[test]
@@ -293,8 +371,9 @@ fn doctor_text_stays_summary_first_when_healthy() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Doctor status: healthy"));
-    assert!(stdout.contains("Healthy: codex"));
+    assert!(stdout.contains("Doctor status: restart-pending"));
+    assert!(stdout.contains("Pending restart: codex"));
+    assert!(stdout.contains("Restart pending: yes"));
     assert!(!stdout.contains("Adapter health:"));
 }
 
@@ -315,7 +394,7 @@ fn setup_text_stays_summary_first() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Thronglets setup: healthy"));
+    assert!(stdout.contains("Thronglets setup: restart-pending"));
     assert!(stdout.contains("Installed: claude-code, codex, openclaw"));
     assert!(!stdout.contains("Applied adapter plan:"));
 }

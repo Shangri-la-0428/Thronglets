@@ -47,6 +47,11 @@ That's it. `thronglets setup` auto-installs known local adapters:
 - **OpenClaw**: installs a local path plugin and updates `~/.openclaw/openclaw.json`
 
 `setup` now also runs a bootstrap health pass and returns `restart required / next steps` directly.
+If an adapter still needs a client restart, `doctor` now returns `restart-pending`, and after the runtime is restarted you can clear that state with:
+
+```bash
+thronglets clear-restart --agent codex --json
+```
 
 Underneath, there is only one agent contract:
 - `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back
@@ -86,9 +91,9 @@ All machine-facing commands now share one stable envelope:
 }
 ```
 
-`detect / install-plan / apply-plan / doctor / bootstrap` now all lead with a top-level summary and then carry detailed lists.  
+`detect / install-plan / apply-plan / doctor / bootstrap / clear-restart` now all lead with a top-level summary and then carry detailed lists.  
 When a restart is needed, the summary also carries explicit `restart_commands`.  
-`doctor` now returns top-level `status`, `healthy`, `next_steps`, plus per-adapter `fix_command`.  
+`doctor` now returns top-level `status`, `healthy`, `restart_pending`, `next_steps`, plus per-adapter `fix_command`.  
 `bootstrap` also returns top-level `restart_required` and `next_steps`, so an AI does not have to infer what to do next from free-form notes.
 
 The minimum JSON contract is fixed. `prehook` reads input like:

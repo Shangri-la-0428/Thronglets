@@ -3,8 +3,9 @@ mod setup_support;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use setup_support::{
-    AdapterApplyResult, AdapterDetection, AdapterDoctor, AdapterKind, AdapterPlan, detect_adapter,
-    doctor_adapter, install_claude, install_codex, install_openclaw, install_plan,
+    AdapterApplyResult, AdapterDetection, AdapterDoctor, AdapterKind, AdapterPlan,
+    clear_restart_pending, detect_adapter, doctor_adapter, install_claude, install_codex,
+    install_openclaw, install_plan, set_restart_pending,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -43,6 +44,7 @@ struct MachineEnvelope<T> {
 struct BootstrapSummary {
     status: &'static str,
     healthy: bool,
+    restart_pending: bool,
     restart_required: bool,
     restart_commands: Vec<String>,
     next_steps: Vec<String>,
@@ -61,6 +63,7 @@ struct BootstrapData {
 struct DoctorSummary {
     status: &'static str,
     healthy: bool,
+    restart_pending: bool,
     restart_commands: Vec<String>,
     next_steps: Vec<String>,
 }
@@ -110,6 +113,26 @@ struct ApplySummary {
 struct ApplyPlanData {
     summary: ApplySummary,
     results: Vec<AdapterApplyResult>,
+}
+
+#[derive(Serialize)]
+struct ClearRestartSummary {
+    status: &'static str,
+    cleared_agents: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct ClearRestartResult {
+    agent: String,
+    cleared: bool,
+    note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ClearRestartData {
+    summary: ClearRestartSummary,
+    results: Vec<ClearRestartResult>,
 }
 
 #[derive(Parser)]
@@ -316,6 +339,17 @@ enum Commands {
         json: bool,
     },
 
+    /// Clear persisted restart-pending state after the target runtime has been restarted.
+    ClearRestart {
+        /// Restrict clearing to one adapter family.
+        #[arg(long, value_enum, default_value_t = AdapterArg::All)]
+        agent: AdapterArg,
+
+        /// Emit machine-readable JSON.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
     /// Start HTTP API server for non-MCP agents (Python, LangChain, etc.)
     Serve {
         /// HTTP port to listen on
@@ -466,6 +500,13 @@ fn selected_known_adapters(target: AdapterArg) -> Vec<AdapterKind> {
         .collect()
 }
 
+fn selected_restart_adapters(target: AdapterArg) -> Vec<AdapterKind> {
+    selected_known_adapters(target)
+        .into_iter()
+        .filter(|adapter| matches!(adapter, AdapterKind::Codex | AdapterKind::OpenClaw))
+        .collect()
+}
+
 fn print_json<T: serde::Serialize>(value: &T) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
 }
@@ -598,11 +639,23 @@ fn render_doctor_report(data: &DoctorData) {
     let healthy_agents: Vec<_> = data
         .reports
         .iter()
-        .filter(|report| report.healthy)
+        .filter(|report| report.healthy && !report.restart_pending)
         .map(|report| report.agent.as_str())
         .collect();
     if !healthy_agents.is_empty() {
         println!("Healthy: {}", healthy_agents.join(", "));
+    }
+    let pending_agents: Vec<_> = data
+        .reports
+        .iter()
+        .filter(|report| report.restart_pending)
+        .map(|report| report.agent.as_str())
+        .collect();
+    if !pending_agents.is_empty() {
+        println!("Pending restart: {}", pending_agents.join(", "));
+    }
+    if data.summary.restart_pending {
+        println!("Restart pending: yes");
     }
     for command in &data.summary.restart_commands {
         println!("Restart: {command}");
@@ -691,6 +744,9 @@ fn render_bootstrap_report(data: &BootstrapData) {
     if data.summary.restart_required {
         println!("Restart required: yes");
     }
+    if data.summary.restart_pending {
+        println!("Restart pending: yes");
+    }
     for command in &data.summary.restart_commands {
         println!("Restart: {command}");
     }
@@ -722,6 +778,9 @@ fn render_setup_report(data: &BootstrapData) {
     if !installed.is_empty() {
         println!("Installed: {}", installed.join(", "));
     }
+    if data.summary.restart_pending {
+        println!("Restart pending: yes");
+    }
     if data.summary.restart_required {
         println!("Restart required: yes");
     }
@@ -734,21 +793,63 @@ fn render_setup_report(data: &BootstrapData) {
     println!("Other agents can reuse `thronglets prehook` and `thronglets hook`.");
 }
 
+fn render_clear_restart_results(results: &[ClearRestartResult]) {
+    println!("Cleared restart state:");
+    for result in results {
+        println!(
+            "  {}: {}",
+            result.agent,
+            if result.cleared { "cleared" } else { "already-clear" }
+        );
+        if let Some(note) = &result.note {
+            println!("    note: {note}");
+        }
+    }
+}
+
+fn render_clear_restart_report(data: &ClearRestartData) {
+    println!("Clear restart status: {}", data.summary.status);
+    if !data.summary.cleared_agents.is_empty() {
+        println!("Cleared: {}", data.summary.cleared_agents.join(", "));
+    }
+    for step in &data.summary.next_steps {
+        println!("Next: {step}");
+    }
+    let unchanged: Vec<_> = data
+        .results
+        .iter()
+        .filter(|result| !result.cleared)
+        .cloned()
+        .collect();
+    if !unchanged.is_empty() {
+        println!();
+        render_clear_restart_results(&unchanged);
+    }
+}
+
 fn summarize_doctor_reports(target: AdapterArg, reports: Vec<AdapterDoctor>) -> DoctorData {
     let healthy = !doctor_should_fail(target, &reports);
+    let restart_pending = reports.iter().any(|report| report.restart_pending);
     let restart_commands =
         collect_restart_commands(reports.iter().map(|report| report.restart_command.clone()));
     let mut next_steps: Vec<_> = reports
         .iter()
-        .filter_map(|report| report.fix_command.clone())
+        .flat_map(|report| report.remediation.iter().cloned())
         .collect();
     next_steps.sort();
     next_steps.dedup();
 
     DoctorData {
         summary: DoctorSummary {
-            status: if healthy { "healthy" } else { "needs-fix" },
+            status: if !healthy {
+                "needs-fix"
+            } else if restart_pending {
+                "restart-pending"
+            } else {
+                "healthy"
+            },
             healthy,
+            restart_pending,
             restart_commands,
             next_steps,
         },
@@ -820,6 +921,31 @@ fn summarize_apply_results(results: Vec<AdapterApplyResult>) -> ApplyPlanData {
     }
 }
 
+fn summarize_clear_restart_results(results: Vec<ClearRestartResult>) -> ClearRestartData {
+    let cleared_agents: Vec<_> = results
+        .iter()
+        .filter(|result| result.cleared)
+        .map(|result| result.agent.clone())
+        .collect();
+    let mut next_steps = Vec::new();
+    if cleared_agents.is_empty() {
+        next_steps.push("Run `thronglets doctor --agent <adapter>` to confirm current status.".into());
+    }
+
+    ClearRestartData {
+        summary: ClearRestartSummary {
+            status: if cleared_agents.is_empty() {
+                "already-clear"
+            } else {
+                "cleared"
+            },
+            cleared_agents,
+            next_steps,
+        },
+        results,
+    }
+}
+
 fn apply_selected_adapters(
     target: AdapterArg,
     home_dir: &Path,
@@ -855,6 +981,7 @@ fn apply_selected_adapters(
             AdapterKind::Codex => {
                 let force = !matches!(target, AdapterArg::All);
                 if let Some(result) = install_codex(home_dir, data_dir, bin_path, force)? {
+                    set_restart_pending(data_dir, agent, true)?;
                     let mut changed = Vec::new();
                     if result.created_config {
                         changed.push("created Codex config".into());
@@ -895,6 +1022,7 @@ fn apply_selected_adapters(
             AdapterKind::OpenClaw => {
                 let force = !matches!(target, AdapterArg::All);
                 if let Some(result) = install_openclaw(home_dir, data_dir, bin_path, true, force)? {
+                    set_restart_pending(data_dir, agent, true)?;
                     let mut changed = Vec::new();
                     if result.created_config {
                         changed.push("created OpenClaw config".into());
@@ -958,6 +1086,7 @@ fn bootstrap_selected_adapters(
         .collect();
     let doctor_summary = summarize_doctor_reports(target, doctor_reports);
     let healthy = doctor_summary.summary.healthy;
+    let restart_pending = doctor_summary.summary.restart_pending;
     let restart_required = applied.iter().any(|result| result.requires_restart);
     let mut next_steps = doctor_summary.summary.next_steps.clone();
     let restart_commands =
@@ -970,8 +1099,15 @@ fn bootstrap_selected_adapters(
 
     Ok(BootstrapData {
         summary: BootstrapSummary {
-            status: if healthy { "healthy" } else { "needs-fix" },
+            status: if !healthy {
+                "needs-fix"
+            } else if restart_pending {
+                "restart-pending"
+            } else {
+                "healthy"
+            },
             healthy,
+            restart_pending,
             restart_required,
             restart_commands,
             next_steps,
@@ -981,6 +1117,28 @@ fn bootstrap_selected_adapters(
         results: applied,
         reports: doctor_summary.reports,
     })
+}
+
+fn clear_selected_restart_state(
+    target: AdapterArg,
+    data_dir: &Path,
+) -> std::io::Result<ClearRestartData> {
+    let mut results = Vec::new();
+
+    for agent in selected_restart_adapters(target) {
+        let cleared = clear_restart_pending(data_dir, agent)?;
+        results.push(ClearRestartResult {
+            agent: agent.key().into(),
+            cleared,
+            note: if cleared {
+                Some("Cleared persisted restart-pending state.".into())
+            } else {
+                Some("No persisted restart-pending state was present.".into())
+            },
+        });
+    }
+
+    Ok(summarize_clear_restart_results(results))
 }
 
 fn doctor_should_fail(target: AdapterArg, reports: &[AdapterDoctor]) -> bool {
@@ -1741,6 +1899,16 @@ async fn main() {
             }
             if !report.summary.healthy {
                 std::process::exit(1);
+            }
+        }
+
+        Commands::ClearRestart { agent, json } => {
+            let report =
+                clear_selected_restart_state(agent, &dir).expect("failed to clear restart state");
+            if json {
+                print_machine_json("clear-restart", &report);
+            } else {
+                render_clear_restart_report(&report);
             }
         }
 

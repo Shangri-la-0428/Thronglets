@@ -47,6 +47,11 @@ thronglets setup
 - **OpenClaw**：自动安装本地 path plugin，并写入 `~/.openclaw/openclaw.json`
 
 `setup` 现在也会顺手做一次 bootstrap 健康检查，并直接给出 `restart required / next steps`。
+如果某个 adapter 需要客户端重启，后续 `doctor` 会显式返回 `restart-pending`，重启后再跑一次：
+
+```bash
+thronglets clear-restart --agent codex --json
+```
 
 底层接入面只有一个统一 contract：
 - `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号
@@ -86,9 +91,9 @@ thronglets bootstrap --agent codex --json
 }
 ```
 
-`detect / install-plan / apply-plan / doctor / bootstrap` 现在都会先给顶层 summary，再给详细列表。  
+`detect / install-plan / apply-plan / doctor / bootstrap / clear-restart` 现在都会先给顶层 summary，再给详细列表。  
 如果需要重启，summary 里还会直接带 `restart_commands`。  
-`doctor` 现在会显式返回顶层 `status`、`healthy`、`next_steps`，以及每个 adapter 的 `fix_command`。  
+`doctor` 现在会显式返回顶层 `status`、`healthy`、`restart_pending`、`next_steps`，以及每个 adapter 的 `fix_command`。  
 `bootstrap` 顶层还会返回 `restart_required` 和 `next_steps`，这样 AI 不需要自己从注释里猜下一步。
 
 最小接入 JSON 也固定了。`prehook` 读这一类输入：

@@ -1,5 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,17 @@ const OPENCLAW_PLUGIN_ID: &str = "thronglets-ai";
 const OPENCLAW_PLUGIN_MANIFEST: &str =
     include_str!("../assets/openclaw-plugin/openclaw.plugin.json");
 const OPENCLAW_PLUGIN_INDEX: &str = include_str!("../assets/openclaw-plugin/index.mjs");
+const RESTART_STATE_FILE: &str = "adapter-restart-state.json";
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct RestartState {
+    agents: BTreeMap<String, RestartStateEntry>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct RestartStateEntry {
+    restart_pending: bool,
+}
 
 pub struct ClaudeSetupResult {
     pub settings_path: PathBuf,
@@ -122,6 +134,7 @@ pub struct AdapterDoctor {
     pub present: bool,
     pub status: String,
     pub healthy: bool,
+    pub restart_pending: bool,
     pub fix_command: Option<String>,
     pub restart_command: Option<String>,
     pub checks: Vec<AdapterCheck>,
@@ -138,6 +151,67 @@ pub struct AdapterApplyResult {
     pub restart_command: Option<String>,
     pub paths: Vec<String>,
     pub note: Option<String>,
+}
+
+fn restart_state_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(RESTART_STATE_FILE)
+}
+
+fn load_restart_state(data_dir: &Path) -> RestartState {
+    let path = restart_state_path(data_dir);
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(_) => return RestartState::default(),
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_restart_state(data_dir: &Path, state: &RestartState) -> io::Result<()> {
+    let path = restart_state_path(data_dir);
+    if state.agents.is_empty() {
+        match fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+
+    fs::create_dir_all(data_dir)?;
+    let formatted = serde_json::to_string_pretty(state)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    fs::write(path, formatted)
+}
+
+pub fn restart_pending(data_dir: &Path, agent: AdapterKind) -> bool {
+    if restart_command(agent).is_none() {
+        return false;
+    }
+    load_restart_state(data_dir)
+        .agents
+        .get(agent.key())
+        .is_some_and(|entry| entry.restart_pending)
+}
+
+pub fn set_restart_pending(data_dir: &Path, agent: AdapterKind, pending: bool) -> io::Result<()> {
+    if restart_command(agent).is_none() {
+        return Ok(());
+    }
+
+    let mut state = load_restart_state(data_dir);
+    if pending {
+        state
+            .agents
+            .insert(agent.key().into(), RestartStateEntry { restart_pending: true });
+    } else {
+        state.agents.remove(agent.key());
+    }
+    save_restart_state(data_dir, &state)
+}
+
+pub fn clear_restart_pending(data_dir: &Path, agent: AdapterKind) -> io::Result<bool> {
+    let was_pending = restart_pending(data_dir, agent);
+    set_restart_pending(data_dir, agent, false)?;
+    Ok(was_pending)
 }
 
 pub fn install_claude(home_dir: &Path, bin_path: &Path) -> io::Result<ClaudeSetupResult> {
@@ -451,13 +525,14 @@ pub fn install_plan(
 pub fn doctor_adapter(home_dir: &Path, data_dir: &Path, agent: AdapterKind) -> AdapterDoctor {
     match agent {
         AdapterKind::Claude => doctor_claude(home_dir),
-        AdapterKind::Codex => doctor_codex(home_dir),
+        AdapterKind::Codex => doctor_codex(home_dir, data_dir),
         AdapterKind::OpenClaw => doctor_openclaw(home_dir, data_dir),
         AdapterKind::Generic => AdapterDoctor {
             agent: agent.key().into(),
             present: true,
             status: "healthy".into(),
             healthy: true,
+            restart_pending: false,
             fix_command: None,
             restart_command: restart_command(agent),
             checks: vec![AdapterCheck {
@@ -496,6 +571,14 @@ fn restart_command(agent: AdapterKind) -> Option<String> {
     match agent {
         AdapterKind::Codex => Some("Restart Codex".into()),
         AdapterKind::OpenClaw => Some("openclaw gateway restart".into()),
+        AdapterKind::Claude | AdapterKind::Generic => None,
+    }
+}
+
+fn clear_restart_command(agent: AdapterKind) -> Option<String> {
+    match agent {
+        AdapterKind::Codex => Some("thronglets clear-restart --agent codex".into()),
+        AdapterKind::OpenClaw => Some("thronglets clear-restart --agent openclaw".into()),
         AdapterKind::Claude | AdapterKind::Generic => None,
     }
 }
@@ -586,6 +669,7 @@ fn doctor_claude(home_dir: &Path) -> AdapterDoctor {
         present: should_configure_claude(home_dir),
         status: if healthy { "healthy" } else { "needs-fix" }.into(),
         healthy,
+        restart_pending: false,
         fix_command: fix_command.clone(),
         restart_command: restart_command(AdapterKind::Claude),
         remediation: fix_command.into_iter().collect(),
@@ -612,7 +696,7 @@ fn codex_agents_block_present(path: &Path) -> bool {
     })
 }
 
-fn doctor_codex(home_dir: &Path) -> AdapterDoctor {
+fn doctor_codex(home_dir: &Path, data_dir: &Path) -> AdapterDoctor {
     let config_path = codex_config_path(home_dir);
     let agents_path = codex_agents_path(home_dir);
     let config = read_toml(&config_path);
@@ -634,18 +718,44 @@ fn doctor_codex(home_dir: &Path) -> AdapterDoctor {
         },
     ];
     let healthy = checks.iter().all(|check| check.ok);
+    let restart_pending = healthy && restart_pending(data_dir, AdapterKind::Codex);
     let fix_command = (!healthy).then_some("thronglets apply-plan --agent codex".into());
+    let mut remediation: Vec<_> = fix_command.clone().into_iter().collect();
+    if restart_pending {
+        if let Some(command) = restart_command(AdapterKind::Codex) {
+            remediation.push(command);
+        }
+        if let Some(command) = clear_restart_command(AdapterKind::Codex) {
+            remediation.push(command);
+        }
+    }
     AdapterDoctor {
         agent: AdapterKind::Codex.key().into(),
         present: should_configure_codex(home_dir),
-        status: if healthy { "healthy" } else { "needs-fix" }.into(),
+        status: if !healthy {
+            "needs-fix"
+        } else if restart_pending {
+            "restart-pending"
+        } else {
+            "healthy"
+        }
+        .into(),
         healthy,
+        restart_pending,
         fix_command: fix_command.clone(),
         restart_command: restart_command(AdapterKind::Codex),
-        remediation: fix_command.into_iter().collect(),
+        remediation,
         checks,
-        note: healthy
-            .then_some("Restart Codex after config changes so the MCP server is loaded.".into()),
+        note: if restart_pending {
+            Some(
+                "Codex config is correct, but the MCP server is still waiting for a client restart."
+                    .into(),
+            )
+        } else if healthy {
+            Some("Restart Codex after future config changes so the MCP server is loaded.".into())
+        } else {
+            None
+        },
     }
 }
 
@@ -689,18 +799,41 @@ fn doctor_openclaw(home_dir: &Path, data_dir: &Path) -> AdapterDoctor {
         },
     ];
     let healthy = checks.iter().all(|check| check.ok);
+    let restart_pending = healthy && restart_pending(data_dir, AdapterKind::OpenClaw);
     let fix_command = (!healthy).then_some("thronglets apply-plan --agent openclaw".into());
+    let mut remediation: Vec<_> = fix_command.clone().into_iter().collect();
+    if restart_pending {
+        if let Some(command) = restart_command(AdapterKind::OpenClaw) {
+            remediation.push(command);
+        }
+        if let Some(command) = clear_restart_command(AdapterKind::OpenClaw) {
+            remediation.push(command);
+        }
+    }
     AdapterDoctor {
         agent: AdapterKind::OpenClaw.key().into(),
         present: should_configure_openclaw(home_dir),
-        status: if healthy { "healthy" } else { "needs-fix" }.into(),
+        status: if !healthy {
+            "needs-fix"
+        } else if restart_pending {
+            "restart-pending"
+        } else {
+            "healthy"
+        }
+        .into(),
         healthy,
+        restart_pending,
         fix_command: fix_command.clone(),
         restart_command: restart_command(AdapterKind::OpenClaw),
-        remediation: fix_command.into_iter().collect(),
+        remediation,
         checks,
-        note: healthy
-            .then_some("OpenClaw gateway restart may be required after plugin changes.".into()),
+        note: if restart_pending {
+            Some("OpenClaw plugin config is correct, but the gateway restart is still pending.".into())
+        } else if healthy {
+            Some("OpenClaw gateway restart may be required after future plugin changes.".into())
+        } else {
+            None
+        },
     }
 }
 
