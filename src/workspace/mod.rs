@@ -207,74 +207,93 @@ impl WorkspaceState {
     /// Call this periodically (e.g., every Nth hook invocation).
     pub fn resolve_feedback(&mut self) {
         use std::process::Command;
+        use std::collections::HashSet;
 
-        for item in self.pending_feedback.iter_mut() {
-            if item.resolved { continue; }
+        let unresolved: Vec<usize> = self.pending_feedback.iter()
+            .enumerate()
+            .filter(|(_, item)| !item.resolved)
+            .map(|(i, _)| i)
+            .collect();
 
-            let path = std::path::Path::new(&item.file_path);
-            let dir = match path.parent() {
-                Some(d) if d.exists() => d,
-                _ => continue,
-            };
+        if unresolved.is_empty() { return; }
 
-            // Check if file is still in git diff (uncommitted)
-            let diff_output = Command::new("git")
-                .args(["diff", "--name-only", "--", &item.file_path])
-                .current_dir(dir)
-                .output();
+        // Find a git working directory from the first unresolved item
+        let git_dir = unresolved.iter().find_map(|&i| {
+            let path = std::path::Path::new(&self.pending_feedback[i].file_path);
+            path.parent().filter(|d| d.exists())
+        });
+        let git_dir = match git_dir {
+            Some(d) => d.to_path_buf(),
+            None => return,
+        };
 
-            let staged_output = Command::new("git")
-                .args(["diff", "--cached", "--name-only", "--", &item.file_path])
-                .current_dir(dir)
-                .output();
+        // Single `git diff --name-only` call for all uncommitted files
+        let diff_output = Command::new("git")
+            .args(["diff", "--name-only"])
+            .current_dir(&git_dir)
+            .output();
+        let staged_output = Command::new("git")
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(&git_dir)
+            .output();
 
-            let in_diff = diff_output.as_ref()
-                .map(|o| !o.stdout.is_empty()).unwrap_or(false);
-            let in_staged = staged_output.as_ref()
-                .map(|o| !o.stdout.is_empty()).unwrap_or(false);
+        let dirty_files: HashSet<String> = [&diff_output, &staged_output].iter()
+            .filter_map(|o| o.as_ref().ok())
+            .flat_map(|o| String::from_utf8_lossy(&o.stdout).lines()
+                .map(|l| l.trim().to_string())
+                .collect::<Vec<_>>())
+            .collect();
 
-            if in_diff || in_staged {
-                // Still uncommitted — check if it's been too long (>1h = stale)
-                let now = chrono::Utc::now().timestamp_millis();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        for &idx in &unresolved {
+            let item = &self.pending_feedback[idx];
+            let fp = &item.file_path;
+
+            // Check if file path (or its basename) appears in dirty set
+            let is_dirty = dirty_files.contains(fp)
+                || std::path::Path::new(fp).file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| dirty_files.iter().any(|d| d.ends_with(n)));
+
+            if is_dirty {
                 if (now - item.timestamp_ms) > 3_600_000 {
-                    item.resolved = true;
-                    item.outcome = Some("stale".to_string());
+                    self.pending_feedback[idx].resolved = true;
+                    self.pending_feedback[idx].outcome = Some("stale".to_string());
                 }
                 continue;
             }
 
-            // Not in diff — either committed or reverted
-            // Check git log for commits after our edit timestamp
+            // Not dirty — check git log with a single call
             let after_ts = item.timestamp_ms / 1000;
             let log_output = Command::new("git")
-                .args([
-                    "log", "--oneline", "-1",
-                    &format!("--after={after_ts}"),
-                    "--", &item.file_path,
-                ])
-                .current_dir(dir)
+                .args(["log", "--oneline", "-1", &format!("--after={after_ts}"), "--", fp])
+                .current_dir(&git_dir)
                 .output();
 
             let has_commit = log_output.as_ref()
                 .map(|o| !o.stdout.is_empty()).unwrap_or(false);
 
-            item.resolved = true;
-            item.outcome = Some(if has_commit {
+            self.pending_feedback[idx].resolved = true;
+            self.pending_feedback[idx].outcome = Some(if has_commit {
                 "committed".to_string()
             } else {
                 "reverted".to_string()
             });
         }
 
-        // Clean up old resolved items (keep last 10 for stats)
+        // Clean up: keep at most 10 resolved
         let resolved_count = self.pending_feedback.iter().filter(|p| p.resolved).count();
         if resolved_count > 10 {
-            // Remove oldest resolved
-            while self.pending_feedback.iter().filter(|p| p.resolved).count() > 10 {
-                if let Some(pos) = self.pending_feedback.iter().rposition(|p| p.resolved) {
-                    self.pending_feedback.remove(pos);
+            let mut to_remove = resolved_count - 10;
+            self.pending_feedback.retain(|p| {
+                if p.resolved && to_remove > 0 {
+                    to_remove -= 1;
+                    false
+                } else {
+                    true
                 }
-            }
+            });
         }
     }
 

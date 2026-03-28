@@ -507,9 +507,9 @@ async fn main() {
             let model = std::env::var("CLAUDE_MODEL")
                 .unwrap_or_else(|_| "claude-opus-4-6".to_string());
 
-            // Enrich context with strategy inference
-            let ws_for_strategy = WorkspaceState::load(&dir);
-            let enriched_context = if let Some(strategy) = ws_for_strategy.infer_strategy() {
+            // Load workspace once for both strategy inference and state update
+            let mut ws = WorkspaceState::load(&dir);
+            let enriched_context = if let Some(strategy) = ws.infer_strategy() {
                 format!("[{strategy}] {context_text}")
             } else {
                 context_text.clone()
@@ -531,9 +531,6 @@ async fn main() {
                 |msg| identity.sign(msg),
             );
             let _ = store.insert(&trace); // silent — never break Claude Code
-
-            // Update workspace state
-            let mut ws = WorkspaceState::load(&dir);
             let outcome_str = if is_error { "failed" } else { "succeeded" };
 
             // Track file interactions
@@ -589,93 +586,22 @@ async fn main() {
                 std::process::exit(0);
             }
 
-            let store = open_store(&dir);
-            let trace_count = store.count().unwrap_or(0);
-
-            // Build context from this tool call
-            let context_text = build_hook_context(tool_name, &payload["tool_input"]);
-            let ctx_hash = simhash(&context_text);
-
-            // Map tool to capability URI
-            let capability = if tool_name.starts_with("mcp__") {
-                tool_name.replacen("mcp__", "mcp:", 1).replace("__", "/")
-            } else {
-                format!("claude-code/{tool_name}")
-            };
+            // ── Pheromone model: silence is normal. Signal only on anomaly. ──
+            //
+            // Natural systems (ants, slime mold, bees) use ultra-low-bandwidth
+            // signals that change behavioral tendency, not verbose reports.
+            // Normal paths get no pheromone. Only food and danger get marked.
+            //
+            // For AI: git history = spatial context (always useful for Edit/Write).
+            // Everything else = pheromone (only emitted on anomaly).
 
             let mut hints: Vec<String> = Vec::new();
-
-            // Substrate layers (1-3): only when we have enough trace data
-            if trace_count >= 5 {
-
-            // 1. Check this specific capability's stats
-            if let Ok(Some(stats)) = store.aggregate(&capability) {
-                if stats.total_traces >= 3 {
-                    let sr = (stats.success_rate * 100.0).round();
-                    hints.push(format!(
-                        "{capability}: {sr}% success across {} traces (p50: {:.0}ms)",
-                        stats.total_traces, stats.p50_latency_ms,
-                    ));
-                    if stats.success_rate < 0.7 {
-                        hints.push(format!("  ⚠ low success rate — consider alternatives"));
-                    }
-                }
-            }
-
-            // 2. Find similar context traces for richer insight
-            if let Ok(similar) = store.query_similar(&ctx_hash, 48, 20) {
-                if similar.len() >= 3 {
-                    // Group by capability, find alternatives
-                    let mut cap_counts: std::collections::HashMap<&str, (u32, u32)> = std::collections::HashMap::new();
-                    for t in &similar {
-                        let entry = cap_counts.entry(&t.capability).or_insert((0, 0));
-                        entry.0 += 1;
-                        if matches!(t.outcome, Outcome::Succeeded) {
-                            entry.1 += 1;
-                        }
-                    }
-
-                    // Show top alternatives (if different from current tool)
-                    let mut alts: Vec<_> = cap_counts.iter()
-                        .filter(|(cap, (count, _))| **cap != capability && *count >= 2)
-                        .map(|(cap, (total, succ))| {
-                            let rate = if *total > 0 { *succ as f64 / *total as f64 } else { 0.0 };
-                            (cap, total, rate)
-                        })
-                        .collect();
-                    alts.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-
-                    for (cap, count, rate) in alts.iter().take(2) {
-                        let pct = (rate * 100.0).round();
-                        hints.push(format!("  similar tasks also used {cap} ({pct}% success, {count} traces)"));
-                    }
-                }
-            }
-
-            // 3. Workflow hint: what usually comes next?
-            if let Ok(next_caps) = store.query_workflow_next(&capability, 3) {
-                let relevant: Vec<_> = next_caps.iter().filter(|(_, c)| *c >= 2).collect();
-                if !relevant.is_empty() {
-                    let nexts: Vec<String> = relevant.iter()
-                        .map(|(cap, count)| format!("{cap} ({count}x)"))
-                        .collect();
-                    hints.push(format!("  workflow: after {tool_name}, agents usually → {}", nexts.join(", ")));
-                }
-            }
-
-            } // end trace_count >= 5
-
-            // Local layers (4-8): always available, even on cold start
-
-            // 4. Workspace context: recent file history, errors, previous session
             let ws = WorkspaceState::load(&dir);
             let current_file = workspace::extract_file_path(tool_name, &payload["tool_input"]);
-            if let Some(ws_hints) = ws.context_hints(tool_name, current_file.as_deref()) {
-                hints.push(ws_hints);
-            }
 
-            // 5. Git history for the target file (Read/Write/Edit only)
-            if matches!(tool_name, "Read" | "Write" | "Edit") {
+            // ── Git history: the one signal that's always decision-relevant ──
+            // Like a bee's waggle dance: direction + distance, always useful.
+            if matches!(tool_name, "Edit" | "Write") {
                 if let Some(ref fp) = current_file {
                     if let Some(git_hints) = git_file_history(fp, 5) {
                         hints.push(git_hints);
@@ -683,29 +609,64 @@ async fn main() {
                 }
             }
 
-            // 6. Decision context: co-edit patterns, preparation reads
-            if let Some(decision_hints) = ws.decision_hints(tool_name, current_file.as_deref()) {
-                hints.push(decision_hints);
-            }
-
-            // 7. Feedback: edit retention rate + per-file feedback
+            // ── Danger pheromone: low edit retention ──
+            // If recent edits are mostly reverted, this is a strong warning.
+            // Only signal when retention < 50% (anomaly).
             if let Some(fb_hints) = ws.feedback_hints(current_file.as_deref()) {
-                hints.push(fb_hints);
+                // Parse retention rate from the hint
+                let is_warning = fb_hints.contains("retention:")
+                    && fb_hints.split("retention:").nth(1)
+                        .and_then(|s| s.trim().split('%').next())
+                        .and_then(|s| s.trim().parse::<f64>().ok())
+                        .is_some_and(|rate| rate < 50.0);
+                if is_warning {
+                    hints.push(format!("  ⚠ {}", fb_hints.trim()));
+                }
             }
 
-            // 8. Current strategy inference
-            if let Some(strategy) = ws.infer_strategy() {
-                hints.push(format!("  current pattern: {strategy}"));
+            // ── Trail pheromone: co-edit patterns ──
+            // "Editing A usually means you also need to edit B."
+            // Only emitted when patterns exist.
+            if let Some(decision_hints) = ws.decision_hints(tool_name, current_file.as_deref()) {
+                // Only keep co-edit lines (prep reads are low-value)
+                let co_edits: String = decision_hints.lines()
+                    .filter(|l| l.contains("co-edited with"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !co_edits.is_empty() {
+                    hints.push(co_edits);
+                }
             }
 
-            // Output to stdout (appears in agent's context)
+            // ── Alarm pheromone: recent errors with this tool ──
+            // Only emitted when errors happened in the last hour.
+            let recent_errors: Vec<String> = ws.recent_errors.iter()
+                .filter(|e| {
+                    e.tool == tool_name
+                    && (chrono::Utc::now().timestamp_millis() - e.timestamp_ms) < 3_600_000
+                })
+                .take(1)
+                .map(|e| {
+                    let snippet = if e.error_snippet.len() > 80 {
+                        format!("{}...", &e.error_snippet[..80])
+                    } else {
+                        e.error_snippet.clone()
+                    };
+                    format!("  ⚠ recent error: {snippet}")
+                })
+                .collect();
+            for e in recent_errors {
+                hints.push(e);
+            }
+
+            // Output: only when there's something worth saying
             if !hints.is_empty() {
-                println!("[thronglets] substrate context:");
+                println!("[thronglets]");
                 for h in &hints {
                     println!("{h}");
                 }
             }
-            // If no hints, stay completely silent
+            // Normal state → complete silence. Zero tokens.
         }
 
         Commands::Setup => {
@@ -755,9 +716,10 @@ async fn main() {
                 settings["hooks"]["PostToolUse"] = serde_json::json!([post_hook]);
             }
 
-            // Add PreToolUse hook (read path)
+            // Add PreToolUse hook — only decision-point tools (Edit/Write/Bash/Agent)
+            // Read/Grep/Glob are information-gathering, injecting context has zero value
             let pre_hook = serde_json::json!({
-                "matcher": "",
+                "matcher": "Edit|Write|Bash|Agent",
                 "hooks": [{"type": "command", "command": format!("{bin_str} prehook")}]
             });
             let pre_hooks = settings["hooks"]["PreToolUse"]
