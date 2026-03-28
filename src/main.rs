@@ -834,6 +834,7 @@ fn summarize_doctor_reports(target: AdapterArg, reports: Vec<AdapterDoctor>) -> 
         collect_restart_commands(reports.iter().map(|report| report.restart_command.clone()));
     let mut next_steps: Vec<_> = reports
         .iter()
+        .filter(|report| doctor_report_requires_action(target, report))
         .flat_map(|report| report.remediation.iter().cloned())
         .collect();
     next_steps.sort();
@@ -1146,6 +1147,13 @@ fn doctor_should_fail(target: AdapterArg, reports: &[AdapterDoctor]) -> bool {
         AdapterArg::All => report.present && !report.healthy,
         _ => report.agent != AdapterKind::Generic.key() && !report.healthy,
     })
+}
+
+fn doctor_report_requires_action(target: AdapterArg, report: &AdapterDoctor) -> bool {
+    match target {
+        AdapterArg::All => report.present && (!report.healthy || report.restart_pending),
+        _ => report.agent != AdapterKind::Generic.key() && (!report.healthy || report.restart_pending),
+    }
 }
 
 #[tokio::main]

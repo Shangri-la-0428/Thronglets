@@ -33,3 +33,26 @@ jobs:
 
       - name: Integration tests
         run: cargo test --test two_node_sync --test mcp_stdio
+
+      - name: Adapter and operator tests
+        run: cargo test --test adapter_bootstrap --test bootstrap_v2_golden --test bootstrap_matrix --test release_check
+
+      - name: Release recipe smoke
+        shell: bash
+        run: |
+          export HOME="${RUNNER_TEMP}/thronglets-home"
+          export THRONGLETS_DATA_DIR="${RUNNER_TEMP}/thronglets-data"
+          export PATH="/usr/bin:/bin"
+          mkdir -p "$HOME" "$THRONGLETS_DATA_DIR"
+          cat <<'EOF' | ./target/debug/thronglets --data-dir "$THRONGLETS_DATA_DIR" release-check --require-profile-samples
+          [thronglets:prehook] tool=Edit emitted=2 stdout_bytes=40 output_mode=next-step decision_path=repair evidence_scope=collective file_guidance_gate=open collective_queries_used=0 total_us=300
+          [thronglets:prehook] tool=Edit emitted=1 stdout_bytes=30 output_mode=context-only decision_path=history evidence_scope=none file_guidance_gate=closed collective_queries_used=0 total_us=200
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100
+          EOF
