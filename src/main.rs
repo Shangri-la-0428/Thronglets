@@ -173,6 +173,14 @@ enum Commands {
         #[arg(long, default_value_t = 200)]
         max_sessions: usize,
 
+        /// Scope evaluation to this project root. Defaults to the current working directory.
+        #[arg(long)]
+        project_root: Option<PathBuf>,
+
+        /// Evaluate across the entire trace store instead of scoping to one project.
+        #[arg(long, default_value_t = false)]
+        global: bool,
+
         /// Keep only the top N breakdown rows per category.
         #[arg(long, default_value_t = 5)]
         top_breakdowns: usize,
@@ -1081,12 +1089,24 @@ async fn main() {
         Commands::EvalSignals {
             hours,
             max_sessions,
+            project_root,
+            global,
             top_breakdowns,
             focus,
             json,
         } => {
             let store = open_store(&dir);
-            match evaluate_signal_quality(&store, hours, max_sessions)
+            let project_scope = if global {
+                None
+            } else {
+                Some(
+                    project_root.unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .expect("failed to determine current working directory")
+                    }),
+                )
+            };
+            match evaluate_signal_quality(&store, hours, max_sessions, project_scope.as_deref())
                 .expect("failed to evaluate signal quality")
             {
                 Some(summary) => {

@@ -3,6 +3,7 @@ use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 const SESSION_TRACE_LIMIT: usize = 10_000;
 const FILE_WINDOW_MS: i64 = 300_000;
@@ -20,6 +21,7 @@ pub enum EvalFocus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignalEvalSummary {
+    pub project_scope: Option<String>,
     pub sessions_considered: usize,
     pub sessions_scored: usize,
     pub edit_points: usize,
@@ -119,6 +121,10 @@ impl SignalEvalSummary {
 
     pub fn render(&self) -> String {
         let mut lines = vec![
+            format!(
+                "project scope: {}",
+                self.project_scope.as_deref().unwrap_or("global")
+            ),
             format!("sessions considered: {}", self.sessions_considered),
             format!("sessions scored: {}", self.sessions_scored),
             format!(
@@ -341,6 +347,7 @@ pub fn evaluate_signal_quality(
     store: &TraceStore,
     hours: u64,
     max_sessions: usize,
+    project_root: Option<&Path>,
 ) -> rusqlite::Result<Option<SignalEvalSummary>> {
     let session_ids = store.recent_session_ids(hours, max_sessions)?;
     if session_ids.len() < 2 {
@@ -350,6 +357,11 @@ pub fn evaluate_signal_quality(
     let mut sessions = Vec::new();
     for session_id in session_ids {
         let traces = store.query_session(&session_id, SESSION_TRACE_LIMIT)?;
+        if let Some(project_root) = project_root {
+            if !session_matches_project_root(&traces, project_root) {
+                continue;
+            }
+        }
         let events = traces.iter().filter_map(trace_to_event).collect::<Vec<_>>();
         if !events.is_empty() {
             sessions.push((session_id, events));
@@ -361,6 +373,7 @@ pub fn evaluate_signal_quality(
     }
 
     let mut summary = SignalEvalSummary {
+        project_scope: project_root.map(|path| path.display().to_string()),
         sessions_considered: sessions.len(),
         sessions_scored: 0,
         edit_points: 0,
@@ -487,6 +500,38 @@ fn trace_to_event(trace: &Trace) -> Option<SessionEvent> {
         outcome: trace.outcome,
         timestamp_ms: trace.timestamp as i64,
     })
+}
+
+fn session_matches_project_root(traces: &[Trace], project_root: &Path) -> bool {
+    let roots = project_root_variants(project_root);
+    traces.iter().any(|trace| {
+        trace.context_text
+            .as_deref()
+            .and_then(extract_context_path)
+            .is_some_and(|path| roots.iter().any(|root| path.starts_with(root)))
+    })
+}
+
+fn extract_context_path(context_text: &str) -> Option<&str> {
+    ["read file: ", "edit file: ", "write file: "]
+        .iter()
+        .find_map(|prefix| context_text.strip_prefix(prefix))
+}
+
+fn project_root_variants(project_root: &Path) -> Vec<String> {
+    let mut variants = Vec::new();
+    let root = project_root.to_string_lossy().trim_end_matches('/').to_string();
+    variants.push(root.clone());
+
+    if let Some(stripped) = root.strip_prefix("/private") {
+        variants.push(stripped.to_string());
+    } else if root.starts_with("/var/") {
+        variants.push(format!("/private{root}"));
+    }
+
+    variants.sort();
+    variants.dedup();
+    variants
 }
 
 fn parse_target(tool: &str, context_text: Option<&str>) -> Option<String> {
@@ -756,7 +801,7 @@ mod tests {
             timestamp += 60_000;
         }
 
-        let summary = evaluate_signal_quality(&store, 168, 10)
+        let summary = evaluate_signal_quality(&store, 168, 10, None)
             .unwrap()
             .expect("expected evaluation summary");
 
@@ -788,7 +833,7 @@ mod tests {
         );
         store.insert(&trace).unwrap();
 
-        assert!(evaluate_signal_quality(&store, 168, 10).unwrap().is_none());
+        assert!(evaluate_signal_quality(&store, 168, 10, None).unwrap().is_none());
     }
 
     #[test]
@@ -810,7 +855,7 @@ mod tests {
             timestamp += 60_000;
         }
 
-        let summary = evaluate_signal_quality(&store, 168, 10)
+        let summary = evaluate_signal_quality(&store, 168, 10, None)
             .unwrap()
             .expect("expected gate summary");
 
@@ -823,6 +868,7 @@ mod tests {
     #[test]
     fn focused_summary_trims_and_filters_breakdowns() {
         let summary = SignalEvalSummary {
+            project_scope: None,
             sessions_considered: 3,
             sessions_scored: 2,
             edit_points: 10,
@@ -909,5 +955,52 @@ mod tests {
         assert_eq!(all_top_one.repair_breakdown.len(), 1);
         assert_eq!(all_top_one.preparation_breakdown.len(), 1);
         assert_eq!(all_top_one.adjacency_breakdown.len(), 1);
+    }
+
+    #[test]
+    fn project_scope_filters_sessions() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let root_a = std::env::temp_dir().join("eval-root-a");
+        let root_b = std::env::temp_dir().join("eval-root-b");
+        let mut timestamp = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+
+        for (session, root) in [("a1", &root_a), ("a2", &root_a), ("b1", &root_b)] {
+            let helper = root.join("helper.rs");
+            let main = root.join("main.rs");
+            for (capability, outcome, context) in [
+                (
+                    "claude-code/Read",
+                    Outcome::Succeeded,
+                    format!("read file: {}", helper.display()),
+                ),
+                (
+                    "claude-code/Edit",
+                    Outcome::Succeeded,
+                    format!("edit file: {}", main.display()),
+                ),
+                (
+                    "claude-code/Edit",
+                    Outcome::Succeeded,
+                    format!("edit file: {}", helper.display()),
+                ),
+            ] {
+                let trace = make_trace(&identity, capability, outcome, &context, session, timestamp);
+                store.insert(&trace).unwrap();
+                timestamp += 1_000;
+            }
+            timestamp += 60_000;
+        }
+
+        let scoped = evaluate_signal_quality(&store, 168, 10, Some(&root_a))
+            .unwrap()
+            .expect("expected scoped summary");
+
+        assert_eq!(
+            scoped.project_scope.as_deref(),
+            Some(root_a.to_string_lossy().as_ref())
+        );
+        assert_eq!(scoped.sessions_considered, 2);
+        assert_eq!(scoped.sessions_scored, 1);
     }
 }

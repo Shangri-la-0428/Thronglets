@@ -71,6 +71,7 @@ fn eval_signals_reports_holdout_metrics() {
             "--data-dir",
             dir.path().to_str().unwrap(),
             "eval-signals",
+            "--global",
             "--hours",
             "168",
             "--max-sessions",
@@ -86,6 +87,7 @@ fn eval_signals_reports_holdout_metrics() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("project scope: global"));
     assert!(stdout.contains("sessions considered: 3"));
     assert!(stdout.contains("repair first-step precision"));
     assert!(stdout.contains("preparation precision"));
@@ -132,6 +134,7 @@ fn eval_signals_can_emit_json() {
             "--data-dir",
             dir.path().to_str().unwrap(),
             "eval-signals",
+            "--global",
             "--hours",
             "168",
             "--max-sessions",
@@ -148,6 +151,7 @@ fn eval_signals_can_emit_json() {
     );
 
     let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse eval-signals json");
+    assert_eq!(parsed["project_scope"], Value::Null);
     assert_eq!(parsed["sessions_considered"], 3);
     assert!(parsed["repair_breakdown"]["Bash"].is_object());
     assert!(parsed["preparation_breakdown"]["main.rs"].is_object());
@@ -198,6 +202,7 @@ fn eval_signals_json_can_focus_and_trim_breakdowns() {
             "--data-dir",
             dir.path().to_str().unwrap(),
             "eval-signals",
+            "--global",
             "--hours",
             "168",
             "--max-sessions",
@@ -233,4 +238,78 @@ fn eval_signals_json_can_focus_and_trim_breakdowns() {
     assert!(repair_keys.contains_key("Bash"));
     assert!(prep_keys.is_empty());
     assert!(adjacency_keys.is_empty());
+}
+
+#[test]
+fn eval_signals_defaults_to_project_scope() {
+    let dir = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    let other = TempDir::new().unwrap();
+    let store = TraceStore::open(&dir.path().join("traces.db")).unwrap();
+    let identity = NodeIdentity::generate();
+
+    let mut timestamp = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+    for (session, root) in [("p1", project.path()), ("p2", project.path()), ("o1", other.path())] {
+        let helper = root.join("helper.rs");
+        let main = root.join("main.rs");
+        for (capability, outcome, context) in [
+            (
+                "claude-code/Read",
+                Outcome::Succeeded,
+                format!("read file: {}", helper.display()),
+            ),
+            (
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                format!("edit file: {}", main.display()),
+            ),
+            (
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                format!("edit file: {}", helper.display()),
+            ),
+        ] {
+            let trace = make_trace(&identity, capability, outcome, &context, session, timestamp);
+            store.insert(&trace).unwrap();
+            timestamp += 1_000;
+        }
+        timestamp += 60_000;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_thronglets"))
+        .current_dir(project.path())
+        .args([
+            "--data-dir",
+            dir.path().to_str().unwrap(),
+            "eval-signals",
+            "--hours",
+            "168",
+            "--max-sessions",
+            "10",
+            "--json",
+        ])
+        .output()
+        .expect("spawn project-scoped eval-signals");
+
+    assert!(
+        output.status.success(),
+        "project-scoped eval-signals failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse project-scoped json");
+    let scope = parsed["project_scope"]
+        .as_str()
+        .expect("project scope string");
+    let expected = project.path().display().to_string();
+    let alternate = if let Some(stripped) = expected.strip_prefix("/var/") {
+        format!("/private/var/{stripped}")
+    } else if let Some(stripped) = expected.strip_prefix("/private/var/") {
+        format!("/var/{stripped}")
+    } else {
+        expected.clone()
+    };
+    assert!(scope == expected || scope == alternate, "unexpected project scope: {scope}");
+    assert_eq!(parsed["sessions_considered"], 2);
+    assert_eq!(parsed["sessions_scored"], 1);
 }

@@ -81,12 +81,18 @@ cat prehook.log | thronglets profile-check
 thronglets eval-signals --hours 168 --max-sessions 200
 ```
 
-这个命令会离线重放最近 session，把更早的历史当训练集、把更晚的 session 当 holdout，输出 `edit silence rate`、`repair coverage`、`repair first-step precision`、`repair exact precision`、`preparation precision` 和 `adjacency precision`。它完全在冷路径运行，不会碰 prehook 热路径预算。
+这个命令默认只看当前项目目录下的 session，离线重放最近历史，把更早的历史当训练集、把更晚的 session 当 holdout，输出 `edit silence rate`、`repair coverage`、`repair first-step precision`、`repair exact precision`、`preparation precision` 和 `adjacency precision`。它完全在冷路径运行，不会碰 prehook 热路径预算。
 输出里还会带上 `repair / preparation / adjacency breakdown` 和一条简短 `diagnosis`，用来区分“数据太少”“本地重复门槛挡住了”还是“模式本身太噪”。
 如果想喂给脚本或 CI，可以直接加：
 
 ```bash
 thronglets eval-signals --hours 168 --max-sessions 200 --json
+```
+
+如果你想看全局 trace 池，而不是当前项目，显式加：
+
+```bash
+thronglets eval-signals --global --hours 168 --max-sessions 200
 ```
 
 如果只想看某一类问题，不想把整仓库的 breakdown 全打出来，可以再加：
