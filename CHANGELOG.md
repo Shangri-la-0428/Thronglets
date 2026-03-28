@@ -8,6 +8,7 @@
 - **Silence-by-default contract** — Output stays capped at 3 top-level lines and remains quiet when no strong signal exists
 - **Collective corroboration budget** — The hot path spends at most 1 collective lookup, prioritized toward the strongest action candidate
 - **Lazy git fallback** — `git log` now runs only when no action signal is available
+- **Optional prehook profiling** — `THRONGLETS_PROFILE_PREHOOK=1` emits stage timings to `stderr` without polluting AI-facing `stdout`
 
 ### Collective Learning
 

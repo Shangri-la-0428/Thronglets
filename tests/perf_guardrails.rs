@@ -10,6 +10,15 @@ use thronglets::trace::{Outcome, Trace};
 use thronglets::workspace::{PendingFeedback, RecentAction, RecentError, RepairPattern, WorkspaceState};
 
 fn run_bin(args: &[&str], input: Option<&str>, home: Option<&Path>) -> Output {
+    run_bin_env(args, input, home, &[])
+}
+
+fn run_bin_env(
+    args: &[&str],
+    input: Option<&str>,
+    home: Option<&Path>,
+    envs: &[(&str, &str)],
+) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_thronglets"));
     cmd.args(args)
         .stdin(Stdio::piped())
@@ -18,6 +27,9 @@ fn run_bin(args: &[&str], input: Option<&str>, home: Option<&Path>) -> Output {
 
     if let Some(home) = home {
         cmd.env("HOME", home);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
     }
 
     let mut child = cmd.spawn().expect("spawn thronglets");
@@ -135,6 +147,27 @@ fn prehook_is_silent_without_signals() {
 }
 
 #[test]
+fn prehook_profile_uses_stderr_only() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"cargo test"}}"#;
+
+    let output = run_bin_env(
+        &["--data-dir", data_dir.path().to_str().unwrap(), "prehook"],
+        Some(payload),
+        None,
+        &[("THRONGLETS_PROFILE_PREHOOK", "1")],
+    );
+
+    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[thronglets:prehook]"));
+    assert!(stderr.contains("tool=Bash"));
+    assert!(stderr.contains("collective_queries_used=0"));
+    assert!(stderr.contains("git=skipped"));
+}
+
+#[test]
 fn prehook_emits_git_history_as_context_fallback() {
     let repo = tempfile::tempdir().unwrap();
     init_git_repo(repo.path());
@@ -163,6 +196,140 @@ fn prehook_emits_git_history_as_context_fallback() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("context: git history for main.rs:"));
+}
+
+#[test]
+fn prehook_profile_keeps_stdout_shape_when_signals_exist() {
+    let repo = tempfile::tempdir().unwrap();
+    init_git_repo(repo.path());
+
+    let main_rs = repo.path().join("main.rs");
+    let helper_rs = repo.path().join("helper.rs");
+    std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+    std::fs::write(&helper_rs, "pub fn helper() {}\n").unwrap();
+    git_commit_all(repo.path(), "init");
+
+    let data_dir = repo.path().join(".thronglets-data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut ws = WorkspaceState::default();
+    ws.updated_ms = now;
+    ws.recent_errors.push_front(RecentError {
+        tool: "Edit".into(),
+        context: "editing main".into(),
+        error_snippet: "parser exploded".into(),
+        timestamp_ms: now,
+    });
+    ws.repair_patterns.push_front(RepairPattern {
+        error_tool: "Edit".into(),
+        repair_tool: "Read".into(),
+        repair_target: Some("helper.rs".into()),
+        source_ids: vec!["local-a".into(), "local-b".into()],
+        count: 2,
+        last_seen_ms: now,
+    });
+    ws.save(&data_dir);
+
+    let payload = format!(
+        r#"{{"tool_name":"Edit","tool_input":{{"file_path":"{}"}}}}"#,
+        main_rs.display()
+    );
+    let output = run_bin_env(
+        &["--data-dir", data_dir.to_str().unwrap(), "prehook"],
+        Some(&payload),
+        None,
+        &[("THRONGLETS_PROFILE_PREHOOK", "1")],
+    );
+
+    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains(PREHOOK_HEADER));
+    assert!(stdout.contains("avoid: recent error: parser exploded"));
+    assert!(stdout.contains("do next: Read helper.rs (medium, 2x, 2 sources)"));
+    assert!(stderr.contains("[thronglets:prehook]"));
+    assert!(stderr.contains("tool=Edit"));
+    assert!(stderr.contains("emitted=2"));
+    assert!(stderr.contains("collective_queries_used=0"));
+    assert!(stderr.contains("git=skipped"));
+}
+
+#[test]
+fn prehook_profile_reports_collective_query_usage() {
+    let repo = tempfile::tempdir().unwrap();
+    init_git_repo(repo.path());
+
+    let main_rs = repo.path().join("main.rs");
+    let helper_rs = repo.path().join("helper.rs");
+    std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+    std::fs::write(&helper_rs, "pub fn helper() {}\n").unwrap();
+    git_commit_all(repo.path(), "init");
+
+    let data_dir = repo.path().join(".thronglets-data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut ws = WorkspaceState::default();
+    ws.updated_ms = now;
+    for offset in [0_i64, 10_000] {
+        ws.recent_actions.push_back(RecentAction {
+            tool: "Read".into(),
+            file_path: Some(helper_rs.to_string_lossy().into_owned()),
+            session_id: Some("local-only".into()),
+            outcome: "succeeded".into(),
+            timestamp_ms: now + offset,
+        });
+        ws.recent_actions.push_front(RecentAction {
+            tool: "Edit".into(),
+            file_path: Some(main_rs.to_string_lossy().into_owned()),
+            session_id: Some("local-only".into()),
+            outcome: "succeeded".into(),
+            timestamp_ms: now + offset + 1_000,
+        });
+    }
+    ws.save(&data_dir);
+
+    let store = TraceStore::open(&data_dir.join("traces.db")).unwrap();
+    let node_a = NodeIdentity::generate();
+    let node_b = NodeIdentity::generate();
+    for (identity, session_id, main_context, helper_context) in [
+        (&node_a, "agent-a", "edit file: main.rs", "read file: helper.rs"),
+        (&node_b, "agent-b", "edit file: /tmp/other/main.rs", "read file: /tmp/other/helper.rs"),
+    ] {
+        insert_trace(
+            &store,
+            identity,
+            "claude-code/Read",
+            Outcome::Succeeded,
+            helper_context,
+            session_id,
+        );
+        insert_trace(
+            &store,
+            identity,
+            "claude-code/Edit",
+            Outcome::Succeeded,
+            main_context,
+            session_id,
+        );
+    }
+
+    let payload = format!(
+        r#"{{"tool_name":"Edit","tool_input":{{"file_path":"{}"}}}}"#,
+        main_rs.display()
+    );
+    let output = run_bin_env(
+        &["--data-dir", data_dir.to_str().unwrap(), "prehook"],
+        Some(&payload),
+        None,
+        &[("THRONGLETS_PROFILE_PREHOOK", "1")],
+    );
+
+    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("tool=Edit"));
+    assert!(stderr.contains("collective_queries_used=1"));
 }
 
 #[test]

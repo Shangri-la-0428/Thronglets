@@ -45,6 +45,14 @@ thronglets setup
 - **PostToolUse** 将每次工具调用记录为签名痕迹 + 更新工作区状态
 - **PreToolUse** 在关键决策点注入稀疏决策信号
 
+开发调试：
+
+```bash
+THRONGLETS_PROFILE_PREHOOK=1 thronglets prehook
+```
+
+这会把阶段级耗时写到 `stderr`，不会污染 AI 看到的 `stdout`。
+
 ## 为什么这很重要
 
 没有 Thronglets，你的 AI 对每个文件都是盲的。它不知道：

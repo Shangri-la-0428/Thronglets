@@ -45,6 +45,14 @@ That's it. Two hooks are installed:
 - **PostToolUse** records every tool call as a signed trace + updates workspace state
 - **PreToolUse** injects sparse decision signals at critical decision points
 
+For profiling:
+
+```bash
+THRONGLETS_PROFILE_PREHOOK=1 thronglets prehook
+```
+
+This writes stage timings to `stderr` and keeps AI-facing `stdout` unchanged.
+
 ## Why This Matters
 
 Without Thronglets, your AI approaches every file blind. It doesn't know:

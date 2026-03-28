@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use clap::{Parser, Subcommand};
 use thronglets::anchor::AnchorClient;
 use thronglets::contracts::{
@@ -576,6 +577,8 @@ async fn main() {
         }
 
         Commands::Prehook => {
+            let mut profiler = PrehookProfiler::from_env();
+
             // Read PreToolUse JSON from stdin (Claude Code hook payload)
             let mut input = String::new();
             if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
@@ -607,6 +610,7 @@ async fn main() {
             let ws = WorkspaceState::load(&dir);
             let current_file = workspace::extract_file_path(tool_name, &payload["tool_input"]);
             let supports_file_guidance = matches!(tool_name, "Edit" | "Write") && current_file.is_some();
+            profiler.stage("workspace");
 
             let mut collective_store: Option<TraceStore> = None;
             let mut collective_queries_remaining = PREHOOK_MAX_COLLECTIVE_QUERIES;
@@ -639,6 +643,7 @@ async fn main() {
                 has_recent_danger = true;
                 signals.push(signal);
             }
+            profiler.stage("danger");
 
             if let Some(repair_hint) = ws.repair_trajectory_hint(tool_name)
                 .or_else(|| ws.repair_hints(tool_name))
@@ -668,6 +673,7 @@ async fn main() {
                     ));
                 }
             }
+            profiler.stage("repair");
 
             let has_do_next_signal = signals.iter().any(|s| matches!(
                 s.kind,
@@ -700,6 +706,7 @@ async fn main() {
                     ));
                 }
             }
+            profiler.stage("preparation");
 
             // ── Trail pheromone: co-edit patterns ──
             // "Editing A usually means you also need to edit B."
@@ -731,14 +738,17 @@ async fn main() {
                     ));
                 }
             }
+            profiler.stage("adjacency");
 
             // History is a fallback when we don't already know a likely next move.
             let has_action_signal = signals.iter().any(|s| matches!(
                 s.kind,
                 SignalKind::Repair | SignalKind::Preparation | SignalKind::Adjacency
             ));
+            let mut git_checked = false;
             if !has_action_signal {
                 if supports_file_guidance {
+                    git_checked = true;
                     if let Some(git_hints) = current_file.as_ref()
                         .and_then(|fp| git_file_history(fp, GIT_HISTORY_MAX_ENTRIES))
                     {
@@ -746,9 +756,11 @@ async fn main() {
                     }
                 }
             }
+            profiler.stage_or_skip("git", git_checked);
 
             // Guardrail: prehook stays short and category-stable.
             let recommendations = select_signals(signals, PREHOOK_MAX_HINTS);
+            profiler.stage("select");
 
             // Output: only when there's something worth saying
             if !recommendations.is_empty() {
@@ -757,6 +769,11 @@ async fn main() {
                     println!("{}", recommendation.render());
                 }
             }
+            profiler.finish(
+                tool_name,
+                recommendations.len(),
+                PREHOOK_MAX_COLLECTIVE_QUERIES - collective_queries_remaining,
+            );
             // Normal state → complete silence. Zero tokens.
         }
 
@@ -1040,6 +1057,79 @@ fn file_target(path: &str) -> &str {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(path)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ProfileStageState {
+    Timed(u128),
+    Skipped,
+}
+
+struct PrehookProfiler {
+    enabled: bool,
+    started_at: Instant,
+    stage_started_at: Instant,
+    stages: Vec<(&'static str, ProfileStageState)>,
+}
+
+impl PrehookProfiler {
+    fn from_env() -> Self {
+        let enabled = std::env::var_os("THRONGLETS_PROFILE_PREHOOK")
+            .is_some_and(|value| value != "0");
+        let now = Instant::now();
+        Self {
+            enabled,
+            started_at: now,
+            stage_started_at: now,
+            stages: Vec::new(),
+        }
+    }
+
+    fn stage(&mut self, name: &'static str) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = Instant::now();
+        self.stages.push((name, ProfileStageState::Timed(now.duration_since(self.stage_started_at).as_micros())));
+        self.stage_started_at = now;
+    }
+
+    fn stage_or_skip(&mut self, name: &'static str, executed: bool) {
+        if !self.enabled {
+            return;
+        }
+
+        if executed {
+            self.stage(name);
+        } else {
+            self.stages.push((name, ProfileStageState::Skipped));
+        }
+    }
+
+    fn finish(&self, tool_name: &str, emitted: usize, collective_queries_used: usize) {
+        if !self.enabled {
+            return;
+        }
+
+        let mut parts = vec![
+            format!("tool={tool_name}"),
+            format!("emitted={emitted}"),
+            format!("collective_queries_used={collective_queries_used}"),
+            format!("total_us={}", self.started_at.elapsed().as_micros()),
+        ];
+        for (name, state) in &self.stages {
+            match state {
+                ProfileStageState::Timed(duration_us) => {
+                    parts.push(format!("{name}_us={duration_us}"));
+                }
+                ProfileStageState::Skipped => {
+                    parts.push(format!("{name}=skipped"));
+                }
+            }
+        }
+        eprintln!("[thronglets:prehook] {}", parts.join(" "));
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
