@@ -388,9 +388,9 @@ fn render_decision_path_costs(costs: &BTreeMap<String, DecisionPathCost>) -> Str
         .join(", ")
 }
 
-fn sorted_decision_path_costs<'a>(
-    costs: &'a BTreeMap<String, DecisionPathCost>,
-) -> Vec<(&'a str, &'a DecisionPathCost)> {
+fn sorted_decision_path_costs(
+    costs: &BTreeMap<String, DecisionPathCost>,
+) -> Vec<(&str, &DecisionPathCost)> {
     let mut entries: Vec<_> = costs
         .iter()
         .map(|(label, cost)| (label.as_str(), cost))
@@ -523,7 +523,10 @@ mod tests {
         assert!(!passed);
         assert!(rendered.starts_with("FAIL"));
         assert!(rendered.contains("violations:"));
-        assert!(rendered
-            .contains("top optimization candidate: reduce collective queries in adjacency path"));
+        assert!(
+            rendered.contains(
+                "top optimization candidate: reduce collective queries in adjacency path"
+            )
+        );
     }
 }

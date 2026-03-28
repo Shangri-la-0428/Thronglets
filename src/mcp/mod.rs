@@ -8,7 +8,7 @@
 //! - substrate_query: Query the substrate by intent (read)
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -52,11 +52,21 @@ struct JsonRpcError {
 
 impl JsonRpcResponse {
     fn success(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0".into(), id, result: Some(result), error: None }
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
 
     fn error(id: Value, code: i32, message: String) -> Self {
-        Self { jsonrpc: "2.0".into(), id, result: None, error: Some(JsonRpcError { code, message }) }
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            result: None,
+            error: Some(JsonRpcError { code, message }),
+        }
     }
 }
 
@@ -193,7 +203,11 @@ pub async fn serve_stdio(ctx: Arc<McpContext>) {
             Ok(req) => handle_request(&ctx, req).await,
             Err(e) => {
                 warn!(%e, "Failed to parse JSON-RPC request");
-                Some(JsonRpcResponse::error(Value::Null, -32700, format!("Parse error: {e}")))
+                Some(JsonRpcResponse::error(
+                    Value::Null,
+                    -32700,
+                    format!("Parse error: {e}"),
+                ))
             }
         };
 
@@ -219,22 +233,18 @@ async fn handle_request(ctx: &McpContext, req: JsonRpcRequest) -> Option<JsonRpc
             debug!(method = %req.method, "Received MCP notification");
             None
         }
-        "initialize" => {
-            Some(JsonRpcResponse::success(id, server_info()))
-        }
-        "tools/list" => {
-            Some(JsonRpcResponse::success(id, tool_definitions()))
-        }
-        "tools/call" => {
-            Some(handle_tool_call(ctx, id, req.params).await)
-        }
+        "initialize" => Some(JsonRpcResponse::success(id, server_info())),
+        "tools/list" => Some(JsonRpcResponse::success(id, tool_definitions())),
+        "tools/call" => Some(handle_tool_call(ctx, id, req.params).await),
         _ if is_notification => {
             debug!(method = %req.method, "Ignoring unknown notification");
             None
         }
-        _ => {
-            Some(JsonRpcResponse::error(id, -32601, format!("Method not found: {}", req.method)))
-        }
+        _ => Some(JsonRpcResponse::error(
+            id,
+            -32601,
+            format!("Method not found: {}", req.method),
+        )),
     }
 }
 
@@ -257,10 +267,16 @@ async fn handle_tool_call(ctx: &McpContext, id: Value, params: Value) -> JsonRpc
 async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
     let capability = match args.get("capability").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
-        None => return JsonRpcResponse::error(id, -32602, "Missing required field: capability".into()),
+        None => {
+            return JsonRpcResponse::error(id, -32602, "Missing required field: capability".into());
+        }
     };
 
-    let outcome = match args.get("outcome").and_then(|v| v.as_str()).unwrap_or("succeeded") {
+    let outcome = match args
+        .get("outcome")
+        .and_then(|v| v.as_str())
+        .unwrap_or("succeeded")
+    {
         "succeeded" | "success" => Outcome::Succeeded,
         "failed" | "fail" => Outcome::Failed,
         "partial" => Outcome::Partial,
@@ -271,11 +287,22 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
     let latency_ms = args.get("latency_ms").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let input_size = args.get("input_size").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let context_str = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
-    let model_id = args.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-    let session_id = args.get("session_id").and_then(|v| v.as_str()).map(String::from);
+    let model_id = args
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let context_hash = simhash(context_str);
-    let context_text = if context_str.is_empty() { None } else { Some(context_str.to_string()) };
+    let context_text = if context_str.is_empty() {
+        None
+    } else {
+        Some(context_str.to_string())
+    };
 
     let trace = Trace::new(
         capability.clone(),
@@ -309,12 +336,15 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
         "capability": capability,
     });
 
-    JsonRpcResponse::success(id, json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response_json).unwrap()
-        }]
-    }))
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&response_json).unwrap()
+            }]
+        }),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +354,9 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
 fn handle_substrate_query(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
     let context_str = match args.get("context").and_then(|v| v.as_str()) {
         Some(s) => s,
-        None => return JsonRpcResponse::error(id, -32602, "Missing required field: context".into()),
+        None => {
+            return JsonRpcResponse::error(id, -32602, "Missing required field: context".into());
+        }
     };
 
     let intent = match args.get("intent").and_then(|v| v.as_str()) {
@@ -339,14 +371,23 @@ fn handle_substrate_query(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRe
         "evaluate" => {
             let capability = match args.get("capability").and_then(|v| v.as_str()) {
                 Some(s) => s,
-                None => return JsonRpcResponse::error(
-                    id, -32602, "Missing required field: capability (required for 'evaluate' intent)".into(),
-                ),
+                None => {
+                    return JsonRpcResponse::error(
+                        id,
+                        -32602,
+                        "Missing required field: capability (required for 'evaluate' intent)"
+                            .into(),
+                    );
+                }
             };
             handle_evaluate(ctx, id, capability, limit)
         }
         "explore" => handle_explore(ctx, id, context_str, limit),
-        _ => JsonRpcResponse::error(id, -32602, format!("Unknown intent: {intent}. Use 'resolve', 'evaluate', or 'explore'.")),
+        _ => JsonRpcResponse::error(
+            id,
+            -32602,
+            format!("Unknown intent: {intent}. Use 'resolve', 'evaluate', or 'explore'."),
+        ),
     }
 }
 
@@ -366,45 +407,57 @@ fn handle_resolve(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
         cap_groups.entry(&t.capability).or_default().push(t);
     }
 
-    let mut capabilities: Vec<Value> = cap_groups.iter().map(|(cap, group)| {
-        let total = group.len() as u64;
-        let successes = group.iter().filter(|t| matches!(t.outcome, Outcome::Succeeded)).count() as f64;
-        let success_rate = if total > 0 { successes / total as f64 } else { 0.0 };
+    let mut capabilities: Vec<Value> = cap_groups
+        .iter()
+        .map(|(cap, group)| {
+            let total = group.len() as u64;
+            let successes = group
+                .iter()
+                .filter(|t| matches!(t.outcome, Outcome::Succeeded))
+                .count() as f64;
+            let success_rate = if total > 0 {
+                successes / total as f64
+            } else {
+                0.0
+            };
 
-        let mut latencies: Vec<u32> = group.iter().map(|t| t.latency_ms).collect();
-        latencies.sort();
-        let p50 = percentile(&latencies, 50);
+            let mut latencies: Vec<u32> = group.iter().map(|t| t.latency_ms).collect();
+            latencies.sort();
+            let p50 = percentile(&latencies, 50);
 
-        // Best context similarity for this capability
-        let best_trace = group.iter()
-            .max_by(|a, b| {
+            // Best context similarity for this capability
+            let best_trace = group.iter().max_by(|a, b| {
                 similarity(&context_hash, &a.context_hash)
                     .partial_cmp(&similarity(&context_hash, &b.context_hash))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-        let best_similarity = best_trace
-            .map(|t| similarity(&context_hash, &t.context_hash))
-            .unwrap_or(0.0);
+            let best_similarity = best_trace
+                .map(|t| similarity(&context_hash, &t.context_hash))
+                .unwrap_or(0.0);
 
-        // Include recent context_text samples so agents can understand WHY
-        let context_samples: Vec<&str> = group.iter()
-            .filter_map(|t| t.context_text.as_deref())
-            .take(3)
-            .collect();
+            // Include recent context_text samples so agents can understand WHY
+            let context_samples: Vec<&str> = group
+                .iter()
+                .filter_map(|t| t.context_text.as_deref())
+                .take(3)
+                .collect();
 
-        json!({
-            "capability": cap,
-            "context_similarity": round2(best_similarity),
-            "success_rate": round2(success_rate),
-            "p50_latency_ms": p50,
-            "total_traces": total,
-            "context_samples": context_samples,
+            json!({
+                "capability": cap,
+                "context_similarity": round2(best_similarity),
+                "success_rate": round2(success_rate),
+                "p50_latency_ms": p50,
+                "total_traces": total,
+                "context_samples": context_samples,
+            })
         })
-    }).collect();
+        .collect();
 
     // Sort by context_similarity descending
     capabilities.sort_by(|a, b| {
-        b["context_similarity"].as_f64().unwrap_or(0.0)
+        b["context_similarity"]
+            .as_f64()
+            .unwrap_or(0.0)
             .partial_cmp(&a["context_similarity"].as_f64().unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
@@ -414,12 +467,15 @@ fn handle_resolve(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
         "capabilities": capabilities,
     });
 
-    JsonRpcResponse::success(id, json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response_json).unwrap()
-        }]
-    }))
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&response_json).unwrap()
+            }]
+        }),
+    )
 }
 
 /// Evaluate: get aggregate stats + per-model breakdown for a specific capability.
@@ -432,12 +488,15 @@ fn handle_evaluate(ctx: &McpContext, id: Value, capability: &str, limit: usize) 
                 "stats": null,
                 "by_model": {},
             });
-            return JsonRpcResponse::success(id, json!({
-                "content": [{
-                    "type": "text",
-                    "text": serde_json::to_string(&response_json).unwrap()
-                }]
-            }));
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::to_string(&response_json).unwrap()
+                    }]
+                }),
+            );
         }
         Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
     };
@@ -458,13 +517,23 @@ fn handle_evaluate(ctx: &McpContext, id: Value, capability: &str, limit: usize) 
         }
     }
 
-    let model_stats: HashMap<&str, Value> = by_model.iter().map(|(model, (total, successes))| {
-        let rate = if *total > 0 { *successes as f64 / *total as f64 } else { 0.0 };
-        (*model, json!({
-            "success_rate": round2(rate),
-            "count": total,
-        }))
-    }).collect();
+    let model_stats: HashMap<&str, Value> = by_model
+        .iter()
+        .map(|(model, (total, successes))| {
+            let rate = if *total > 0 {
+                *successes as f64 / *total as f64
+            } else {
+                0.0
+            };
+            (
+                *model,
+                json!({
+                    "success_rate": round2(rate),
+                    "count": total,
+                }),
+            )
+        })
+        .collect();
 
     let response_json = json!({
         "capability": capability,
@@ -479,12 +548,15 @@ fn handle_evaluate(ctx: &McpContext, id: Value, capability: &str, limit: usize) 
         "by_model": model_stats,
     });
 
-    JsonRpcResponse::success(id, json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response_json).unwrap()
-        }]
-    }))
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&response_json).unwrap()
+            }]
+        }),
+    )
 }
 
 /// Explore: discover available capabilities with aggregate stats.
@@ -504,7 +576,8 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
             Ok(Some(stats)) => {
                 // Check if this cap has traces with similar context
                 let traces = ctx.store.query_capability(cap, 10).unwrap_or_default();
-                let best_sim = traces.iter()
+                let best_sim = traces
+                    .iter()
                     .map(|t| similarity(&context_hash, &t.context_hash))
                     .fold(0.0_f64, f64::max);
 
@@ -527,12 +600,17 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
 
     // Sort by total_traces descending
     capabilities.sort_by(|a, b| {
-        b["total_traces"].as_u64().unwrap_or(0)
+        b["total_traces"]
+            .as_u64()
+            .unwrap_or(0)
             .cmp(&a["total_traces"].as_u64().unwrap_or(0))
     });
 
     if capabilities.is_empty() && !context_str.is_empty() {
-        gaps.push(format!("no capabilities found matching context: {}", context_str));
+        gaps.push(format!(
+            "no capabilities found matching context: {}",
+            context_str
+        ));
     }
 
     let response_json = json!({
@@ -540,12 +618,15 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
         "gaps": gaps,
     });
 
-    JsonRpcResponse::success(id, json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response_json).unwrap()
-        }]
-    }))
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&response_json).unwrap()
+            }]
+        }),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -555,10 +636,13 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
 fn handle_trace_anchor(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
     let trace_id_hex = match args.get("trace_id").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
-        None => return JsonRpcResponse::error(id, -32602, "Missing required field: trace_id".into()),
+        None => {
+            return JsonRpcResponse::error(id, -32602, "Missing required field: trace_id".into());
+        }
     };
 
-    let rpc = args.get("rpc")
+    let rpc = args
+        .get("rpc")
         .and_then(|v| v.as_str())
         .unwrap_or("http://localhost:1317");
 
@@ -569,14 +653,17 @@ fn handle_trace_anchor(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespo
         .collect::<Result<Vec<u8>, _>>()
     {
         Ok(b) if b.len() == 32 => b,
-        Ok(b) => return JsonRpcResponse::error(
-            id, -32602,
-            format!("trace_id must be 32 bytes (64 hex chars), got {} bytes", b.len()),
-        ),
-        Err(e) => return JsonRpcResponse::error(
-            id, -32602,
-            format!("Invalid hex trace_id: {e}"),
-        ),
+        Ok(b) => {
+            return JsonRpcResponse::error(
+                id,
+                -32602,
+                format!(
+                    "trace_id must be 32 bytes (64 hex chars), got {} bytes",
+                    b.len()
+                ),
+            );
+        }
+        Err(e) => return JsonRpcResponse::error(id, -32602, format!("Invalid hex trace_id: {e}")),
     };
 
     let trace_id: [u8; 32] = trace_id_bytes.try_into().unwrap();
@@ -589,12 +676,15 @@ fn handle_trace_anchor(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespo
                 "already_anchored": true,
                 "trace_id": trace_id_hex,
             });
-            return JsonRpcResponse::success(id, json!({
-                "content": [{
-                    "type": "text",
-                    "text": serde_json::to_string(&response_json).unwrap()
-                }]
-            }));
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::to_string(&response_json).unwrap()
+                    }]
+                }),
+            );
         }
         Ok(false) => {}
         Err(e) => return JsonRpcResponse::error(id, -32000, format!("Storage error: {e}")),
@@ -602,17 +692,21 @@ fn handle_trace_anchor(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespo
 
     // Find the trace in storage
     // We need to look it up; query all recent traces and find by ID
-    let traces = match ctx.store.unanchored_traces(168, 10000) { // last 7 days
+    let traces = match ctx.store.unanchored_traces(168, 10000) {
+        // last 7 days
         Ok(t) => t,
         Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
     };
 
     let trace = match traces.into_iter().find(|t| t.id == trace_id) {
         Some(t) => t,
-        None => return JsonRpcResponse::error(
-            id, -32602,
-            format!("Trace {} not found or already anchored", trace_id_hex),
-        ),
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                -32602,
+                format!("Trace {} not found or already anchored", trace_id_hex),
+            );
+        }
     };
 
     let client = AnchorClient::new(rpc, "oasyce-1");
@@ -629,12 +723,15 @@ fn handle_trace_anchor(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespo
                 "tx_hash": result.tx_hash,
             });
 
-            JsonRpcResponse::success(id, json!({
-                "content": [{
-                    "type": "text",
-                    "text": serde_json::to_string(&response_json).unwrap()
-                }]
-            }))
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::to_string(&response_json).unwrap()
+                    }]
+                }),
+            )
         }
         Err(e) => JsonRpcResponse::error(id, -32000, format!("Anchor error: {e}")),
     }
@@ -670,11 +767,22 @@ mod tests {
     fn make_ctx() -> Arc<McpContext> {
         let identity = Arc::new(NodeIdentity::generate());
         let store = Arc::new(TraceStore::in_memory().unwrap());
-        Arc::new(McpContext { identity, store, network_tx: None })
+        Arc::new(McpContext {
+            identity,
+            store,
+            network_tx: None,
+        })
     }
 
     /// Helper: insert a trace directly into the store.
-    fn insert_trace(ctx: &McpContext, cap: &str, outcome: Outcome, model: &str, context: &str, latency: u32) {
+    fn insert_trace(
+        ctx: &McpContext,
+        cap: &str,
+        outcome: Outcome,
+        model: &str,
+        context: &str,
+        latency: u32,
+    ) {
         let trace = Trace::new(
             cap.into(),
             outcome,
@@ -701,7 +809,9 @@ mod tests {
             method: "initialize".into(),
             params: json!({}),
         };
-        let resp = handle_request(&ctx, req).await.expect("initialize should return response");
+        let resp = handle_request(&ctx, req)
+            .await
+            .expect("initialize should return response");
         let result = resp.result.unwrap();
         assert_eq!(result["serverInfo"]["name"], "thronglets");
         assert!(result["protocolVersion"].as_str().is_some());
@@ -720,9 +830,7 @@ mod tests {
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
         assert_eq!(tools.len(), 3);
 
-        let names: Vec<&str> = tools.iter()
-            .filter_map(|t| t["name"].as_str())
-            .collect();
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"trace_record"));
         assert!(names.contains(&"substrate_query"));
         assert!(names.contains(&"trace_anchor"));
@@ -753,11 +861,15 @@ mod tests {
         assert!(resp.error.is_none(), "trace_record should succeed");
 
         // Verify response is structured JSON
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let parsed: Value = serde_json::from_str(&text).expect("response text should be valid JSON");
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("response text should be valid JSON");
         assert_eq!(parsed["recorded"], true);
         assert_eq!(parsed["capability"], "urn:mcp:anthropic:claude:code");
-        assert!(parsed["trace_id"].as_str().unwrap().len() > 0);
+        assert!(!parsed["trace_id"].as_str().unwrap().is_empty());
 
         // Evaluate the capability
         let eval_req = JsonRpcRequest {
@@ -776,8 +888,12 @@ mod tests {
         let resp = handle_request(&ctx, eval_req).await.unwrap();
         assert!(resp.error.is_none(), "evaluate should succeed");
 
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let parsed: Value = serde_json::from_str(&text).expect("evaluate response should be valid JSON");
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("evaluate response should be valid JSON");
         assert_eq!(parsed["capability"], "urn:mcp:anthropic:claude:code");
         assert_eq!(parsed["stats"]["total_traces"], 1);
         assert_eq!(parsed["stats"]["success_rate"], 1.0);
@@ -792,9 +908,30 @@ mod tests {
         let ctx = make_ctx();
 
         // Insert traces with similar and different contexts
-        insert_trace(&ctx, "deepl/translate", Outcome::Succeeded, "claude-opus-4-6", "translate a document from Chinese to English", 150);
-        insert_trace(&ctx, "deepl/translate", Outcome::Succeeded, "gpt-4o", "translate technical docs from Chinese to English", 300);
-        insert_trace(&ctx, "k8s/deploy", Outcome::Succeeded, "claude-opus-4-6", "deploy kubernetes cluster on AWS", 5000);
+        insert_trace(
+            &ctx,
+            "deepl/translate",
+            Outcome::Succeeded,
+            "claude-opus-4-6",
+            "translate a document from Chinese to English",
+            150,
+        );
+        insert_trace(
+            &ctx,
+            "deepl/translate",
+            Outcome::Succeeded,
+            "gpt-4o",
+            "translate technical docs from Chinese to English",
+            300,
+        );
+        insert_trace(
+            &ctx,
+            "k8s/deploy",
+            Outcome::Succeeded,
+            "claude-opus-4-6",
+            "deploy kubernetes cluster on AWS",
+            5000,
+        );
 
         // Resolve with a translation-related context
         let resolve_req = JsonRpcRequest {
@@ -813,8 +950,12 @@ mod tests {
         let resp = handle_request(&ctx, resolve_req).await.unwrap();
         assert!(resp.error.is_none(), "resolve should succeed");
 
-        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        let parsed: Value = serde_json::from_str(&text).expect("resolve response should be valid JSON");
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("resolve response should be valid JSON");
         let caps = parsed["capabilities"].as_array().unwrap();
 
         // Should find capabilities — deepl/translate should have higher similarity
@@ -822,7 +963,10 @@ mod tests {
         if caps.len() >= 2 {
             let first_sim = caps[0]["context_similarity"].as_f64().unwrap();
             let last_sim = caps[caps.len() - 1]["context_similarity"].as_f64().unwrap();
-            assert!(first_sim >= last_sim, "results should be sorted by context_similarity descending");
+            assert!(
+                first_sim >= last_sim,
+                "results should be sorted by context_similarity descending"
+            );
         }
     }
 

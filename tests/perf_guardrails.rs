@@ -7,7 +7,9 @@ use thronglets::contracts::{PREHOOK_HEADER, PREHOOK_MATCHER};
 use thronglets::identity::NodeIdentity;
 use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
-use thronglets::workspace::{PendingFeedback, RecentAction, RecentError, RepairPattern, WorkspaceState};
+use thronglets::workspace::{
+    PendingFeedback, RecentAction, RecentError, RepairPattern, WorkspaceState,
+};
 
 fn run_bin(args: &[&str], input: Option<&str>, home: Option<&Path>) -> Output {
     run_bin_env(args, input, home, &[])
@@ -109,24 +111,32 @@ fn setup_keeps_prehook_narrow() {
     let home = tempfile::tempdir().unwrap();
 
     let output = run_bin(&["setup"], None, Some(home.path()));
-    assert!(output.status.success(), "setup failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let settings_path = home.path().join(".claude/settings.json");
-    let settings: Value = serde_json::from_str(
-        &std::fs::read_to_string(settings_path).expect("settings.json"),
-    )
-    .expect("valid settings json");
+    let settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(settings_path).expect("settings.json"))
+            .expect("valid settings json");
 
-    let pre_hooks = settings["hooks"]["PreToolUse"].as_array().expect("PreToolUse hooks");
-    let thronglets_hook = pre_hooks.iter().find(|entry| {
-        entry["hooks"].as_array().is_some_and(|hooks| {
-            hooks.iter().any(|hook| {
-                hook["command"]
-                    .as_str()
-                    .is_some_and(|cmd| cmd.contains("thronglets prehook"))
+    let pre_hooks = settings["hooks"]["PreToolUse"]
+        .as_array()
+        .expect("PreToolUse hooks");
+    let thronglets_hook = pre_hooks
+        .iter()
+        .find(|entry| {
+            entry["hooks"].as_array().is_some_and(|hooks| {
+                hooks.iter().any(|hook| {
+                    hook["command"]
+                        .as_str()
+                        .is_some_and(|cmd| cmd.contains("thronglets prehook"))
+                })
             })
         })
-    }).expect("thronglets prehook entry");
+        .expect("thronglets prehook entry");
 
     assert_eq!(thronglets_hook["matcher"], PREHOOK_MATCHER);
 }
@@ -142,7 +152,11 @@ fn prehook_is_silent_without_signals() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
 }
 
@@ -158,7 +172,11 @@ fn prehook_profile_uses_stderr_only() {
         &[("THRONGLETS_PROFILE_PREHOOK", "1")],
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("[thronglets:prehook]"));
@@ -197,7 +215,11 @@ fn prehook_emits_git_history_as_context_fallback() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("context: git history for main.rs:"));
@@ -218,8 +240,10 @@ fn prehook_profile_keeps_stdout_shape_when_signals_exist() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_errors.push_front(RecentError {
         tool: "Edit".into(),
         context: "editing main".into(),
@@ -247,7 +271,11 @@ fn prehook_profile_keeps_stdout_shape_when_signals_exist() {
         &[("THRONGLETS_PROFILE_PREHOOK", "1")],
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains(PREHOOK_HEADER));
@@ -280,8 +308,10 @@ fn prehook_profile_reports_collective_query_usage() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     for offset in [0_i64, 10_000] {
         ws.recent_actions.push_back(RecentAction {
             tool: "Read".into(),
@@ -304,8 +334,18 @@ fn prehook_profile_reports_collective_query_usage() {
     let node_a = NodeIdentity::generate();
     let node_b = NodeIdentity::generate();
     for (identity, session_id, main_context, helper_context) in [
-        (&node_a, "agent-a", "edit file: main.rs", "read file: helper.rs"),
-        (&node_b, "agent-b", "edit file: /tmp/other/main.rs", "read file: /tmp/other/helper.rs"),
+        (
+            &node_a,
+            "agent-a",
+            "edit file: main.rs",
+            "read file: helper.rs",
+        ),
+        (
+            &node_b,
+            "agent-b",
+            "edit file: /tmp/other/main.rs",
+            "read file: /tmp/other/helper.rs",
+        ),
     ] {
         insert_trace(
             &store,
@@ -336,7 +376,11 @@ fn prehook_profile_reports_collective_query_usage() {
         &[("THRONGLETS_PROFILE_PREHOOK", "1")],
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("tool=Edit"));
@@ -374,7 +418,11 @@ fn prehook_profile_reports_context_only_mode() {
         &[("THRONGLETS_PROFILE_PREHOOK", "1")],
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("context: git history for main.rs:"));
@@ -389,8 +437,10 @@ fn prehook_profile_reports_context_only_mode() {
 fn prehook_ignores_global_retention_without_local_evidence() {
     let data_dir = tempfile::tempdir().unwrap();
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     for i in 0..3 {
         ws.pending_feedback.push_front(PendingFeedback {
             file_path: format!("/other{i}.rs"),
@@ -409,7 +459,11 @@ fn prehook_ignores_global_retention_without_local_evidence() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
 }
 
@@ -417,8 +471,10 @@ fn prehook_ignores_global_retention_without_local_evidence() {
 fn prehook_does_not_emit_repair_for_retention_only_danger() {
     let data_dir = tempfile::tempdir().unwrap();
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     for offset in [0_i64, 1_000] {
         ws.pending_feedback.push_front(PendingFeedback {
             file_path: "/current.rs".into(),
@@ -446,13 +502,23 @@ fn prehook_does_not_emit_repair_for_retention_only_danger() {
         &[("THRONGLETS_PROFILE_PREHOOK", "1")],
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("avoid: low retention for current.rs: 0/2 edits committed"));
-    assert!(!stdout.contains("do next:"), "repair should require a recent tool error");
-    assert!(!stdout.contains("context:"), "danger-only prehook should stay sparse and skip git fallback");
+    assert!(
+        !stdout.contains("do next:"),
+        "repair should require a recent tool error"
+    );
+    assert!(
+        !stdout.contains("context:"),
+        "danger-only prehook should stay sparse and skip git fallback"
+    );
     assert!(stderr.contains("output_mode=caution"));
     assert!(stderr.contains("decision_path=danger"));
     assert!(stderr.contains("git=skipped"));
@@ -477,8 +543,10 @@ fn prehook_ranks_danger_and_repair_above_history() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_errors.push_front(RecentError {
         tool: "Edit".into(),
         context: "editing main".into(),
@@ -529,15 +597,28 @@ fn prehook_ranks_danger_and_repair_above_history() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("avoid: recent error: parser exploded"));
     assert!(stdout.contains("do next: Read helper.rs (medium, 2x)"));
-    assert!(!stdout.contains("git history for main.rs"), "lower-priority history should be dropped");
-    assert!(!stdout.contains("maybe also:"), "repair guidance should beat adjacency when budget is tight");
-    assert!(!stdout.contains("edit retention:"), "global retention should not pollute file-scoped edits");
+    assert!(
+        !stdout.contains("git history for main.rs"),
+        "lower-priority history should be dropped"
+    );
+    assert!(
+        !stdout.contains("maybe also:"),
+        "repair guidance should beat adjacency when budget is tight"
+    );
+    assert!(
+        !stdout.contains("edit retention:"),
+        "global retention should not pollute file-scoped edits"
+    );
 
     let top_level_signals = stdout
         .lines()
@@ -561,8 +642,10 @@ fn prehook_emits_confident_adjacency_when_no_repair_exists() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_actions.push_front(RecentAction {
         tool: "Edit".into(),
         file_path: Some(main_rs.to_string_lossy().into_owned()),
@@ -603,7 +686,11 @@ fn prehook_emits_confident_adjacency_when_no_repair_exists() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("maybe also: Edit helper.rs (medium, 2x)"));
@@ -626,8 +713,10 @@ fn prehook_emits_confident_prep_read_before_editing() {
     let db_path = data_dir.join("traces.db");
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_actions.push_back(RecentAction {
         tool: "Read".into(),
         file_path: Some(helper_rs.to_string_lossy().into_owned()),
@@ -668,12 +757,19 @@ fn prehook_emits_confident_prep_read_before_editing() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("do next: Read helper.rs (medium, 2x)"));
     assert!(!stdout.contains("git history for main.rs"));
-    assert!(!db_path.exists(), "prehook should stay local-only when no collective store exists");
+    assert!(
+        !db_path.exists(),
+        "prehook should stay local-only when no collective store exists"
+    );
 }
 
 #[test]
@@ -691,8 +787,10 @@ fn prehook_skips_collective_lookup_when_local_sources_are_already_independent() 
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     for (offset, session_id) in [(0_i64, "agent-a"), (10_000_i64, "agent-b")] {
         ws.recent_actions.push_back(RecentAction {
             tool: "Read".into(),
@@ -724,11 +822,18 @@ fn prehook_skips_collective_lookup_when_local_sources_are_already_independent() 
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("do next: Read helper.rs (medium, 2x, 2 sources)"));
-    assert!(!db_path.exists(), "prehook should not open the collective store when local sources already suffice");
+    assert!(
+        !db_path.exists(),
+        "prehook should not open the collective store when local sources already suffice"
+    );
 }
 
 #[test]
@@ -749,8 +854,10 @@ fn prehook_keeps_collective_budget_zero_when_local_file_history_is_too_weak() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_actions.push_back(RecentAction {
         tool: "Read".into(),
         file_path: Some(helper_rs.to_string_lossy().into_owned()),
@@ -771,8 +878,18 @@ fn prehook_keeps_collective_budget_zero_when_local_file_history_is_too_weak() {
     let node_a = NodeIdentity::generate();
     let node_b = NodeIdentity::generate();
     for (identity, session_id, main_context, helper_context) in [
-        (&node_a, "agent-a", "edit file: main.rs", "read file: helper.rs"),
-        (&node_b, "agent-b", "edit file: /tmp/other/main.rs", "read file: /tmp/other/helper.rs"),
+        (
+            &node_a,
+            "agent-a",
+            "edit file: main.rs",
+            "read file: helper.rs",
+        ),
+        (
+            &node_b,
+            "agent-b",
+            "edit file: /tmp/other/main.rs",
+            "read file: /tmp/other/helper.rs",
+        ),
     ] {
         insert_trace(
             &store,
@@ -803,7 +920,11 @@ fn prehook_keeps_collective_budget_zero_when_local_file_history_is_too_weak() {
         &[("THRONGLETS_PROFILE_PREHOOK", "1")],
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("context: git history for main.rs:"));
@@ -831,8 +952,10 @@ fn prehook_spends_collective_budget_on_highest_priority_action_signal() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     for offset in [0_i64, 10_000] {
         ws.recent_actions.push_back(RecentAction {
             tool: "Read".into(),
@@ -905,7 +1028,11 @@ fn prehook_spends_collective_budget_on_highest_priority_action_signal() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("do next: Read helper.rs (medium, 2x)"));
@@ -937,7 +1064,11 @@ fn prehook_upgrades_prep_read_with_collective_sources() {
             Some(&read_payload),
             None,
         );
-        assert!(output.status.success(), "hook read failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook read failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let edit_payload = format!(
             r#"{{"tool_name":"Edit","tool_input":{{"file_path":"{}"}},"tool_response":{{}},"session_id":"{session_id}"}}"#,
@@ -948,7 +1079,11 @@ fn prehook_upgrades_prep_read_with_collective_sources() {
             Some(&edit_payload),
             None,
         );
-        assert!(output.status.success(), "hook edit failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook edit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let payload = format!(
@@ -961,7 +1096,11 @@ fn prehook_upgrades_prep_read_with_collective_sources() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("do next: Read helper.rs (medium, 2x, 2 sources)"));
@@ -982,8 +1121,10 @@ fn prehook_distinguishes_nodes_with_same_session_id_in_collective_sources() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     for offset in [0_i64, 10_000] {
         ws.recent_actions.push_back(RecentAction {
             tool: "Read".into(),
@@ -1050,7 +1191,11 @@ fn prehook_distinguishes_nodes_with_same_session_id_in_collective_sources() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("do next: Read helper.rs (medium, 2x, 2 sources)"));
@@ -1062,7 +1207,11 @@ fn prehook_upgrades_repair_with_collective_sources() {
     init_git_repo(repo.path());
 
     let cargo_toml = repo.path().join("Cargo.toml");
-    std::fs::write(&cargo_toml, "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(
+        &cargo_toml,
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     git_commit_all(repo.path(), "init");
 
     let data_dir = repo.path().join(".thronglets-data");
@@ -1075,7 +1224,11 @@ fn prehook_upgrades_repair_with_collective_sources() {
             Some(&bash_fail),
             None,
         );
-        assert!(output.status.success(), "hook bash fail failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook bash fail failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let read_payload = format!(
             r#"{{"tool_name":"Read","tool_input":{{"file_path":"{}"}},"tool_response":{{}},"session_id":"{session_id}"}}"#,
@@ -1086,7 +1239,11 @@ fn prehook_upgrades_repair_with_collective_sources() {
             Some(&read_payload),
             None,
         );
-        assert!(output.status.success(), "hook read failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook read failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let bash_ok = r#"{"tool_name":"Bash","tool_input":{"command":"cargo test"},"tool_response":{},"session_id":"SESSION"}"#.replace("SESSION", session_id);
         let output = run_bin(
@@ -1094,12 +1251,18 @@ fn prehook_upgrades_repair_with_collective_sources() {
             Some(&bash_ok),
             None,
         );
-        assert!(output.status.success(), "hook bash success failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook bash success failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_errors.push_front(RecentError {
         tool: "Bash".into(),
         context: "cargo test".into(),
@@ -1108,12 +1271,23 @@ fn prehook_upgrades_repair_with_collective_sources() {
     });
     for (offset, (tool, file_path, outcome)) in [
         ("Bash", None, "failed"),
-        ("Read", Some(cargo_toml.to_string_lossy().into_owned()), "succeeded"),
+        (
+            "Read",
+            Some(cargo_toml.to_string_lossy().into_owned()),
+            "succeeded",
+        ),
         ("Bash", None, "succeeded"),
         ("Bash", None, "failed"),
-        ("Read", Some(cargo_toml.to_string_lossy().into_owned()), "succeeded"),
+        (
+            "Read",
+            Some(cargo_toml.to_string_lossy().into_owned()),
+            "succeeded",
+        ),
         ("Bash", None, "succeeded"),
-    ].into_iter().enumerate() {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         ws.recent_actions.push_front(RecentAction {
             tool: tool.into(),
             file_path,
@@ -1131,7 +1305,11 @@ fn prehook_upgrades_repair_with_collective_sources() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("avoid: recent error: linker failed"));
@@ -1162,7 +1340,11 @@ fn prehook_upgrades_adjacency_with_collective_sources() {
             Some(&edit_main),
             None,
         );
-        assert!(output.status.success(), "hook edit main failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook edit main failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let edit_helper = format!(
             r#"{{"tool_name":"Write","tool_input":{{"file_path":"{}"}},"tool_response":{{}},"session_id":"{session_id}"}}"#,
@@ -1173,12 +1355,18 @@ fn prehook_upgrades_adjacency_with_collective_sources() {
             Some(&edit_helper),
             None,
         );
-        assert!(output.status.success(), "hook edit helper failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "hook edit helper failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let now = chrono::Utc::now().timestamp_millis();
-    let mut ws = WorkspaceState::default();
-    ws.updated_ms = now;
+    let mut ws = WorkspaceState {
+        updated_ms: now,
+        ..WorkspaceState::default()
+    };
     ws.recent_actions.push_front(RecentAction {
         tool: "Edit".into(),
         file_path: Some(main_rs.to_string_lossy().into_owned()),
@@ -1219,7 +1407,11 @@ fn prehook_upgrades_adjacency_with_collective_sources() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("maybe also: Edit helper.rs (medium, 2x, 2 sources)"));
@@ -1248,7 +1440,11 @@ fn prehook_suppresses_action_signal_for_single_collective_example() {
         Some(&edit_main),
         None,
     );
-    assert!(output.status.success(), "hook edit main failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "hook edit main failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let edit_helper = format!(
         r#"{{"tool_name":"Write","tool_input":{{"file_path":"{}"}},"tool_response":{{}},"session_id":"agent-a"}}"#,
@@ -1259,7 +1455,11 @@ fn prehook_suppresses_action_signal_for_single_collective_example() {
         Some(&edit_helper),
         None,
     );
-    assert!(output.status.success(), "hook edit helper failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "hook edit helper failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let payload = format!(
         r#"{{"tool_name":"Edit","tool_input":{{"file_path":"{}"}}}}"#,
@@ -1271,7 +1471,11 @@ fn prehook_suppresses_action_signal_for_single_collective_example() {
         None,
     );
 
-    assert!(output.status.success(), "prehook failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("do next:"));
     assert!(!stdout.contains("maybe also:"));

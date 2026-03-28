@@ -222,11 +222,10 @@ fn release_check_json_reports_eval_failures() {
     assert_eq!(parsed["profile"]["status"], "PASS");
     assert_eq!(parsed["eval"]["status"], "FAIL");
     assert!(
-        parsed["eval"]["check"]["violations"]
+        !parsed["eval"]["check"]["violations"]
             .as_array()
             .expect("violations array")
-            .len()
-            >= 1
+            .is_empty()
     );
 }
 

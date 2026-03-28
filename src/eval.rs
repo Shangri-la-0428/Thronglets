@@ -601,10 +601,10 @@ impl PatternStats {
 impl SignalTrainingSet {
     fn observe_session(&mut self, session_id: &str, events: &[SessionEvent]) {
         for event in events {
-            if matches!(event.tool.as_str(), "Edit" | "Write") {
-                if let Some(target) = event.target.as_ref() {
-                    *self.file_touch_counts.entry(target.clone()).or_insert(0) += 1;
-                }
+            if matches!(event.tool.as_str(), "Edit" | "Write")
+                && let Some(target) = event.target.as_ref()
+            {
+                *self.file_touch_counts.entry(target.clone()).or_insert(0) += 1;
             }
         }
 
@@ -735,10 +735,10 @@ pub fn evaluate_signal_quality(
     let mut sessions = Vec::new();
     for session_id in session_ids {
         let traces = store.query_session(&session_id, SESSION_TRACE_LIMIT)?;
-        if let Some(project_root) = project_root {
-            if !session_matches_project_root(&traces, project_root) {
-                continue;
-            }
+        if let Some(project_root) = project_root
+            && !session_matches_project_root(&traces, project_root)
+        {
+            continue;
         }
         let events = traces.iter().filter_map(trace_to_event).collect::<Vec<_>>();
         if !events.is_empty() {
@@ -858,11 +858,10 @@ fn score_session(
                 let actual = actual_repair_steps(events, idx);
                 if let (Some(predicted_first), Some(actual_first)) =
                     (predicted.value.first(), actual.first())
+                    && predicted_first == actual_first
                 {
-                    if predicted_first == actual_first {
-                        summary.repair_first_step_hits += 1;
-                        repair_breakdown.first_step_hits += 1;
-                    }
+                    summary.repair_first_step_hits += 1;
+                    repair_breakdown.first_step_hits += 1;
                 }
                 if predicted.value == actual {
                     summary.repair_exact_hits += 1;
@@ -976,10 +975,10 @@ fn actual_preparation_targets(events: &[SessionEvent], edit_index: usize) -> Has
         if edit.timestamp_ms - prev.timestamp_ms > FILE_WINDOW_MS {
             continue;
         }
-        if let Some(target) = prev.target.as_ref() {
-            if target != current_target {
-                targets.insert(target.clone());
-            }
+        if let Some(target) = prev.target.as_ref()
+            && target != current_target
+        {
+            targets.insert(target.clone());
         }
     }
     targets
@@ -1004,10 +1003,10 @@ fn actual_companion_targets(events: &[SessionEvent], edit_index: usize) -> HashS
         if (other.timestamp_ms - edit.timestamp_ms).abs() > FILE_WINDOW_MS {
             continue;
         }
-        if let Some(target) = other.target.as_ref() {
-            if target != current_target {
-                targets.insert(target.clone());
-            }
+        if let Some(target) = other.target.as_ref()
+            && target != current_target
+        {
+            targets.insert(target.clone());
         }
     }
     targets

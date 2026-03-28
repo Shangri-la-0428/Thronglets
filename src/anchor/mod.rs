@@ -80,7 +80,7 @@ impl AnchorClient {
         identity: &NodeIdentity,
         trace: &Trace,
     ) -> Result<AnchorResult, AnchorError> {
-        self.anchor_batch(identity, &[trace.clone()])
+        self.anchor_batch(identity, std::slice::from_ref(trace))
     }
 
     /// Anchor a batch of traces (up to 50) in a single transaction.
@@ -129,8 +129,8 @@ impl AnchorClient {
         }
 
         let tx_body = self.build_tx_body(&messages);
-        let tx_bytes = serde_json::to_vec(&tx_body)
-            .map_err(|e| AnchorError::Serialization(e.to_string()))?;
+        let tx_bytes =
+            serde_json::to_vec(&tx_body).map_err(|e| AnchorError::Serialization(e.to_string()))?;
 
         // Sign the tx body bytes
         let sig = identity.sign(&tx_bytes);
@@ -288,7 +288,12 @@ mod tests {
         let id = make_identity();
         let mut traces = Vec::new();
         for i in 0..5 {
-            let t = make_trace(&id, &format!("tool-{i}"), Outcome::Succeeded, &format!("ctx {i}"));
+            let t = make_trace(
+                &id,
+                &format!("tool-{i}"),
+                Outcome::Succeeded,
+                &format!("ctx {i}"),
+            );
             traces.push(t);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
@@ -315,7 +320,12 @@ mod tests {
         let id = make_identity();
         let mut traces = Vec::new();
         for i in 0..55 {
-            let t = make_trace(&id, &format!("tool-{i}"), Outcome::Succeeded, &format!("ctx {i}"));
+            let t = make_trace(
+                &id,
+                &format!("tool-{i}"),
+                Outcome::Succeeded,
+                &format!("ctx {i}"),
+            );
             traces.push(t);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }

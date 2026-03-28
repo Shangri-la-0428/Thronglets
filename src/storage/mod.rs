@@ -6,7 +6,7 @@
 use crate::signals::StepAction;
 use crate::trace::{Outcome, Trace};
 use ed25519_dalek::Signature;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -55,8 +55,14 @@ impl TraceStore {
         // Each ALTER is separate — if one fails (column exists), the rest still run
         let _ = conn.execute("ALTER TABLE traces ADD COLUMN context_text TEXT", []);
         let _ = conn.execute("ALTER TABLE traces ADD COLUMN session_id TEXT", []);
-        let _ = conn.execute("ALTER TABLE traces ADD COLUMN context_bucket INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE traces ADD COLUMN published INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute(
+            "ALTER TABLE traces ADD COLUMN context_bucket INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE traces ADD COLUMN published INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         // Now create indexes (columns guaranteed to exist after migration)
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_traces_capability ON traces(capability);
@@ -65,7 +71,9 @@ impl TraceStore {
             CREATE INDEX IF NOT EXISTS idx_traces_session_id ON traces(session_id);
             CREATE INDEX IF NOT EXISTS idx_traces_context_bucket ON traces(context_bucket);",
         )?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Open an in-memory store (for testing).
@@ -130,8 +138,8 @@ impl TraceStore {
         // Each bucket bit-flip represents ~8 Hamming distance in the full hash,
         // so we expand to neighboring buckets proportional to max_distance.
         let bucket_radius = (max_distance / 8).max(1) as i64;
-        let bucket_lo = (target_bucket as i64 - bucket_radius).max(0) as i64;
-        let bucket_hi = (target_bucket as i64 + bucket_radius).min(65535) as i64;
+        let bucket_lo = (target_bucket - bucket_radius).max(0);
+        let bucket_hi = (target_bucket + bucket_radius).min(65535);
 
         let mut stmt = conn.prepare(
             "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
@@ -144,7 +152,9 @@ impl TraceStore {
 
         let mut matched: Vec<Trace> = candidates
             .into_iter()
-            .filter(|t| crate::context::hamming_distance(&t.context_hash, context_hash) <= max_distance)
+            .filter(|t| {
+                crate::context::hamming_distance(&t.context_hash, context_hash) <= max_distance
+            })
             .collect();
         matched.truncate(limit);
         Ok(matched)
@@ -162,8 +172,8 @@ impl TraceStore {
                 COALESCE(AVG(input_size), 0) as avg_input
              FROM traces WHERE capability = ?1",
         )?;
-        let (total, succeeded, avg_input_size): (i64, i64, f64) =
-            count_stmt.query_row(params![capability], |row| {
+        let (total, succeeded, avg_input_size): (i64, i64, f64) = count_stmt
+            .query_row(params![capability], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })?;
 
@@ -230,7 +240,11 @@ impl TraceStore {
 
     /// Discover workflow patterns: what capability do agents use AFTER a given capability?
     /// Returns (next_capability, count) pairs ordered by frequency.
-    pub fn query_workflow_next(&self, capability: &str, limit: usize) -> rusqlite::Result<Vec<(String, u64)>> {
+    pub fn query_workflow_next(
+        &self,
+        capability: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(String, u64)>> {
         let conn = self.conn.lock().unwrap();
         // Find sessions that contain the given capability, then look at the next trace in each session
         let mut stmt = conn.prepare(
@@ -321,13 +335,7 @@ impl TraceStore {
                    AND t0.timestamp >= ?2
                    AND t1.capability = ?3
                    AND (?4 IS NULL OR t1.context_text = ?4 OR t1.context_text LIKE ?5)",
-                params![
-                    failed_cap,
-                    cutoff_ms,
-                    step1_cap,
-                    step1_exact,
-                    step1_suffix,
-                ],
+                params![failed_cap, cutoff_ms, step1_cap, step1_exact, step1_suffix,],
                 |row| row.get::<_, i64>(0),
             )?
         } else {
@@ -436,9 +444,8 @@ impl TraceStore {
     /// List distinct capabilities that have traces.
     pub fn distinct_capabilities(&self, limit: usize) -> rusqlite::Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT capability FROM traces ORDER BY capability LIMIT ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT capability FROM traces ORDER BY capability LIMIT ?1")?;
         let rows = stmt.query_map(params![limit as i64], |row| row.get(0))?;
         rows.collect()
     }
@@ -484,12 +491,7 @@ impl TraceStore {
         conn.execute(
             "INSERT OR REPLACE INTO anchored_traces (trace_id, anchor_height, tx_hash, anchored_at)
              VALUES (?1, ?2, ?3, ?4)",
-            params![
-                trace_id.as_slice(),
-                anchor_height as i64,
-                tx_hash,
-                now_ms,
-            ],
+            params![trace_id.as_slice(), anchor_height as i64, tx_hash, now_ms,],
         )?;
         Ok(())
     }
@@ -552,9 +554,7 @@ impl TraceStore {
                 model_id: row.get(8)?,
                 timestamp: row.get::<_, i64>(9)? as u64,
                 node_pubkey: pubkey_bytes.try_into().unwrap_or([0u8; 32]),
-                signature: Signature::from_bytes(
-                    &sig_bytes.try_into().unwrap_or([0u8; 64]),
-                ),
+                signature: Signature::from_bytes(&sig_bytes.try_into().unwrap_or([0u8; 64])),
             })
         })?;
         rows.collect()
@@ -660,11 +660,17 @@ mod tests {
         let store = TraceStore::in_memory().unwrap();
         let id = NodeIdentity::generate();
 
-        store.insert(&make_trace(&id, "x", Outcome::Succeeded, "agg context 1")).unwrap();
+        store
+            .insert(&make_trace(&id, "x", Outcome::Succeeded, "agg context 1"))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(&make_trace(&id, "x", Outcome::Succeeded, "agg context 2")).unwrap();
+        store
+            .insert(&make_trace(&id, "x", Outcome::Succeeded, "agg context 2"))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(&make_trace(&id, "x", Outcome::Failed, "agg context 3")).unwrap();
+        store
+            .insert(&make_trace(&id, "x", Outcome::Failed, "agg context 3"))
+            .unwrap();
 
         let stats = store.aggregate("x").unwrap().unwrap();
         assert_eq!(stats.total_traces, 3);
@@ -682,13 +688,35 @@ mod tests {
         let id = NodeIdentity::generate();
 
         // Two traces with similar contexts, one with a very different context.
-        store.insert(&make_trace(&id, "a", Outcome::Succeeded, "translate a technical document from Chinese to English")).unwrap();
+        store
+            .insert(&make_trace(
+                &id,
+                "a",
+                Outcome::Succeeded,
+                "translate a technical document from Chinese to English",
+            ))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(&make_trace(&id, "b", Outcome::Succeeded, "translate a legal document from Chinese to English")).unwrap();
+        store
+            .insert(&make_trace(
+                &id,
+                "b",
+                Outcome::Succeeded,
+                "translate a legal document from Chinese to English",
+            ))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(&make_trace(&id, "c", Outcome::Succeeded, "deploy kubernetes cluster on AWS with terraform")).unwrap();
+        store
+            .insert(&make_trace(
+                &id,
+                "c",
+                Outcome::Succeeded,
+                "deploy kubernetes cluster on AWS with terraform",
+            ))
+            .unwrap();
 
-        let target = crate::context::simhash("translate a technical document from Chinese to English");
+        let target =
+            crate::context::simhash("translate a technical document from Chinese to English");
 
         // Tight distance: should find the exact match and the similar one.
         let results = store.query_similar(&target, 40, 10).unwrap();
@@ -713,11 +741,17 @@ mod tests {
         let store = TraceStore::in_memory().unwrap();
         let id = NodeIdentity::generate();
 
-        store.insert(&make_trace(&id, "cap-b", Outcome::Succeeded, "ctx 1")).unwrap();
+        store
+            .insert(&make_trace(&id, "cap-b", Outcome::Succeeded, "ctx 1"))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(&make_trace(&id, "cap-a", Outcome::Succeeded, "ctx 2")).unwrap();
+        store
+            .insert(&make_trace(&id, "cap-a", Outcome::Succeeded, "ctx 2"))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(&make_trace(&id, "cap-b", Outcome::Failed, "ctx 3")).unwrap();
+        store
+            .insert(&make_trace(&id, "cap-b", Outcome::Failed, "ctx 3"))
+            .unwrap();
 
         let caps = store.distinct_capabilities(10).unwrap();
         assert_eq!(caps, vec!["cap-a", "cap-b"]); // alphabetical, deduplicated
@@ -774,7 +808,9 @@ mod tests {
         assert!(!store.is_anchored(&trace.id).unwrap());
 
         // Mark as anchored
-        store.mark_anchored(&trace.id, 100, "ABCDEF1234567890").unwrap();
+        store
+            .mark_anchored(&trace.id, 100, "ABCDEF1234567890")
+            .unwrap();
 
         // Now it should be anchored
         assert!(store.is_anchored(&trace.id).unwrap());
@@ -864,7 +900,12 @@ mod tests {
         let id = NodeIdentity::generate();
 
         for i in 0..10 {
-            let t = make_trace(&id, &format!("tool-{i}"), Outcome::Succeeded, &format!("ctx {i}"));
+            let t = make_trace(
+                &id,
+                &format!("tool-{i}"),
+                Outcome::Succeeded,
+                &format!("ctx {i}"),
+            );
             store.insert(&t).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
@@ -938,7 +979,9 @@ mod tests {
         store.insert(&read_s2).unwrap();
         store.insert(&edit_s2).unwrap();
 
-        let count = store.count_preparation_sources("main.rs", "helper.rs", 24).unwrap();
+        let count = store
+            .count_preparation_sources("main.rs", "helper.rs", 24)
+            .unwrap();
         assert_eq!(count, 2);
     }
 
@@ -1039,14 +1082,16 @@ mod tests {
             store.insert(&trace).unwrap();
         }
 
-        let count = store.count_repair_sources(
-            "Bash",
-            &[
-                StepAction::new("Read", Some("Cargo.toml".into())),
-                StepAction::new("Bash", None),
-            ],
-            24,
-        ).unwrap();
+        let count = store
+            .count_repair_sources(
+                "Bash",
+                &[
+                    StepAction::new("Read", Some("Cargo.toml".into())),
+                    StepAction::new("Bash", None),
+                ],
+                24,
+            )
+            .unwrap();
         assert_eq!(count, 2);
     }
 
@@ -1113,7 +1158,9 @@ mod tests {
             store.insert(&trace).unwrap();
         }
 
-        let count = store.count_adjacency_sources("main.rs", "helper.rs", 24).unwrap();
+        let count = store
+            .count_adjacency_sources("main.rs", "helper.rs", 24)
+            .unwrap();
         assert_eq!(count, 2);
     }
 
@@ -1181,7 +1228,9 @@ mod tests {
             store.insert(&trace).unwrap();
         }
 
-        let count = store.count_preparation_sources("main.rs", "helper.rs", 24).unwrap();
+        let count = store
+            .count_preparation_sources("main.rs", "helper.rs", 24)
+            .unwrap();
         assert_eq!(count, 2);
     }
 }

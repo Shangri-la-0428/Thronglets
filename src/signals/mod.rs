@@ -118,7 +118,9 @@ impl StepCandidate {
     }
 
     pub fn render(&self) -> String {
-        let route = self.steps.iter()
+        let route = self
+            .steps
+            .iter()
             .map(StepAction::render)
             .collect::<Vec<_>>()
             .join(", then ");
@@ -232,7 +234,9 @@ pub fn rank(mut signals: Vec<Signal>, max: usize) -> Vec<Signal> {
     signals.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
-            .then_with(|| candidate_rank(b.candidate.as_ref()).cmp(&candidate_rank(a.candidate.as_ref())))
+            .then_with(|| {
+                candidate_rank(b.candidate.as_ref()).cmp(&candidate_rank(a.candidate.as_ref()))
+            })
             .then_with(|| signal_kind_rank(b.kind).cmp(&signal_kind_rank(a.kind)))
             .then_with(|| lexical_cmp(&a.body, &b.body))
     });
@@ -335,6 +339,10 @@ fn normalize_recommendation_body(kind: RecommendationKind, body: &str) -> String
         }
         _ => body.to_string(),
     }
+}
+
+fn lexical_cmp(a: &str, b: &str) -> Ordering {
+    a.cmp(b)
 }
 
 #[cfg(test)]
@@ -456,7 +464,10 @@ mod tests {
         }
         .render();
 
-        assert_eq!(rendered, "  do next: Read Cargo.toml, then Bash (medium, 2x)");
+        assert_eq!(
+            rendered,
+            "  do next: Read Cargo.toml, then Bash (medium, 2x)"
+        );
     }
 
     #[test]
@@ -552,8 +563,4 @@ mod tests {
 
         assert_eq!(ranked[0].body, "prep strong");
     }
-}
-
-fn lexical_cmp(a: &str, b: &str) -> Ordering {
-    a.cmp(b)
 }

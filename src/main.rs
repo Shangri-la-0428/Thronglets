@@ -9,14 +9,14 @@ use thronglets::contracts::{
     PREHOOK_MAX_HINTS,
 };
 use thronglets::eval::{
-    evaluate_signal_quality, EvalCheckStatus, EvalCheckThresholds, EvalConfig, EvalFocus,
+    EvalCheckStatus, EvalCheckThresholds, EvalConfig, EvalFocus, evaluate_signal_quality,
 };
 use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
-use thronglets::profile::{summarize_prehook_profiles, ProfileCheckThresholds};
+use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
-    select as select_signals, Recommendation, Signal, SignalKind, StepCandidate,
+    Recommendation, Signal, SignalKind, StepCandidate, select as select_signals,
 };
 use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
@@ -438,16 +438,16 @@ async fn main() {
                     }
                     _ = publish_scan_interval.tick() => {
                         // Bridge: publish locally-recorded traces (from hooks) to the network
-                        if let Ok(traces) = store.unpublished_traces(50) {
-                            if !traces.is_empty() {
-                                info!(count = traces.len(), "Publishing local traces to network");
-                                let mut ids: Vec<[u8; 32]> = Vec::new();
-                                for trace in traces {
-                                    ids.push(trace.id);
-                                    let _ = cmd_tx.send(NetworkCommand::PublishTrace(trace)).await;
-                                }
-                                let _ = store.mark_published(&ids);
+                        if let Ok(traces) = store.unpublished_traces(50)
+                            && !traces.is_empty()
+                        {
+                            info!(count = traces.len(), "Publishing local traces to network");
+                            let mut ids: Vec<[u8; 32]> = Vec::new();
+                            for trace in traces {
+                                ids.push(trace.id);
+                                let _ = cmd_tx.send(NetworkCommand::PublishTrace(trace)).await;
                             }
+                            let _ = store.mark_published(&ids);
                         }
                     }
                     _ = tokio::signal::ctrl_c() => {
@@ -702,20 +702,18 @@ async fn main() {
             );
 
             // Track pending feedback for Edit/Write
-            if matches!(tool_name, "Edit" | "Write") {
-                if let Some(fp) = file_path {
-                    ws.add_pending_feedback(fp, tool_name);
-                }
+            if matches!(tool_name, "Edit" | "Write")
+                && let Some(fp) = file_path
+            {
+                ws.add_pending_feedback(fp, tool_name);
             }
 
             // Resolve pending feedback (check git status for previous edits)
             ws.resolve_feedback();
 
             // Track errors
-            if is_error {
-                if let Some(err) = workspace::extract_error(&payload["tool_response"]) {
-                    ws.record_error(tool_name, context_text, err);
-                }
+            if is_error && let Some(err) = workspace::extract_error(&payload["tool_response"]) {
+                ws.record_error(tool_name, context_text, err);
             }
 
             // Track session
@@ -800,134 +798,113 @@ async fn main() {
             }
             profiler.stage("danger");
 
-            if has_recent_tool_error {
-                if let Some(repair_hint) = ws
+            if has_recent_tool_error
+                && let Some(repair_hint) = ws
                     .repair_trajectory_hint(tool_name)
                     .or_else(|| ws.repair_hints(tool_name))
+            {
+                let mut repair_hint = repair_hint;
+                if claim_collective_query(&repair_hint.candidate, &mut collective_queries_remaining)
+                    && let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                    && let Ok(collective_sources) =
+                        store.count_repair_sources(tool_name, &repair_hint.candidate.steps, 168)
                 {
-                    let mut repair_hint = repair_hint;
-                    if claim_collective_query(
-                        &repair_hint.candidate,
-                        &mut collective_queries_remaining,
-                    ) {
-                        if let Some(store) = cached_collective_store(&mut collective_store, &dir) {
-                            if let Ok(collective_sources) = store.count_repair_sources(
-                                tool_name,
-                                &repair_hint.candidate.steps,
-                                168,
-                            ) {
-                                apply_collective_sources(
-                                    &mut repair_hint.candidate,
-                                    &mut repair_hint.score,
-                                    collective_sources,
-                                );
-                            }
-                        }
-                    }
-
-                    signals.push(Signal::repair_candidate(
-                        repair_hint.body,
-                        repair_hint.score,
-                        repair_hint.candidate,
-                    ));
+                    apply_collective_sources(
+                        &mut repair_hint.candidate,
+                        &mut repair_hint.score,
+                        collective_sources,
+                    );
                 }
+
+                signals.push(Signal::repair_candidate(
+                    repair_hint.body,
+                    repair_hint.score,
+                    repair_hint.candidate,
+                ));
             }
             profiler.stage("repair");
 
             let has_do_next_signal = signals
                 .iter()
                 .any(|s| matches!(s.kind, SignalKind::Repair | SignalKind::Preparation));
-            if has_repeated_local_file_actions && !has_do_next_signal {
-                if let Some(mut preparation_hint) =
+            if has_repeated_local_file_actions
+                && !has_do_next_signal
+                && let Some(mut preparation_hint) =
                     ws.preparation_hint(tool_name, current_file.as_deref())
-                {
-                    if let (Some(current_file), Some(target)) = (
-                        current_file.as_deref(),
-                        preparation_hint.candidate.primary_target(),
-                    ) {
-                        if claim_collective_query(
-                            &preparation_hint.candidate,
-                            &mut collective_queries_remaining,
-                        ) {
-                            let edit_target = file_target(current_file);
-                            if let Some(store) =
-                                cached_collective_store(&mut collective_store, &dir)
-                            {
-                                if let Ok(collective_sources) =
-                                    store.count_preparation_sources(edit_target, target, 168)
-                                {
-                                    apply_collective_sources(
-                                        &mut preparation_hint.candidate,
-                                        &mut preparation_hint.score,
-                                        collective_sources,
-                                    );
-                                }
-                            }
-                        }
+            {
+                if let (Some(current_file), Some(target)) = (
+                    current_file.as_deref(),
+                    preparation_hint.candidate.primary_target(),
+                ) && claim_collective_query(
+                    &preparation_hint.candidate,
+                    &mut collective_queries_remaining,
+                ) {
+                    let edit_target = file_target(current_file);
+                    if let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                        && let Ok(collective_sources) =
+                            store.count_preparation_sources(edit_target, target, 168)
+                    {
+                        apply_collective_sources(
+                            &mut preparation_hint.candidate,
+                            &mut preparation_hint.score,
+                            collective_sources,
+                        );
                     }
-
-                    signals.push(Signal::preparation_candidate(
-                        preparation_hint.body,
-                        preparation_hint.score,
-                        preparation_hint.candidate,
-                    ));
                 }
+
+                signals.push(Signal::preparation_candidate(
+                    preparation_hint.body,
+                    preparation_hint.score,
+                    preparation_hint.candidate,
+                ));
             }
             profiler.stage("preparation");
 
             // ── Trail pheromone: co-edit patterns ──
             // "Editing A usually means you also need to edit B."
             // Only emitted when patterns exist.
-            if has_repeated_local_file_actions {
-                if let Some(mut adjacency_hint) =
+            if has_repeated_local_file_actions
+                && let Some(mut adjacency_hint) =
                     ws.adjacency_hint(tool_name, current_file.as_deref())
-                {
-                    if let (Some(current_file), Some(target)) = (
-                        current_file.as_deref(),
-                        adjacency_hint.candidate.primary_target(),
-                    ) {
-                        if claim_collective_query(
-                            &adjacency_hint.candidate,
-                            &mut collective_queries_remaining,
-                        ) {
-                            let current_target = file_target(current_file);
-                            if let Some(store) =
-                                cached_collective_store(&mut collective_store, &dir)
-                            {
-                                if let Ok(collective_sources) =
-                                    store.count_adjacency_sources(current_target, target, 168)
-                                {
-                                    apply_collective_sources(
-                                        &mut adjacency_hint.candidate,
-                                        &mut adjacency_hint.score,
-                                        collective_sources,
-                                    );
-                                }
-                            }
-                        }
+            {
+                if let (Some(current_file), Some(target)) = (
+                    current_file.as_deref(),
+                    adjacency_hint.candidate.primary_target(),
+                ) && claim_collective_query(
+                    &adjacency_hint.candidate,
+                    &mut collective_queries_remaining,
+                ) {
+                    let current_target = file_target(current_file);
+                    if let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                        && let Ok(collective_sources) =
+                            store.count_adjacency_sources(current_target, target, 168)
+                    {
+                        apply_collective_sources(
+                            &mut adjacency_hint.candidate,
+                            &mut adjacency_hint.score,
+                            collective_sources,
+                        );
                     }
-
-                    signals.push(Signal::adjacency_candidate(
-                        adjacency_hint.body,
-                        adjacency_hint.score,
-                        adjacency_hint.candidate,
-                    ));
                 }
+
+                signals.push(Signal::adjacency_candidate(
+                    adjacency_hint.body,
+                    adjacency_hint.score,
+                    adjacency_hint.candidate,
+                ));
             }
             profiler.stage("adjacency");
 
             // History is a fallback when we don't already know a likely next move.
             let has_higher_priority_signal = !signals.is_empty();
             let mut git_checked = false;
-            if !has_higher_priority_signal {
-                if supports_file_guidance {
-                    git_checked = true;
-                    if let Some(git_hints) = current_file
-                        .as_ref()
-                        .and_then(|fp| git_file_history(fp, GIT_HISTORY_MAX_ENTRIES))
-                    {
-                        signals.push(Signal::history(git_hints));
-                    }
+            if !has_higher_priority_signal && supports_file_guidance {
+                git_checked = true;
+                if let Some(git_hints) = current_file
+                    .as_ref()
+                    .and_then(|fp| git_file_history(fp, GIT_HISTORY_MAX_ENTRIES))
+                {
+                    signals.push(Signal::history(git_hints));
                 }
             }
             profiler.stage_or_skip("git", git_checked);
@@ -991,11 +968,11 @@ async fn main() {
             if let Some(arr) = post_hooks {
                 // Check if thronglets hook already exists
                 let has_post = arr.iter().any(|h| {
-                    h["hooks"].as_array().map_or(false, |hooks| {
+                    h["hooks"].as_array().is_some_and(|hooks| {
                         hooks.iter().any(|hk| {
                             hk["command"]
                                 .as_str()
-                                .map_or(false, |c| c.contains("thronglets hook"))
+                                .is_some_and(|c| c.contains("thronglets hook"))
                         })
                     })
                 });
@@ -1018,11 +995,11 @@ async fn main() {
 
             if let Some(arr) = pre_hooks {
                 let has_pre = arr.iter().any(|h| {
-                    h["hooks"].as_array().map_or(false, |hooks| {
+                    h["hooks"].as_array().is_some_and(|hooks| {
                         hooks.iter().any(|hk| {
                             hk["command"]
                                 .as_str()
-                                .map_or(false, |c| c.contains("thronglets prehook"))
+                                .is_some_and(|c| c.contains("thronglets prehook"))
                         })
                     })
                 });
