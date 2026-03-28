@@ -123,7 +123,7 @@ thronglets status
 ```
 
 ```
-Thronglets v0.3.0
+Thronglets v0.4.0
   Node ID:          5adeb778
   Oasyce address:   oasyce10kdfxpxharvmr03egrdujc2sqm4m83udfqwnvx
   Trace count:      3,100

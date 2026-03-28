@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.4.0 — 2026-03-28
+
 ### Hot Path
 
 - **Danger-first selector** — Prehook now emits sparse `avoid / do next / maybe also / context` signals instead of a long fixed report
