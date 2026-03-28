@@ -59,6 +59,30 @@ struct DoctorReport {
     reports: Vec<AdapterDoctor>,
 }
 
+#[derive(Serialize)]
+struct DetectReport {
+    status: &'static str,
+    detected_agents: Vec<String>,
+    recommended_agents: Vec<String>,
+    detections: Vec<AdapterDetection>,
+}
+
+#[derive(Serialize)]
+struct InstallPlanReport {
+    status: &'static str,
+    restart_required: bool,
+    next_steps: Vec<String>,
+    plans: Vec<AdapterPlan>,
+}
+
+#[derive(Serialize)]
+struct ApplyPlanReport {
+    status: &'static str,
+    restart_required: bool,
+    next_steps: Vec<String>,
+    results: Vec<AdapterApplyResult>,
+}
+
 #[derive(Parser)]
 #[command(
     name = "thronglets",
@@ -542,6 +566,58 @@ fn summarize_doctor_reports(target: AdapterArg, reports: Vec<AdapterDoctor>) -> 
         healthy,
         next_steps,
         reports,
+    }
+}
+
+fn summarize_detections(detections: Vec<AdapterDetection>) -> DetectReport {
+    let detected_agents = detections
+        .iter()
+        .filter(|detection| detection.present)
+        .map(|detection| detection.agent.clone())
+        .collect();
+    let recommended_agents = detections
+        .iter()
+        .filter(|detection| detection.present && detection.apply_by_default)
+        .map(|detection| detection.agent.clone())
+        .collect();
+
+    DetectReport {
+        status: "ready",
+        detected_agents,
+        recommended_agents,
+        detections,
+    }
+}
+
+fn summarize_install_plans(plans: Vec<AdapterPlan>) -> InstallPlanReport {
+    let restart_required = plans.iter().any(|plan| plan.requires_restart);
+    let mut next_steps: Vec<_> = plans
+        .iter()
+        .filter_map(|plan| plan.apply_command.clone())
+        .collect();
+    next_steps.sort();
+    next_steps.dedup();
+
+    InstallPlanReport {
+        status: "planned",
+        restart_required,
+        next_steps,
+        plans,
+    }
+}
+
+fn summarize_apply_results(results: Vec<AdapterApplyResult>) -> ApplyPlanReport {
+    let restart_required = results.iter().any(|result| result.requires_restart);
+    let mut next_steps = Vec::new();
+    if restart_required {
+        next_steps.push("Restart the targeted agent so the new integration is loaded.".into());
+    }
+
+    ApplyPlanReport {
+        status: "applied",
+        restart_required,
+        next_steps,
+        results,
     }
 }
 
@@ -1395,10 +1471,11 @@ async fn main() {
                 .into_iter()
                 .map(|adapter| detect_adapter(&home_dir, &dir, adapter))
                 .collect();
+            let summary = summarize_detections(detections);
             if json {
-                print_machine_json("detect", &detections);
+                print_machine_json("detect", &summary);
             } else {
-                render_detections(&detections);
+                render_detections(&summary.detections);
             }
         }
 
@@ -1409,10 +1486,11 @@ async fn main() {
                 .into_iter()
                 .map(|adapter| install_plan(&home_dir, &dir, &bin, adapter))
                 .collect();
+            let summary = summarize_install_plans(plans);
             if json {
-                print_machine_json("install-plan", &plans);
+                print_machine_json("install-plan", &summary);
             } else {
-                render_install_plans(&plans);
+                render_install_plans(&summary.plans);
             }
         }
 
@@ -1421,10 +1499,11 @@ async fn main() {
             let home_dir = home_dir();
             let results = apply_selected_adapters(agent, &home_dir, &dir, &bin)
                 .expect("failed to apply adapter plan");
+            let summary = summarize_apply_results(results);
             if json {
-                print_machine_json("apply-plan", &results);
+                print_machine_json("apply-plan", &summary);
             } else {
-                render_apply_results(&results);
+                render_apply_results(&summary.results);
             }
         }
 

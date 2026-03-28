@@ -13,24 +13,18 @@ fn run_bin(args: &[&str], home: &Path, data_dir: &Path) -> Output {
         .expect("run thronglets")
 }
 
-fn parse_envelope(output: &Output, command: &str) -> Vec<Value> {
+fn parse_command_data(output: &Output, command: &str) -> Value {
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         envelope["schema_version"],
         Value::String(SCHEMA_VERSION.into())
     );
     assert_eq!(envelope["command"], Value::String(command.into()));
-    envelope["data"].as_array().unwrap().clone()
+    envelope["data"].clone()
 }
 
 fn parse_doctor_envelope(output: &Output) -> Value {
-    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        envelope["schema_version"],
-        Value::String(SCHEMA_VERSION.into())
-    );
-    assert_eq!(envelope["command"], Value::String("doctor".into()));
-    envelope["data"].clone()
+    parse_command_data(output, "doctor")
 }
 
 #[test]
@@ -48,7 +42,16 @@ fn detect_json_reports_present_adapters_and_generic_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let detections = parse_envelope(&output, "detect");
+    let summary = parse_command_data(&output, "detect");
+    assert_eq!(summary["status"], Value::String("ready".into()));
+    let detections = summary["detections"].as_array().unwrap();
+    assert!(
+        summary["recommended_agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent == "codex")
+    );
     let codex = detections
         .iter()
         .find(|entry| entry["agent"] == "codex")
@@ -85,7 +88,10 @@ fn install_plan_generic_json_includes_contract_examples() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let plans = parse_envelope(&output, "install-plan");
+    let summary = parse_command_data(&output, "install-plan");
+    assert_eq!(summary["status"], Value::String("planned".into()));
+    assert_eq!(summary["restart_required"], Value::Bool(false));
+    let plans = summary["plans"].as_array().unwrap();
     assert_eq!(plans.len(), 1);
     let plan = &plans[0];
     assert_eq!(plan["agent"], Value::String("generic".into()));
@@ -110,7 +116,17 @@ fn apply_plan_codex_then_doctor_reports_healthy() {
         "apply-plan failed: {}",
         String::from_utf8_lossy(&apply_output.stderr)
     );
-    let apply_results = parse_envelope(&apply_output, "apply-plan");
+    let summary = parse_command_data(&apply_output, "apply-plan");
+    assert_eq!(summary["status"], Value::String("applied".into()));
+    assert_eq!(summary["restart_required"], Value::Bool(true));
+    assert!(
+        summary["next_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step == "Restart the targeted agent so the new integration is loaded.")
+    );
+    let apply_results = summary["results"].as_array().unwrap();
     assert_eq!(apply_results.len(), 1);
     assert_eq!(apply_results[0]["applied"], Value::Bool(true));
 
