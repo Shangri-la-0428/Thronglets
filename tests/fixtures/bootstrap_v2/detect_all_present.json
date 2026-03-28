@@ -1,0 +1,66 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "detect",
+  "data": {
+    "summary": {
+      "status": "ready",
+      "detected_agents": [
+        "claude-code",
+        "codex",
+        "openclaw",
+        "generic"
+      ],
+      "recommended_agents": [
+        "claude-code",
+        "codex",
+        "openclaw"
+      ]
+    },
+    "detections": [
+      {
+        "agent": "claude-code",
+        "present": true,
+        "configurable": true,
+        "integration": "native",
+        "apply_by_default": true,
+        "paths": [
+          "<HOME>/.claude/settings.json"
+        ],
+        "note": null
+      },
+      {
+        "agent": "codex",
+        "present": true,
+        "configurable": true,
+        "integration": "native",
+        "apply_by_default": true,
+        "paths": [
+          "<HOME>/.codex/config.toml",
+          "<HOME>/.codex/AGENTS.md"
+        ],
+        "note": null
+      },
+      {
+        "agent": "openclaw",
+        "present": true,
+        "configurable": true,
+        "integration": "native",
+        "apply_by_default": true,
+        "paths": [
+          "<HOME>/.openclaw/openclaw.json",
+          "<DATA>/thronglets-ai"
+        ],
+        "note": null
+      },
+      {
+        "agent": "generic",
+        "present": true,
+        "configurable": true,
+        "integration": "contract",
+        "apply_by_default": false,
+        "paths": [],
+        "note": "Unknown agents should self-bootstrap by calling `thronglets prehook` and `thronglets hook` with the universal JSON contract."
+      }
+    ]
+  }
+}

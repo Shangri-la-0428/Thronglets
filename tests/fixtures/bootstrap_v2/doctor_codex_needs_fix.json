@@ -1,0 +1,44 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "doctor",
+  "data": {
+    "summary": {
+      "status": "needs-fix",
+      "healthy": false,
+      "restart_pending": false,
+      "restart_commands": [
+        "Restart Codex"
+      ],
+      "next_steps": [
+        "thronglets apply-plan --agent codex"
+      ]
+    },
+    "reports": [
+      {
+        "agent": "codex",
+        "present": true,
+        "status": "needs-fix",
+        "healthy": false,
+        "restart_pending": false,
+        "fix_command": "thronglets apply-plan --agent codex",
+        "restart_command": "Restart Codex",
+        "checks": [
+          {
+            "name": "mcp-server",
+            "ok": false,
+            "detail": "[mcp_servers.thronglets] in <HOME>/.codex/config.toml"
+          },
+          {
+            "name": "agents-memory",
+            "ok": false,
+            "detail": "managed Thronglets block in <HOME>/.codex/AGENTS.md"
+          }
+        ],
+        "remediation": [
+          "thronglets apply-plan --agent codex"
+        ],
+        "note": null
+      }
+    ]
+  }
+}

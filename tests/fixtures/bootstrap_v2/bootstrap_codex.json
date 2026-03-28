@@ -1,0 +1,102 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "bootstrap",
+  "data": {
+    "summary": {
+      "status": "restart-pending",
+      "healthy": true,
+      "restart_pending": true,
+      "restart_required": true,
+      "restart_commands": [
+        "Restart Codex"
+      ],
+      "next_steps": [
+        "Restart Codex",
+        "Restart the targeted agent so the new integration is loaded.",
+        "thronglets clear-restart --agent codex"
+      ]
+    },
+    "detections": [
+      {
+        "agent": "codex",
+        "present": true,
+        "configurable": true,
+        "integration": "native",
+        "apply_by_default": true,
+        "paths": [
+          "<HOME>/.codex/config.toml",
+          "<HOME>/.codex/AGENTS.md"
+        ],
+        "note": null
+      }
+    ],
+    "plans": [
+      {
+        "agent": "codex",
+        "present": true,
+        "configurable": true,
+        "integration": "native",
+        "apply_by_default": true,
+        "requires_restart": true,
+        "restart_command": "Restart Codex",
+        "paths": [
+          "<HOME>/.codex/config.toml",
+          "<HOME>/.codex/AGENTS.md"
+        ],
+        "actions": [
+          "Write [mcp_servers.thronglets] in <HOME>/.codex/config.toml pointing to `<BIN>` with `--data-dir <DATA>` and `mcp`",
+          "Write or refresh the managed Thronglets block in <HOME>/.codex/AGENTS.md"
+        ],
+        "apply_command": "thronglets apply-plan --agent codex",
+        "doctor_command": "thronglets doctor --agent codex",
+        "contract": null
+      }
+    ],
+    "results": [
+      {
+        "agent": "codex",
+        "applied": true,
+        "changed": [
+          "created Codex config",
+          "installed Thronglets MCP server",
+          "updated managed AGENTS block"
+        ],
+        "requires_restart": true,
+        "restart_command": "Restart Codex",
+        "paths": [
+          "<HOME>/.codex/config.toml",
+          "<HOME>/.codex/AGENTS.md"
+        ],
+        "note": "Restart Codex to load the MCP server."
+      }
+    ],
+    "reports": [
+      {
+        "agent": "codex",
+        "present": true,
+        "status": "restart-pending",
+        "healthy": true,
+        "restart_pending": true,
+        "fix_command": null,
+        "restart_command": "Restart Codex",
+        "checks": [
+          {
+            "name": "mcp-server",
+            "ok": true,
+            "detail": "[mcp_servers.thronglets] in <HOME>/.codex/config.toml"
+          },
+          {
+            "name": "agents-memory",
+            "ok": true,
+            "detail": "managed Thronglets block in <HOME>/.codex/AGENTS.md"
+          }
+        ],
+        "remediation": [
+          "Restart Codex",
+          "thronglets clear-restart --agent codex"
+        ],
+        "note": "Codex config is correct, but the MCP server is still waiting for a client restart."
+      }
+    ]
+  }
+}

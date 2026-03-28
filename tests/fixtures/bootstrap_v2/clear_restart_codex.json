@@ -1,0 +1,20 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "clear-restart",
+  "data": {
+    "summary": {
+      "status": "cleared",
+      "cleared_agents": [
+        "codex"
+      ],
+      "next_steps": []
+    },
+    "results": [
+      {
+        "agent": "codex",
+        "cleared": true,
+        "note": "Cleared persisted restart-pending state."
+      }
+    ]
+  }
+}

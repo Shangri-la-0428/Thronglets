@@ -1,0 +1,46 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "doctor",
+  "data": {
+    "summary": {
+      "status": "restart-pending",
+      "healthy": true,
+      "restart_pending": true,
+      "restart_commands": [
+        "Restart Codex"
+      ],
+      "next_steps": [
+        "Restart Codex",
+        "thronglets clear-restart --agent codex"
+      ]
+    },
+    "reports": [
+      {
+        "agent": "codex",
+        "present": true,
+        "status": "restart-pending",
+        "healthy": true,
+        "restart_pending": true,
+        "fix_command": null,
+        "restart_command": "Restart Codex",
+        "checks": [
+          {
+            "name": "mcp-server",
+            "ok": true,
+            "detail": "[mcp_servers.thronglets] in <HOME>/.codex/config.toml"
+          },
+          {
+            "name": "agents-memory",
+            "ok": true,
+            "detail": "managed Thronglets block in <HOME>/.codex/AGENTS.md"
+          }
+        ],
+        "remediation": [
+          "Restart Codex",
+          "thronglets clear-restart --agent codex"
+        ],
+        "note": "Codex config is correct, but the MCP server is still waiting for a client restart."
+      }
+    ]
+  }
+}

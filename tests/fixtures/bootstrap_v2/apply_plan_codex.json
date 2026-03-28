@@ -1,0 +1,34 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "apply-plan",
+  "data": {
+    "summary": {
+      "status": "applied",
+      "restart_required": true,
+      "restart_commands": [
+        "Restart Codex"
+      ],
+      "next_steps": [
+        "Restart the targeted agent so the new integration is loaded."
+      ]
+    },
+    "results": [
+      {
+        "agent": "codex",
+        "applied": true,
+        "changed": [
+          "created Codex config",
+          "installed Thronglets MCP server",
+          "updated managed AGENTS block"
+        ],
+        "requires_restart": true,
+        "restart_command": "Restart Codex",
+        "paths": [
+          "<HOME>/.codex/config.toml",
+          "<HOME>/.codex/AGENTS.md"
+        ],
+        "note": "Restart Codex to load the MCP server."
+      }
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "install-plan",
+  "data": {
+    "summary": {
+      "status": "planned",
+      "restart_required": true,
+      "restart_commands": [
+        "Restart Codex"
+      ],
+      "next_steps": [
+        "thronglets apply-plan --agent codex"
+      ]
+    },
+    "plans": [
+      {
+        "agent": "codex",
+        "present": true,
+        "configurable": true,
+        "integration": "native",
+        "apply_by_default": true,
+        "requires_restart": true,
+        "restart_command": "Restart Codex",
+        "paths": [
+          "<HOME>/.codex/config.toml",
+          "<HOME>/.codex/AGENTS.md"
+        ],
+        "actions": [
+          "Write [mcp_servers.thronglets] in <HOME>/.codex/config.toml pointing to `<BIN>` with `--data-dir <DATA>` and `mcp`",
+          "Write or refresh the managed Thronglets block in <HOME>/.codex/AGENTS.md"
+        ],
+        "apply_command": "thronglets apply-plan --agent codex",
+        "doctor_command": "thronglets doctor --agent codex",
+        "contract": null
+      }
+    ]
+  }
+}

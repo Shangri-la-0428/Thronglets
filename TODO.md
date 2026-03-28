@@ -15,9 +15,11 @@ Thronglets 现在的主线已经明确：
 
 目标：不要再让机器协议在同一个版本里漂移。
 
-完成标准：
-- 为 `detect / install-plan / apply-plan / doctor / bootstrap` 增加 golden JSON fixtures
-- CI 里对 `schema_version`、`data.summary`、detail keys 做稳定性检查
+当前状态：
+- `detect / install-plan / apply-plan / doctor / bootstrap / clear-restart` 已有 golden JSON fixtures
+
+剩余完成标准：
+- 在 CI 里把这些 fixture 回归当成明确的协议稳定性门槛
 - 如果后面还要改 shape，必须升 `v3`
 
 ### 2. Auto-clear restart state when runtimes can prove they reloaded
