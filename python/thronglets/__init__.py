@@ -1,6 +1,5 @@
 """Thronglets — P2P shared memory substrate for AI agents."""
 
-import os
 import platform
 import stat
 import subprocess
@@ -8,10 +7,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.0"
+import os
 
-VERSION = "0.2.0"
-REPO = "Shangri-la-0428/Thronglets"
+__version__ = "0.4.0"
+
+VERSION = os.environ.get("THRONGLETS_INSTALL_VERSION", __version__)
+REPO = os.environ.get("THRONGLETS_INSTALL_REPO", "Shangri-la-0428/Thronglets")
 
 PLATFORMS = {
     ("Darwin", "arm64"): "thronglets-mcp-darwin-arm64",

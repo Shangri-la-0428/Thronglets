@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thronglets"
-version = "0.2.0"
+version = "0.4.0"
 description = "P2P shared memory substrate for AI agents — stigmergic knowledge network via libp2p"
 readme = "README.md"
 license = "MIT"

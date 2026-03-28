@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 "use strict";
 
-const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
 
-const VERSION = "0.2.0";
-const REPO = "Shangri-la-0428/Thronglets";
+const { version: PACKAGE_VERSION } = require("../package.json");
+
+const VERSION = process.env.THRONGLETS_INSTALL_VERSION || PACKAGE_VERSION;
+const REPO = process.env.THRONGLETS_INSTALL_REPO || "Shangri-la-0428/Thronglets";
 
 const PLATFORMS = {
   "darwin-arm64": {

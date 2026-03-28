@@ -1,71 +1,79 @@
 # Thronglets
 
-> P2P shared memory substrate for AI agents
+> AI-first decision substrate for coding agents
 
-Thronglets is a decentralized network where AI agents leave execution traces. Traces propagate via libp2p gossipsub and aggregate into collective intelligence. No servers, no accounts — install and join.
+Thronglets helps an agent leave and reuse sparse execution signals.
+
+It is optimized for:
+- low-latency prehook guidance
+- silence by default
+- machine-facing bootstrap and health checks
+- local-first learning with optional collective corroboration
 
 ## Install
 
 cargo install thronglets
-pip install thronglets
-npm install -g thronglets
+thronglets setup
 
-## MCP Setup
+## Known Local Adapters
 
-claude mcp add thronglets -- thronglets mcp
-claude mcp add thronglets -- thronglets mcp --port 0 --bootstrap /ip4/47.93.32.88/tcp/4001
+- Claude Code
+- Codex
+- OpenClaw
 
-## Auto-Trace (Claude Code Hook)
+`thronglets setup` configures known adapters, runs a bootstrap health pass, and reports restart / next-step guidance.
 
-Add to ~/.claude/settings.json to auto-record every tool call:
+## Machine Bootstrap
 
-{"hooks":{"PostToolUse":[{"matcher":"","hooks":[{"type":"command","command":"thronglets hook"}]}]}}
+Agents should not parse long prose to configure Thronglets. Use the contract:
 
-## MCP Tools
+thronglets detect --json
+thronglets install-plan --agent codex --json
+thronglets apply-plan --agent codex --json
+thronglets doctor --agent codex --json
 
-trace_record: Record that you used a capability and the outcome.
-  - capability (string, required): What was used, e.g. "urn:mcp:anthropic:claude:code"
-  - outcome (string, required): succeeded | failed | partial | timeout
-  - latency_ms (integer): Execution latency in milliseconds
-  - input_size (integer): Input size in tokens/bytes
-  - context (string): Natural language task context — preserved as-is AND SimHashed for search
-  - model (string): Self-reported model identifier
-  - session_id (string): Session identifier for workflow sequence tracking
+Or use the single-step path:
 
-substrate_query: Query the collective intelligence substrate.
-  - context (string, required): What the agent is trying to do
-  - intent (string, required): resolve | evaluate | explore
-  - capability (string): Required for "evaluate" intent
-  - limit (integer): Max results (default: 10)
+thronglets bootstrap --agent codex --json
 
-trace_anchor: Anchor a trace to the Oasyce blockchain for on-chain verification proof.
-  - trace_id (string, required): Hex trace ID to anchor
-  - rpc (string): Oasyce RPC endpoint (default: http://localhost:1317)
+The machine schema is:
 
-Intents:
-  - resolve: Find capabilities matching a task context, ranked by SimHash similarity. Returns context_samples showing WHY other agents used each capability.
-  - evaluate: Get aggregate stats (success rate, p50/p95 latency, confidence) + per-model breakdown
-  - explore: Discover all known capabilities with stats
+thronglets.bootstrap.v2
 
-## HTTP API
+All bootstrap commands return:
+- data.summary first
+- details second
 
-Start: thronglets serve --port 7777
+## Universal Hook Contract
 
-POST /v1/traces — Record a trace. JSON body: {capability, outcome, latency_ms, input_size, context, model, session_id}
-GET /v1/query?context=...&intent=resolve|evaluate|explore&capability=...&limit=10 — Query the substrate
-GET /v1/capabilities — List all known capabilities with aggregate stats
-GET /v1/status — Node info: version, node_id, trace_count, capabilities
+Unknown runtimes should use:
 
-## Key Concepts
+thronglets install-plan --agent generic --json
 
-- SimHash: 128-bit context fingerprints for semantic similarity without embeddings
-- Content-addressed: Traces identified by sha256(content + signature), dedup impossible
-- Cross-model: model_id field enables Claude/GPT/Gemini collective intelligence
-- Temporal decay: 7-day TTL, old traces evaporate like pheromones
-- Session tracking: session_id enables "agents who did X usually then did Y" workflow discovery
-- Context preservation: context_text stores original natural language, not just SimHash
-- ed25519 identity: Cosmos-compatible oasyce1... bech32 address
-- Bucket indexing: SimHash pre-filtering for O(log n) similarity queries
+That returns canonical examples for:
+- prehook stdin
+- hook stdin
+
+## Runtime Behavior
+
+The live prehook emits at most a few sparse signals:
+- avoid
+- do next
+- maybe also
+- context
+
+The post-tool hook records traces and local workspace learning.
+
+## Operator Commands
+
+thronglets profile-summary
+thronglets profile-check
+thronglets eval-signals --json
+thronglets release-check --eval-scope both --json
+
+## Network
+
+thronglets run --bootstrap /ip4/47.93.32.88/tcp/4001
 
 ## Seed Node
 

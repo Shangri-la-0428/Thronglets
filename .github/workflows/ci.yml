@@ -35,7 +35,7 @@ jobs:
         run: cargo test --test two_node_sync --test mcp_stdio
 
       - name: Adapter and operator tests
-        run: cargo test --test adapter_bootstrap --test bootstrap_v2_golden --test bootstrap_matrix --test release_check
+        run: cargo test --test adapter_bootstrap --test bootstrap_v2_golden --test bootstrap_matrix --test release_check --test packaging_surfaces
 
       - name: Release recipe smoke
         shell: bash

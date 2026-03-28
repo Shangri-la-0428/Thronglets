@@ -1,79 +1,66 @@
 # Thronglets
 
-P2P shared memory substrate for AI agents.
+AI-first decision substrate for coding agents.
 
 <!-- mcp-name: io.github.Shangri-la-0428/thronglets -->
 
-Thronglets silently injects 8 layers of decision context before every AI tool call, and records execution traces after. Your AI never calls Thronglets — it just makes better decisions.
+This Python package installs the `thronglets` CLI wrapper and downloads a native binary for supported platforms.
 
 ## Install
 
 ```bash
-cargo install thronglets
+pip install thronglets
 thronglets setup
 ```
 
-That's it. Two hooks are installed automatically:
-- **PreToolUse** injects 8 layers of context before every tool call
-- **PostToolUse** records every tool call as a signed trace
+That is the whole local bootstrap path.
 
-## The 8 Layers
+`thronglets setup` now:
+- configures known local adapters for Claude Code, Codex, and OpenClaw
+- runs the same bootstrap health pass used by the machine-facing flow
+- reports `restart required` and `next steps` directly
 
-| # | Layer | What the AI gets |
-|---|-------|------------------|
-| 1 | Capability stats | Success rate + latency from collective traces |
-| 2 | Workflow patterns | What agents usually do next after this tool |
-| 3 | Similar context | Other tools used for similar tasks |
-| 4 | Workspace memory | Recent files, errors, previous session summary |
-| 5 | Git context | Last 5 commits on the file being touched |
-| 6 | Co-edit patterns | Files typically modified together |
-| 7 | Preparation reads | Files read before previous edits of this file |
-| 8 | Edit retention | % of AI edits that were committed vs reverted |
+## Sparse Signals
 
-## MCP Tools (optional)
+Thronglets is not an 8-layer context dump anymore. It emits sparse decision guidance:
 
-```bash
-claude mcp add thronglets -- thronglets mcp
-```
+- `avoid`
+- `do next`
+- `maybe also`
+- `context`
 
-| Tool | Description |
-|------|-------------|
-| `trace_record` | Record an execution trace |
-| `substrate_query` | Query collective intelligence (resolve/evaluate/explore) |
-| `trace_anchor` | Anchor trace to Oasyce blockchain |
+The hot path stays silence-by-default and budgeted for latency and tokens.
 
-## Python Integration (HTTP API)
+## Machine Bootstrap
+
+If an AI wants to configure itself, use the machine-facing contract:
 
 ```bash
-thronglets serve --port 7777
+thronglets detect --json
+thronglets install-plan --agent codex --json
+thronglets apply-plan --agent codex --json
+thronglets doctor --agent codex --json
 ```
 
-```python
-import requests
+Or do it in one step:
 
-# leave a trace
-requests.post("http://localhost:7777/v1/traces", json={
-    "capability": "langchain/openai-chat",
-    "outcome": "succeeded",
-    "latency_ms": 350,
-    "context": "summarizing research paper",
-    "model": "gpt-4o"
-})
-
-# query collective intelligence
-resp = requests.get("http://localhost:7777/v1/query", params={
-    "context": "code review for Rust",
-    "intent": "resolve"
-})
+```bash
+thronglets bootstrap --agent codex --json
 ```
 
-## P2P Network
+## Generic Contract
+
+Unknown runtimes should bootstrap through the universal hook contract:
+
+```bash
+thronglets install-plan --agent generic --json
+```
+
+## Network
 
 ```bash
 thronglets run --bootstrap /ip4/47.93.32.88/tcp/4001
 ```
-
-Traces propagate via libp2p gossipsub. Each node independently aggregates collective intelligence.
 
 ## Links
 

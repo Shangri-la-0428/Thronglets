@@ -1,52 +1,66 @@
 # Thronglets
 
-P2P shared memory substrate for AI agents.
+AI-first decision substrate for coding agents.
 
-Thronglets silently injects 8 layers of decision context before every AI tool call, and records execution traces after. Your AI never calls Thronglets — it just makes better decisions.
+This npm package installs the `thronglets` CLI wrapper and downloads a native binary for supported platforms.
 
 ## Install
 
 ```bash
-cargo install thronglets
+npm install -g thronglets
 thronglets setup
 ```
 
-That's it. Two hooks are installed automatically:
-- **PreToolUse** injects 8 layers of context before every tool call
-- **PostToolUse** records every tool call as a signed trace
+That is the whole local bootstrap path.
 
-## The 8 Layers
+`thronglets setup` now:
+- configures known local adapters for Claude Code, Codex, and OpenClaw
+- runs the same bootstrap health pass used by the machine-facing flow
+- reports `restart required` and `next steps` directly
 
-| # | Layer | What the AI gets |
-|---|-------|------------------|
-| 1 | Capability stats | Success rate + latency from collective traces |
-| 2 | Workflow patterns | What agents usually do next after this tool |
-| 3 | Similar context | Other tools used for similar tasks |
-| 4 | Workspace memory | Recent files, errors, previous session summary |
-| 5 | Git context | Last 5 commits on the file being touched |
-| 6 | Co-edit patterns | Files typically modified together |
-| 7 | Preparation reads | Files read before previous edits of this file |
-| 8 | Edit retention | % of AI edits that were committed vs reverted |
+## What The Agent Gets
 
-## MCP Tools (optional)
+Thronglets does not dump a long report into the model context. It emits sparse decision guidance:
+
+- `avoid`
+- `do next`
+- `maybe also`
+- `context`
+
+The hot path is silence-by-default and cost-capped.
+
+## Machine Bootstrap
+
+If an AI wants to configure itself, use the machine-facing contract instead of parsing docs:
 
 ```bash
-claude mcp add thronglets -- thronglets mcp
+thronglets detect --json
+thronglets install-plan --agent codex --json
+thronglets apply-plan --agent codex --json
+thronglets doctor --agent codex --json
 ```
 
-| Tool | Description |
-|------|-------------|
-| `trace_record` | Record an execution trace |
-| `substrate_query` | Query collective intelligence (resolve/evaluate/explore) |
-| `trace_anchor` | Anchor trace to Oasyce blockchain |
+Or do it in one step:
 
-## P2P Network
+```bash
+thronglets bootstrap --agent codex --json
+```
+
+## Generic Contract
+
+Unknown runtimes should use the universal hook contract:
+
+```bash
+thronglets install-plan --agent generic --json
+```
+
+That returns the exact `prehook` and `hook` JSON examples the runtime should call.
+
+## Network
 
 ```bash
 thronglets run --bootstrap /ip4/47.93.32.88/tcp/4001
 ```
-
-Traces propagate via libp2p gossipsub. Each node independently aggregates collective intelligence.
 
 ## Links
 
