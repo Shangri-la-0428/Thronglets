@@ -19,9 +19,25 @@ pub enum EvalFocus {
     Adjacency,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct EvalConfig {
+    pub local_history_gate_min: u32,
+    pub pattern_support_min: u32,
+}
+
+impl Default for EvalConfig {
+    fn default() -> Self {
+        Self {
+            local_history_gate_min: LOCAL_HISTORY_GATE_MIN,
+            pattern_support_min: PATTERN_SUPPORT_MIN,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignalEvalSummary {
     pub project_scope: Option<String>,
+    pub eval_config: EvalConfig,
     pub sessions_considered: usize,
     pub sessions_scored: usize,
     pub edit_points: usize,
@@ -124,6 +140,10 @@ impl SignalEvalSummary {
             format!(
                 "project scope: {}",
                 self.project_scope.as_deref().unwrap_or("global")
+            ),
+            format!(
+                "eval config: local_history_gate_min={}, pattern_support_min={}",
+                self.eval_config.local_history_gate_min, self.eval_config.pattern_support_min
             ),
             format!("sessions considered: {}", self.sessions_considered),
             format!("sessions scored: {}", self.sessions_scored),
@@ -228,8 +248,8 @@ impl PatternStats {
         self.sources.insert(source_id.to_string());
     }
 
-    fn is_strong(&self) -> bool {
-        self.count >= PATTERN_SUPPORT_MIN
+    fn is_strong(&self, config: EvalConfig) -> bool {
+        self.count >= config.pattern_support_min
     }
 }
 
@@ -290,10 +310,14 @@ impl SignalTrainingSet {
         }
     }
 
-    fn best_repair(&self, failed_tool: &str) -> Option<PatternChoice<Vec<StepAction>>> {
+    fn best_repair(
+        &self,
+        failed_tool: &str,
+        config: EvalConfig,
+    ) -> Option<PatternChoice<Vec<StepAction>>> {
         self.repair_patterns
             .iter()
-            .filter(|(key, stats)| key.failed_tool == failed_tool && stats.is_strong())
+            .filter(|(key, stats)| key.failed_tool == failed_tool && stats.is_strong(config))
             .map(|(key, stats)| PatternChoice {
                 value: key.steps.clone(),
                 support: stats.count,
@@ -302,14 +326,18 @@ impl SignalTrainingSet {
             .max_by(|a, b| rank_tuple(a).cmp(&rank_tuple(b)))
     }
 
-    fn best_preparation(&self, edit_target: &str) -> Option<PatternChoice<String>> {
-        if !self.file_guidance_gate_open(edit_target) {
+    fn best_preparation(
+        &self,
+        edit_target: &str,
+        config: EvalConfig,
+    ) -> Option<PatternChoice<String>> {
+        if !self.file_guidance_gate_open(edit_target, config) {
             return None;
         }
 
         self.preparation_patterns
             .iter()
-            .filter(|((target, _), stats)| target == edit_target && stats.is_strong())
+            .filter(|((target, _), stats)| target == edit_target && stats.is_strong(config))
             .map(|((_, read_target), stats)| PatternChoice {
                 value: read_target.clone(),
                 support: stats.count,
@@ -318,14 +346,18 @@ impl SignalTrainingSet {
             .max_by(|a, b| rank_tuple(a).cmp(&rank_tuple(b)))
     }
 
-    fn best_adjacency(&self, edit_target: &str) -> Option<PatternChoice<String>> {
-        if !self.file_guidance_gate_open(edit_target) {
+    fn best_adjacency(
+        &self,
+        edit_target: &str,
+        config: EvalConfig,
+    ) -> Option<PatternChoice<String>> {
+        if !self.file_guidance_gate_open(edit_target, config) {
             return None;
         }
 
         self.adjacency_patterns
             .iter()
-            .filter(|((target, _), stats)| target == edit_target && stats.is_strong())
+            .filter(|((target, _), stats)| target == edit_target && stats.is_strong(config))
             .map(|((_, companion_target), stats)| PatternChoice {
                 value: companion_target.clone(),
                 support: stats.count,
@@ -334,12 +366,12 @@ impl SignalTrainingSet {
             .max_by(|a, b| rank_tuple(a).cmp(&rank_tuple(b)))
     }
 
-    fn file_guidance_gate_open(&self, edit_target: &str) -> bool {
+    fn file_guidance_gate_open(&self, edit_target: &str, config: EvalConfig) -> bool {
         self.file_touch_counts
             .get(edit_target)
             .copied()
             .unwrap_or(0)
-            >= LOCAL_HISTORY_GATE_MIN
+            >= config.local_history_gate_min
     }
 }
 
@@ -348,6 +380,7 @@ pub fn evaluate_signal_quality(
     hours: u64,
     max_sessions: usize,
     project_root: Option<&Path>,
+    config: EvalConfig,
 ) -> rusqlite::Result<Option<SignalEvalSummary>> {
     let session_ids = store.recent_session_ids(hours, max_sessions)?;
     if session_ids.len() < 2 {
@@ -374,6 +407,7 @@ pub fn evaluate_signal_quality(
 
     let mut summary = SignalEvalSummary {
         project_scope: project_root.map(|path| path.display().to_string()),
+        eval_config: config,
         sessions_considered: sessions.len(),
         sessions_scored: 0,
         edit_points: 0,
@@ -397,7 +431,7 @@ pub fn evaluate_signal_quality(
     for (index, (session_id, events)) in sessions.iter().enumerate() {
         if index > 0 {
             summary.sessions_scored += 1;
-            score_session(&training, events, &mut summary);
+            score_session(&training, events, config, &mut summary);
         }
         training.observe_session(session_id, events);
     }
@@ -408,6 +442,7 @@ pub fn evaluate_signal_quality(
 fn score_session(
     training: &SignalTrainingSet,
     events: &[SessionEvent],
+    config: EvalConfig,
     summary: &mut SignalEvalSummary,
 ) {
     for (idx, event) in events.iter().enumerate() {
@@ -421,13 +456,13 @@ fn score_session(
                     .entry(current_target.to_string())
                     .or_default();
                 prep_breakdown.edit_points += 1;
-                let prep_gate_open = training.file_guidance_gate_open(current_target);
+                let prep_gate_open = training.file_guidance_gate_open(current_target, config);
                 if !prep_gate_open {
                     summary.preparation_gated_edit_points += 1;
                     prep_breakdown.gated_points += 1;
                 }
 
-                if let Some(predicted) = training.best_preparation(current_target) {
+                if let Some(predicted) = training.best_preparation(current_target, config) {
                     summary.preparation_predictions += 1;
                     prep_breakdown.predictions += 1;
                     emitted_signal = true;
@@ -442,13 +477,13 @@ fn score_session(
                     .entry(current_target.to_string())
                     .or_default();
                 adjacency_breakdown.edit_points += 1;
-                let adjacency_gate_open = training.file_guidance_gate_open(current_target);
+                let adjacency_gate_open = training.file_guidance_gate_open(current_target, config);
                 if !adjacency_gate_open {
                     summary.adjacency_gated_edit_points += 1;
                     adjacency_breakdown.gated_points += 1;
                 }
 
-                if let Some(predicted) = training.best_adjacency(current_target) {
+                if let Some(predicted) = training.best_adjacency(current_target, config) {
                     summary.adjacency_predictions += 1;
                     adjacency_breakdown.predictions += 1;
                     emitted_signal = true;
@@ -471,7 +506,7 @@ fn score_session(
                 .entry(event.tool.clone())
                 .or_default();
             repair_breakdown.opportunities += 1;
-            if let Some(predicted) = training.best_repair(&event.tool) {
+            if let Some(predicted) = training.best_repair(&event.tool, config) {
                 summary.repair_predictions += 1;
                 repair_breakdown.predictions += 1;
                 let actual = actual_repair_steps(events, idx);
@@ -801,7 +836,7 @@ mod tests {
             timestamp += 60_000;
         }
 
-        let summary = evaluate_signal_quality(&store, 168, 10, None)
+        let summary = evaluate_signal_quality(&store, 168, 10, None, EvalConfig::default())
             .unwrap()
             .expect("expected evaluation summary");
 
@@ -833,7 +868,9 @@ mod tests {
         );
         store.insert(&trace).unwrap();
 
-        assert!(evaluate_signal_quality(&store, 168, 10, None).unwrap().is_none());
+        assert!(evaluate_signal_quality(&store, 168, 10, None, EvalConfig::default())
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -855,7 +892,7 @@ mod tests {
             timestamp += 60_000;
         }
 
-        let summary = evaluate_signal_quality(&store, 168, 10, None)
+        let summary = evaluate_signal_quality(&store, 168, 10, None, EvalConfig::default())
             .unwrap()
             .expect("expected gate summary");
 
@@ -869,6 +906,7 @@ mod tests {
     fn focused_summary_trims_and_filters_breakdowns() {
         let summary = SignalEvalSummary {
             project_scope: None,
+            eval_config: EvalConfig::default(),
             sessions_considered: 3,
             sessions_scored: 2,
             edit_points: 10,
@@ -992,7 +1030,7 @@ mod tests {
             timestamp += 60_000;
         }
 
-        let scoped = evaluate_signal_quality(&store, 168, 10, Some(&root_a))
+        let scoped = evaluate_signal_quality(&store, 168, 10, Some(&root_a), EvalConfig::default())
             .unwrap()
             .expect("expected scoped summary");
 
@@ -1002,5 +1040,46 @@ mod tests {
         );
         assert_eq!(scoped.sessions_considered, 2);
         assert_eq!(scoped.sessions_scored, 1);
+    }
+
+    #[test]
+    fn lower_thresholds_increase_offline_predictions() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let mut timestamp = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+
+        for session in ["s1", "s2"] {
+            for (capability, outcome, context) in [
+                ("claude-code/Read", Outcome::Succeeded, "read file: helper.rs"),
+                ("claude-code/Edit", Outcome::Succeeded, "edit file: main.rs"),
+            ] {
+                let trace = make_trace(&identity, capability, outcome, context, session, timestamp);
+                store.insert(&trace).unwrap();
+                timestamp += 1_000;
+            }
+            timestamp += 60_000;
+        }
+
+        let strict = evaluate_signal_quality(&store, 168, 10, None, EvalConfig::default())
+            .unwrap()
+            .expect("strict summary");
+        let relaxed = evaluate_signal_quality(
+            &store,
+            168,
+            10,
+            None,
+            EvalConfig {
+                local_history_gate_min: 1,
+                pattern_support_min: 1,
+            },
+        )
+        .unwrap()
+        .expect("relaxed summary");
+
+        assert_eq!(strict.preparation_predictions, 0);
+        assert!(relaxed.preparation_predictions >= 1);
+        assert_eq!(strict.adjacency_predictions, 0);
+        assert_eq!(relaxed.eval_config.local_history_gate_min, 1);
+        assert_eq!(relaxed.eval_config.pattern_support_min, 1);
     }
 }

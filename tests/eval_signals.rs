@@ -152,6 +152,8 @@ fn eval_signals_can_emit_json() {
 
     let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse eval-signals json");
     assert_eq!(parsed["project_scope"], Value::Null);
+    assert_eq!(parsed["eval_config"]["local_history_gate_min"], 2);
+    assert_eq!(parsed["eval_config"]["pattern_support_min"], 2);
     assert_eq!(parsed["sessions_considered"], 3);
     assert!(parsed["repair_breakdown"]["Bash"].is_object());
     assert!(parsed["preparation_breakdown"]["main.rs"].is_object());
@@ -238,6 +240,56 @@ fn eval_signals_json_can_focus_and_trim_breakdowns() {
     assert!(repair_keys.contains_key("Bash"));
     assert!(prep_keys.is_empty());
     assert!(adjacency_keys.is_empty());
+}
+
+#[test]
+fn eval_signals_can_trial_relaxed_thresholds() {
+    let dir = TempDir::new().unwrap();
+    let store = TraceStore::open(&dir.path().join("traces.db")).unwrap();
+    let identity = NodeIdentity::generate();
+
+    let mut timestamp = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+    for session in ["s1", "s2"] {
+        for (capability, outcome, context) in [
+            ("claude-code/Read", Outcome::Succeeded, "read file: helper.rs"),
+            ("claude-code/Edit", Outcome::Succeeded, "edit file: main.rs"),
+        ] {
+            let trace = make_trace(&identity, capability, outcome, context, session, timestamp);
+            store.insert(&trace).unwrap();
+            timestamp += 1_000;
+        }
+        timestamp += 60_000;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_thronglets"))
+        .args([
+            "--data-dir",
+            dir.path().to_str().unwrap(),
+            "eval-signals",
+            "--global",
+            "--hours",
+            "168",
+            "--max-sessions",
+            "10",
+            "--json",
+            "--local-history-gate-min",
+            "1",
+            "--pattern-support-min",
+            "1",
+        ])
+        .output()
+        .expect("spawn relaxed eval-signals --json");
+
+    assert!(
+        output.status.success(),
+        "relaxed eval-signals --json failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse relaxed eval-signals json");
+    assert_eq!(parsed["eval_config"]["local_history_gate_min"], 1);
+    assert_eq!(parsed["eval_config"]["pattern_support_min"], 1);
+    assert!(parsed["preparation_predictions"].as_u64().unwrap_or(0) >= 1);
 }
 
 #[test]

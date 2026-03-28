@@ -8,7 +8,7 @@ use thronglets::contracts::{
     GIT_HISTORY_MAX_ENTRIES, PREHOOK_HEADER, PREHOOK_MATCHER, PREHOOK_MAX_COLLECTIVE_QUERIES,
     PREHOOK_MAX_HINTS,
 };
-use thronglets::eval::{EvalFocus, evaluate_signal_quality};
+use thronglets::eval::{EvalConfig, EvalFocus, evaluate_signal_quality};
 use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
@@ -180,6 +180,14 @@ enum Commands {
         /// Evaluate across the entire trace store instead of scoping to one project.
         #[arg(long, default_value_t = false)]
         global: bool,
+
+        /// Offline trial value for the local file-history gate.
+        #[arg(long, default_value_t = 2)]
+        local_history_gate_min: u32,
+
+        /// Offline trial value for minimum repeated support before a pattern counts.
+        #[arg(long, default_value_t = 2)]
+        pattern_support_min: u32,
 
         /// Keep only the top N breakdown rows per category.
         #[arg(long, default_value_t = 5)]
@@ -1091,6 +1099,8 @@ async fn main() {
             max_sessions,
             project_root,
             global,
+            local_history_gate_min,
+            pattern_support_min,
             top_breakdowns,
             focus,
             json,
@@ -1106,7 +1116,17 @@ async fn main() {
                     }),
                 )
             };
-            match evaluate_signal_quality(&store, hours, max_sessions, project_scope.as_deref())
+            let eval_config = EvalConfig {
+                local_history_gate_min,
+                pattern_support_min,
+            };
+            match evaluate_signal_quality(
+                &store,
+                hours,
+                max_sessions,
+                project_scope.as_deref(),
+                eval_config,
+            )
                 .expect("failed to evaluate signal quality")
             {
                 Some(summary) => {

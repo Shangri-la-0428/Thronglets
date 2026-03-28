@@ -101,6 +101,14 @@ thronglets eval-signals --global --hours 168 --max-sessions 200
 thronglets eval-signals --hours 168 --max-sessions 200 --focus repair --top-breakdowns 3
 ```
 
+如果你怀疑当前阈值太保守，可以直接在冷路径上试验：
+
+```bash
+thronglets eval-signals --focus preparation --local-history-gate-min 1 --pattern-support-min 1
+```
+
+这只会改变离线评估，不会修改在线 prehook 的真实阈值。
+
 ## 为什么这很重要
 
 没有 Thronglets，你的 AI 对每个文件都是盲的。它不知道：

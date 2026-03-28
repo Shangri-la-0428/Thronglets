@@ -101,6 +101,14 @@ If you only want one class of problem and do not want the full repository-wide b
 thronglets eval-signals --hours 168 --max-sessions 200 --focus repair --top-breakdowns 3
 ```
 
+If you suspect the current thresholds are too conservative, you can trial relaxed ones entirely on the cold path:
+
+```bash
+thronglets eval-signals --focus preparation --local-history-gate-min 1 --pattern-support-min 1
+```
+
+This only changes the offline evaluation, not the live prehook thresholds.
+
 ## Why This Matters
 
 Without Thronglets, your AI approaches every file blind. It doesn't know:

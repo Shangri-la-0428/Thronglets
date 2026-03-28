@@ -6,6 +6,7 @@
 - **Machine-readable evaluation** — `thronglets eval-signals --json` now emits structured metrics, per-tool / per-target breakdowns, and a compact diagnosis for scripts and CI
 - **Focused evaluation views** — `thronglets eval-signals` now supports `--focus` and `--top-breakdowns` so operators can inspect one signal family without dumping the entire repo history
 - **Project-scoped evaluation** — `thronglets eval-signals` now defaults to the current project directory and uses `--global` only when you explicitly want cross-project traces mixed in
+- **Offline threshold trials** — `thronglets eval-signals` now accepts `--local-history-gate-min` and `--pattern-support-min` so operators can test stricter or looser signal thresholds without touching live hooks
 
 ## v0.4.0 — 2026-03-28
 
