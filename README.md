@@ -54,6 +54,7 @@ THRONGLETS_PROFILE_PREHOOK=1 thronglets prehook
 这会把阶段级耗时写到 `stderr`，不会污染 AI 看到的 `stdout`。
 输出还会标出 `stdout_bytes`、`output_mode`、`decision_path`、`evidence_scope` 和 `file_guidance_gate`，方便判断一次 prehook 到底说了多少、走的是哪条决策路径，以及文件级 hint 是打开、关闭还是不适用。
 文件级的 `do next / maybe also` 还会先经过本地重复轨迹门槛：当前文件如果没有至少两次最近的本地 `Edit/Write`，Thronglets 会直接跳过 `preparation / adjacency` 挖掘，避免为弱证据烧 token 和 query。
+同样地，只要 prehook 已经有更强的 signal，`git history` 就不会再作为背景 fallback 插进来；`context` 现在真的是“没有别的可说时”才出现。
 
 要汇总这些 profiling 行：
 

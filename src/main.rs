@@ -747,12 +747,9 @@ async fn main() {
             profiler.stage("adjacency");
 
             // History is a fallback when we don't already know a likely next move.
-            let has_action_signal = signals.iter().any(|s| matches!(
-                s.kind,
-                SignalKind::Repair | SignalKind::Preparation | SignalKind::Adjacency
-            ));
+            let has_higher_priority_signal = !signals.is_empty();
             let mut git_checked = false;
-            if !has_action_signal {
+            if !has_higher_priority_signal {
                 if supports_file_guidance {
                     git_checked = true;
                     if let Some(git_hints) = current_file.as_ref()

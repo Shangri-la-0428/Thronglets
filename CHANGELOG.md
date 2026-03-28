@@ -14,6 +14,7 @@
 - **Local repetition gate for file hints** — preparation and adjacency mining now short-circuit unless the current file already has repeated recent local `Edit/Write` history
 - **Profiler gate visibility** — prehook profiling and `profile-summary` now expose `file_guidance_gate=open|closed|na` so hot-path tuning can distinguish skipped file mining from non-file tools
 - **Hotspot-sorted profile summaries** — `profile-summary` now ranks distributions by frequency and reports per-`decision_path` hotspot cost summaries
+- **True last-resort git fallback** — `git history` now runs only when prehook has no higher-value signal at all, including danger-only cases
 
 ### Collective Learning
 

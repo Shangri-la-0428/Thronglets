@@ -452,8 +452,10 @@ fn prehook_does_not_emit_repair_for_retention_only_danger() {
     assert!(stdout.contains(PREHOOK_HEADER));
     assert!(stdout.contains("avoid: low retention for current.rs: 0/2 edits committed"));
     assert!(!stdout.contains("do next:"), "repair should require a recent tool error");
+    assert!(!stdout.contains("context:"), "danger-only prehook should stay sparse and skip git fallback");
     assert!(stderr.contains("output_mode=caution"));
     assert!(stderr.contains("decision_path=danger"));
+    assert!(stderr.contains("git=skipped"));
     assert!(stderr.contains("collective_queries_used=0"));
 }
 
