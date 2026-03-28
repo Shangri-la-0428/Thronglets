@@ -783,6 +783,7 @@ async fn main() {
                 tool_name,
                 &recommendations,
                 stdout_bytes,
+                profile_file_guidance_gate(supports_file_guidance, has_repeated_local_file_actions),
                 PREHOOK_MAX_COLLECTIVE_QUERIES - collective_queries_remaining,
             );
             // Normal state → complete silence. Zero tokens.
@@ -1136,6 +1137,7 @@ impl PrehookProfiler {
         tool_name: &str,
         recommendations: &[Recommendation],
         stdout_bytes: usize,
+        file_guidance_gate: &'static str,
         collective_queries_used: usize,
     ) {
         if !self.enabled {
@@ -1149,6 +1151,7 @@ impl PrehookProfiler {
             format!("output_mode={}", profile_output_mode(recommendations)),
             format!("decision_path={}", profile_decision_path(recommendations)),
             format!("evidence_scope={}", profile_evidence_scope(recommendations)),
+            format!("file_guidance_gate={file_guidance_gate}"),
             format!("collective_queries_used={collective_queries_used}"),
             format!("total_us={}", self.started_at.elapsed().as_micros()),
         ];
@@ -1208,6 +1211,19 @@ fn profile_evidence_scope(recommendations: &[Recommendation]) -> &'static str {
             thronglets::signals::EvidenceScope::Collective => "collective",
         })
         .unwrap_or("none")
+}
+
+fn profile_file_guidance_gate(
+    supports_file_guidance: bool,
+    has_repeated_local_file_actions: bool,
+) -> &'static str {
+    if !supports_file_guidance {
+        "na"
+    } else if has_repeated_local_file_actions {
+        "open"
+    } else {
+        "closed"
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

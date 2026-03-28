@@ -167,6 +167,7 @@ fn prehook_profile_uses_stderr_only() {
     assert!(stderr.contains("output_mode=silent"));
     assert!(stderr.contains("decision_path=none"));
     assert!(stderr.contains("evidence_scope=none"));
+    assert!(stderr.contains("file_guidance_gate=na"));
     assert!(stderr.contains("collective_queries_used=0"));
     assert!(stderr.contains("git=skipped"));
 }
@@ -259,6 +260,7 @@ fn prehook_profile_keeps_stdout_shape_when_signals_exist() {
     assert!(stderr.contains("output_mode=next-step"));
     assert!(stderr.contains("decision_path=repair"));
     assert!(stderr.contains("evidence_scope=collective"));
+    assert!(stderr.contains("file_guidance_gate=closed"));
     assert!(stderr.contains("collective_queries_used=0"));
     assert!(stderr.contains("git=skipped"));
 }
@@ -342,6 +344,7 @@ fn prehook_profile_reports_collective_query_usage() {
     assert!(stderr.contains("output_mode=next-step"));
     assert!(stderr.contains("decision_path=preparation"));
     assert!(stderr.contains("evidence_scope=collective"));
+    assert!(stderr.contains("file_guidance_gate=open"));
     assert!(stderr.contains("collective_queries_used=1"));
 }
 
@@ -378,6 +381,7 @@ fn prehook_profile_reports_context_only_mode() {
     assert!(stderr.contains("output_mode=context-only"));
     assert!(stderr.contains("decision_path=history"));
     assert!(stderr.contains("evidence_scope=none"));
+    assert!(stderr.contains("file_guidance_gate=closed"));
     assert!(stderr.contains(&format!("stdout_bytes={}", stdout.len())));
 }
 
@@ -804,6 +808,7 @@ fn prehook_keeps_collective_budget_zero_when_local_file_history_is_too_weak() {
     assert!(!stdout.contains("do next:"));
     assert!(stderr.contains("output_mode=context-only"));
     assert!(stderr.contains("decision_path=history"));
+    assert!(stderr.contains("file_guidance_gate=closed"));
     assert!(stderr.contains("collective_queries_used=0"));
 }
 

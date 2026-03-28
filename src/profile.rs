@@ -10,6 +10,7 @@ pub struct PrehookProfileSample {
     pub output_mode: String,
     pub decision_path: String,
     pub evidence_scope: String,
+    pub file_guidance_gate: String,
     pub collective_queries_used: usize,
     pub total_us: u128,
 }
@@ -26,6 +27,7 @@ pub struct PrehookProfileSummary {
     pub output_modes: BTreeMap<String, usize>,
     pub decision_paths: BTreeMap<String, usize>,
     pub evidence_scopes: BTreeMap<String, usize>,
+    pub file_guidance_gates: BTreeMap<String, usize>,
     pub collective_query_paths: BTreeMap<String, usize>,
 }
 
@@ -38,6 +40,7 @@ pub fn parse_prehook_profile_line(line: &str) -> Option<PrehookProfileSample> {
     let mut output_mode = None;
     let mut decision_path = None;
     let mut evidence_scope = None;
+    let mut file_guidance_gate = None;
     let mut collective_queries_used = None;
     let mut total_us = None;
 
@@ -52,6 +55,7 @@ pub fn parse_prehook_profile_line(line: &str) -> Option<PrehookProfileSample> {
             "output_mode" => output_mode = Some(value.to_string()),
             "decision_path" => decision_path = Some(value.to_string()),
             "evidence_scope" => evidence_scope = Some(value.to_string()),
+            "file_guidance_gate" => file_guidance_gate = Some(value.to_string()),
             "collective_queries_used" => collective_queries_used = value.parse().ok(),
             "total_us" => total_us = value.parse().ok(),
             _ => {}
@@ -65,6 +69,7 @@ pub fn parse_prehook_profile_line(line: &str) -> Option<PrehookProfileSample> {
         output_mode: output_mode?,
         decision_path: decision_path?,
         evidence_scope: evidence_scope?,
+        file_guidance_gate: file_guidance_gate?,
         collective_queries_used: collective_queries_used?,
         total_us: total_us?,
     })
@@ -97,6 +102,7 @@ pub fn summarize_prehook_profiles(input: &str) -> Option<PrehookProfileSummary> 
     let mut output_modes = BTreeMap::new();
     let mut decision_paths = BTreeMap::new();
     let mut evidence_scopes = BTreeMap::new();
+    let mut file_guidance_gates = BTreeMap::new();
     let mut collective_query_paths = BTreeMap::new();
 
     for sample in samples {
@@ -105,6 +111,7 @@ pub fn summarize_prehook_profiles(input: &str) -> Option<PrehookProfileSummary> 
         *output_modes.entry(sample.output_mode).or_insert(0) += 1;
         *decision_paths.entry(decision_path.clone()).or_insert(0) += 1;
         *evidence_scopes.entry(sample.evidence_scope).or_insert(0) += 1;
+        *file_guidance_gates.entry(sample.file_guidance_gate).or_insert(0) += 1;
         if sample.collective_queries_used > 0 {
             *collective_query_paths.entry(decision_path).or_insert(0) += sample.collective_queries_used;
         }
@@ -121,6 +128,7 @@ pub fn summarize_prehook_profiles(input: &str) -> Option<PrehookProfileSummary> 
         output_modes,
         decision_paths,
         evidence_scopes,
+        file_guidance_gates,
         collective_query_paths,
     })
 }
@@ -141,6 +149,7 @@ impl PrehookProfileSummary {
             format!("output modes: {}", render_counts(&self.output_modes)),
             format!("decision paths: {}", render_counts(&self.decision_paths)),
             format!("evidence scopes: {}", render_counts(&self.evidence_scopes)),
+            format!("file guidance gates: {}", render_counts(&self.file_guidance_gates)),
             format!(
                 "collective query paths: {}",
                 render_counts_or_none(&self.collective_query_paths)
@@ -179,7 +188,7 @@ mod tests {
     #[test]
     fn parse_prehook_profile_line_extracts_core_fields() {
         let sample = parse_prehook_profile_line(
-            "[thronglets:prehook] tool=Edit emitted=2 stdout_bytes=88 output_mode=next-step decision_path=repair evidence_scope=collective collective_queries_used=1 total_us=321 workspace_us=10 git=skipped",
+            "[thronglets:prehook] tool=Edit emitted=2 stdout_bytes=88 output_mode=next-step decision_path=repair evidence_scope=collective file_guidance_gate=open collective_queries_used=1 total_us=321 workspace_us=10 git=skipped",
         )
         .unwrap();
 
@@ -189,6 +198,7 @@ mod tests {
         assert_eq!(sample.output_mode, "next-step");
         assert_eq!(sample.decision_path, "repair");
         assert_eq!(sample.evidence_scope, "collective");
+        assert_eq!(sample.file_guidance_gate, "open");
         assert_eq!(sample.collective_queries_used, 1);
         assert_eq!(sample.total_us, 321);
     }
@@ -196,10 +206,10 @@ mod tests {
     #[test]
     fn summarize_prehook_profiles_aggregates_counts_and_percentiles() {
         let summary = summarize_prehook_profiles(
-            "[thronglets:prehook] tool=Edit emitted=2 stdout_bytes=88 output_mode=next-step decision_path=repair evidence_scope=collective collective_queries_used=1 total_us=300\n\
+            "[thronglets:prehook] tool=Edit emitted=2 stdout_bytes=88 output_mode=next-step decision_path=repair evidence_scope=collective file_guidance_gate=open collective_queries_used=1 total_us=300\n\
              junk\n\
-             [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none collective_queries_used=0 total_us=100\n\
-             [thronglets:prehook] tool=Edit emitted=1 stdout_bytes=42 output_mode=context-only decision_path=history evidence_scope=none collective_queries_used=0 total_us=200",
+             [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100\n\
+             [thronglets:prehook] tool=Edit emitted=1 stdout_bytes=42 output_mode=context-only decision_path=history evidence_scope=none file_guidance_gate=closed collective_queries_used=0 total_us=200",
         )
         .unwrap();
 
@@ -210,6 +220,8 @@ mod tests {
         assert_eq!(summary.output_modes["silent"], 1);
         assert_eq!(summary.decision_paths["repair"], 1);
         assert_eq!(summary.evidence_scopes["none"], 2);
+        assert_eq!(summary.file_guidance_gates["open"], 1);
+        assert_eq!(summary.file_guidance_gates["closed"], 1);
         assert_eq!(summary.collective_query_paths["repair"], 1);
     }
 }

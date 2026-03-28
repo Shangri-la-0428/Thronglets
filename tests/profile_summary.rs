@@ -21,9 +21,9 @@ fn run_profile_summary(input: &str) -> std::process::Output {
 #[test]
 fn profile_summary_aggregates_profile_lines() {
     let output = run_profile_summary(
-        "[thronglets:prehook] tool=Edit emitted=2 stdout_bytes=88 output_mode=next-step decision_path=repair evidence_scope=collective collective_queries_used=1 total_us=300\n\
-         [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none collective_queries_used=0 total_us=100\n\
-         [thronglets:prehook] tool=Edit emitted=1 stdout_bytes=42 output_mode=context-only decision_path=history evidence_scope=none collective_queries_used=0 total_us=200\n",
+        "[thronglets:prehook] tool=Edit emitted=2 stdout_bytes=88 output_mode=next-step decision_path=repair evidence_scope=collective file_guidance_gate=open collective_queries_used=1 total_us=300\n\
+         [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100\n\
+         [thronglets:prehook] tool=Edit emitted=1 stdout_bytes=42 output_mode=context-only decision_path=history evidence_scope=none file_guidance_gate=closed collective_queries_used=0 total_us=200\n",
     );
 
     assert!(output.status.success(), "profile-summary failed: {}", String::from_utf8_lossy(&output.stderr));
@@ -36,6 +36,7 @@ fn profile_summary_aggregates_profile_lines() {
     assert!(stdout.contains("output modes: context-only=1, next-step=1, silent=1"));
     assert!(stdout.contains("decision paths: history=1, none=1, repair=1"));
     assert!(stdout.contains("evidence scopes: collective=1, none=2"));
+    assert!(stdout.contains("file guidance gates: closed=1, na=1, open=1"));
     assert!(stdout.contains("collective query paths: repair=1"));
 }
 
