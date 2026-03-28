@@ -484,6 +484,30 @@ impl TraceStore {
         Ok(matched)
     }
 
+    /// Query recent explicit signal traces for a feed view.
+    pub fn query_recent_signal_traces(
+        &self,
+        hours: u32,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<Trace>> {
+        let conn = self.conn.lock().unwrap();
+        let like = format!("{SIGNAL_CAPABILITY_PREFIX}%");
+        let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
+        let query_limit = (limit.max(1) * 20) as i64;
+        let mut stmt = conn.prepare(
+            "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                    context_text, session_id, model_id, timestamp, node_pubkey, signature
+             FROM traces
+             WHERE capability LIKE ?1
+               AND timestamp >= ?2
+             ORDER BY timestamp DESC
+             LIMIT ?3",
+        )?;
+        let mut traces = Self::collect_traces(&mut stmt, params![like, cutoff_ms, query_limit])?;
+        traces.truncate(limit);
+        Ok(traces)
+    }
+
     /// Evaporate old traces (pheromone decay).
     pub fn evaporate(&self, max_age_days: Option<i64>) -> rusqlite::Result<usize> {
         let conn = self.conn.lock().unwrap();
@@ -1329,5 +1353,52 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].capability, SignalPostKind::Avoid.capability());
+    }
+
+    #[test]
+    fn query_recent_signal_traces_respects_time_window() {
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+
+        let recent = crate::posts::create_signal_trace(
+            SignalPostKind::Watch,
+            "ship the current branch",
+            "run release-check before push",
+            crate::posts::SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("recent".into()),
+                ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        store.insert(&recent).unwrap();
+
+        let old = Trace::new(
+            SignalPostKind::Watch.capability(),
+            Outcome::Succeeded,
+            0,
+            10,
+            crate::context::simhash("ship the current branch"),
+            Some(
+                serde_json::json!({
+                    "context": "ship the current branch",
+                    "message": "old signal",
+                    "expires_at": u64::MAX,
+                })
+                .to_string(),
+            ),
+            Some("old".into()),
+            "codex".into(),
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        let mut old = old;
+        old.timestamp = old.timestamp.saturating_sub(48 * 3_600_000);
+        store.insert(&old).unwrap();
+
+        let results = store.query_recent_signal_traces(24, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id.as_deref(), Some("recent"));
     }
 }

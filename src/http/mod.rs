@@ -7,6 +7,7 @@
 //! - POST /v1/traces       — record a trace
 //! - POST /v1/signals      — leave an explicit short signal
 //! - GET  /v1/signals      — query explicit short signals
+//! - GET  /v1/signals/feed — show recent converging explicit signals
 //! - GET  /v1/query        — query the substrate
 //! - GET  /v1/capabilities — list known capabilities
 //! - GET  /v1/status       — node status
@@ -15,7 +16,7 @@ use crate::context::{simhash, similarity};
 use crate::identity::NodeIdentity;
 use crate::posts::{
     DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
-    is_signal_capability, summarize_signal_traces,
+    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
 };
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
@@ -83,6 +84,7 @@ fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
     match (method, path_only) {
         ("POST", "/v1/traces") => handle_post_trace(ctx, body),
         ("POST", "/v1/signals") => handle_post_signal(ctx, body),
+        ("GET", "/v1/signals/feed") => handle_get_signal_feed(ctx, path),
         ("GET", "/v1/signals") => handle_get_signals(ctx, path),
         ("GET", "/v1/query") => handle_get_query(ctx, path),
         ("GET", "/v1/capabilities") => handle_get_capabilities(ctx),
@@ -91,6 +93,7 @@ fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
             "POST /v1/traces",
             "POST /v1/signals",
             "GET /v1/signals?context=...&kind=avoid|recommend|watch|info&limit=5",
+            "GET /v1/signals/feed?hours=24&limit=10",
             "GET /v1/query?context=...&intent=resolve|evaluate|explore|signals",
             "GET /v1/capabilities",
             "GET /v1/status"
@@ -310,6 +313,26 @@ fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
 fn handle_get_signals(ctx: &HttpContext, path: &str) -> String {
     let params = parse_query_params(path);
     handle_signals_query(ctx, &params)
+}
+
+fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
+    let params = parse_query_params(path);
+    let hours: u32 = params
+        .get("hours")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24);
+    let limit: usize = params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    let traces = match ctx.store.query_recent_signal_traces(hours, limit.max(1)) {
+        Ok(traces) => traces,
+        Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
+    };
+    json!({
+        "signals": summarize_recent_signal_feed(&traces, ctx.identity.public_key_bytes(), limit),
+    })
+    .to_string()
 }
 
 fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> String {
@@ -540,5 +563,29 @@ mod tests {
         ));
         assert_eq!(status_response["trace_count"], 2);
         assert_eq!(status_response["capabilities"], 1);
+    }
+
+    #[test]
+    fn signal_feed_returns_recent_signals() {
+        let ctx = make_ctx();
+
+        let post_signal = concat!(
+            "POST /v1/signals HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"kind\":\"recommend\",\"context\":\"repair release flow\",\"message\":\"run release-check before push\",\"model\":\"codex\"}",
+        );
+        let _ = handle_http_request(&ctx, post_signal);
+
+        let feed_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/signals/feed?hours=24&limit=5 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        let signals = feed_response["signals"].as_array().unwrap();
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["kind"], "recommend");
+        assert_eq!(signals[0]["message"], "run release-check before push");
+        assert_eq!(signals[0]["evidence_scope"], "local");
     }
 }

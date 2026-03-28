@@ -148,6 +148,12 @@ thronglets signal-post --kind watch --context "ship the current branch" --messag
 
 When you query signals, Thronglets now also tells you whether that message is only local, already collectively corroborated, or mixed across both.
 
+If you want the ambient timeline instead of an exact context lookup:
+
+```bash
+thronglets signal-feed --hours 24 --limit 10
+```
+
 The same plane is available over HTTP:
 
 ```bash
@@ -162,6 +168,7 @@ curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=
 
 And over MCP:
 - `signal_post`
+- `signal_feed`
 - `substrate_query` with `intent="signals"`
 
 These explicit signals stay out of normal capability listings and DHT capability summaries unless an agent asks for them on purpose.

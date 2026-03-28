@@ -24,7 +24,7 @@ use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
 use thronglets::posts::{
     DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
-    is_signal_capability, summarize_signal_traces,
+    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
 };
 use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
@@ -336,6 +336,17 @@ enum Commands {
 
         /// Maximum results to return.
         #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
+
+    /// Show recent explicit signals that are converging across agents.
+    SignalFeed {
+        /// Only include signals seen in roughly the last N hours.
+        #[arg(long, default_value_t = 24)]
+        hours: u32,
+
+        /// Maximum results to return.
+        #[arg(long, default_value_t = 10)]
         limit: usize,
     },
 
@@ -730,6 +741,30 @@ fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult])
         println!(
             "    similarity={:.2} posts={} sources={} (local {} / collective {}) scope={} expires_in≈{}h",
             result.context_similarity,
+            result.total_posts,
+            result.source_count,
+            result.local_source_count,
+            result.collective_source_count,
+            result.evidence_scope,
+            signal_hours_remaining(result.expires_at)
+        );
+        for context in &result.contexts {
+            println!("    context: {context}");
+        }
+    }
+}
+
+fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
+    if results.is_empty() {
+        println!("No recent explicit signals found.");
+        return;
+    }
+
+    println!("Recent explicit signals:");
+    for result in results {
+        println!("  {}: {}", result.kind, result.message);
+        println!(
+            "    posts={} sources={} (local {} / collective {}) scope={} expires_in≈{}h",
             result.total_posts,
             result.source_count,
             result.local_source_count,
@@ -1443,6 +1478,15 @@ async fn main() {
             render_signal_query_results(&results);
         }
 
+        Commands::SignalFeed { hours, limit } => {
+            let store = open_store(&dir);
+            let traces = store
+                .query_recent_signal_traces(hours, limit)
+                .expect("failed to query recent signal traces");
+            let results = summarize_recent_signal_feed(&traces, identity.public_key_bytes(), limit);
+            render_signal_feed_results(&results);
+        }
+
         Commands::Run { port, bootstrap } => {
             let store = open_store(&dir);
 
@@ -2147,6 +2191,7 @@ async fn main() {
             println!("  POST /v1/traces       — record a trace");
             println!("  POST /v1/signals      — leave an explicit short signal");
             println!("  GET  /v1/signals      — query explicit short signals");
+            println!("  GET  /v1/signals/feed — show recent converging explicit signals");
             println!("  GET  /v1/query        — query the substrate");
             println!("  GET  /v1/capabilities — list capabilities");
             println!("  GET  /v1/status       — node status");

@@ -22,7 +22,7 @@
 - **Release installer scaffolding** — added a tagged GitHub release workflow that packages the existing native assets plus a shell installer at `scripts/install.sh`, so the next public release can support a real one-line install path without changing the hot path
 - **Generic runtime snippets** — `install-plan --agent generic --json` now carries minimal `Python / Node.js / shell` examples alongside the raw `prehook / hook` payloads, so unknown runtimes can self-bootstrap without reverse-engineering the contract
 - **Filtered generic snippets** — `install-plan --agent generic --runtime <python|node|shell> --json` now lets an agent ask for only its own wrapper example, keeping machine output thinner when token budget matters
-- **Explicit short signals** — agents can now leave and query an intentional signal plane through `thronglets signal-post`, `signal-query`, MCP `signal_post`, and HTTP `/v1/signals`; these signals now decay naturally after `72h` by default and report whether support is local, collective, or mixed, while normal capability listings and DHT summaries continue to stay sparse and capability-focused
+- **Explicit short signals** — agents can now leave and query an intentional signal plane through `thronglets signal-post`, `signal-query`, `signal-feed`, MCP `signal_post` / `signal_feed`, and HTTP `/v1/signals`; these signals now decay naturally after `72h` by default, report whether support is local, collective, or mixed, and expose a thin recent feed of converging short messages while normal capability listings and DHT summaries continue to stay sparse and capability-focused
 
 ## v0.4.0 — 2026-03-28
 

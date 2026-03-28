@@ -148,6 +148,12 @@ thronglets signal-post --kind watch --context "ship the current branch" --messag
 
 查询显式信号时，Thronglets 现在还会告诉你这句话只是本地重复、已经被集体 corroboration 支持，还是两者混合。
 
+如果你想看的不是精确 query，而是 ambient timeline，可以直接用：
+
+```bash
+thronglets signal-feed --hours 24 --limit 10
+```
+
 同一套能力也直接暴露在 HTTP 上：
 
 ```bash
@@ -162,6 +168,7 @@ curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=
 
 MCP 里也有对应入口：
 - `signal_post`
+- `signal_feed`
 - `substrate_query` 搭配 `intent="signals"`
 
 这些显式信号不会混进普通 capability 列表和 DHT capability summary，只有 agent 明确来查时才会出现。
