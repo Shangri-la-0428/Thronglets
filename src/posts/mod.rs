@@ -3,8 +3,17 @@ use crate::trace::{Outcome, Trace};
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const SIGNAL_CAPABILITY_PREFIX: &str = "urn:thronglets:signal:";
+pub const DEFAULT_SIGNAL_TTL_HOURS: u32 = 72;
+
+#[derive(Debug, Clone)]
+pub struct SignalTraceConfig {
+    pub model_id: String,
+    pub session_id: Option<String>,
+    pub ttl_hours: u32,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +59,7 @@ impl SignalPostKind {
 struct SignalTracePayload {
     context: String,
     message: String,
+    expires_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,6 +70,7 @@ pub struct SignalQueryResult {
     pub total_posts: u64,
     pub source_count: u32,
     pub latest_timestamp: u64,
+    pub expires_at: u64,
     pub contexts: Vec<String>,
 }
 
@@ -68,6 +79,7 @@ struct DecodedSignalTrace {
     kind: SignalPostKind,
     context: String,
     message: String,
+    expires_at: u64,
 }
 
 #[derive(Debug)]
@@ -77,6 +89,7 @@ struct SignalGroup {
     best_similarity: f64,
     total_posts: u64,
     latest_timestamp: u64,
+    expires_at: u64,
     contexts: BTreeSet<String>,
     sources: BTreeSet<String>,
 }
@@ -89,14 +102,34 @@ pub fn create_signal_trace(
     kind: SignalPostKind,
     context: &str,
     message: &str,
-    model_id: String,
-    session_id: Option<String>,
+    config: SignalTraceConfig,
+    node_pubkey: [u8; 32],
+    sign_fn: impl FnOnce(&[u8]) -> Signature,
+) -> Trace {
+    create_signal_trace_at(
+        kind,
+        context,
+        message,
+        config,
+        now_ms(),
+        node_pubkey,
+        sign_fn,
+    )
+}
+
+fn create_signal_trace_at(
+    kind: SignalPostKind,
+    context: &str,
+    message: &str,
+    config: SignalTraceConfig,
+    now_ms: u64,
     node_pubkey: [u8; 32],
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
     let payload = SignalTracePayload {
         context: context.to_string(),
         message: message.to_string(),
+        expires_at: expires_at_ms(now_ms, config.ttl_hours),
     };
 
     Trace::new(
@@ -106,8 +139,8 @@ pub fn create_signal_trace(
         message.len().min(u32::MAX as usize) as u32,
         simhash(context),
         Some(serde_json::to_string(&payload).expect("signal payload should serialize")),
-        session_id,
-        model_id,
+        config.session_id,
+        config.model_id,
         node_pubkey,
         sign_fn,
     )
@@ -119,12 +152,16 @@ pub fn summarize_signal_traces(
     limit: usize,
 ) -> Vec<SignalQueryResult> {
     let query_hash = simhash(query_context);
+    let now_ms = now_ms();
     let mut groups: HashMap<(SignalPostKind, String), SignalGroup> = HashMap::new();
 
     for trace in traces {
         let Some(decoded) = decode_signal_trace(trace) else {
             continue;
         };
+        if decoded.expires_at <= now_ms {
+            continue;
+        }
 
         let similarity_score = similarity(&query_hash, &trace.context_hash);
         let key = (decoded.kind, decoded.message.clone());
@@ -134,12 +171,14 @@ pub fn summarize_signal_traces(
             best_similarity: similarity_score,
             total_posts: 0,
             latest_timestamp: trace.timestamp,
+            expires_at: decoded.expires_at,
             contexts: BTreeSet::new(),
             sources: BTreeSet::new(),
         });
         entry.best_similarity = entry.best_similarity.max(similarity_score);
         entry.total_posts += 1;
         entry.latest_timestamp = entry.latest_timestamp.max(trace.timestamp);
+        entry.expires_at = entry.expires_at.max(decoded.expires_at);
         if !decoded.context.is_empty() {
             entry.contexts.insert(decoded.context);
         }
@@ -155,6 +194,7 @@ pub fn summarize_signal_traces(
             total_posts: group.total_posts,
             source_count: group.sources.len() as u32,
             latest_timestamp: group.latest_timestamp,
+            expires_at: group.expires_at,
             contexts: group.contexts.into_iter().take(3).collect(),
         })
         .collect();
@@ -178,7 +218,12 @@ fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
         kind,
         context: payload.context,
         message: payload.message,
+        expires_at: payload.expires_at,
     })
+}
+
+pub fn expires_at_ms(now_ms: u64, ttl_hours: u32) -> u64 {
+    now_ms.saturating_add((ttl_hours as u64).saturating_mul(60 * 60 * 1000))
 }
 
 fn source_key(trace: &Trace) -> String {
@@ -191,6 +236,13 @@ fn source_key(trace: &Trace) -> String {
         Some(session_id) => format!("{node}:{session_id}"),
         None => node,
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn round2(v: f64) -> f64 {
@@ -209,8 +261,11 @@ mod tests {
             SignalPostKind::Avoid,
             "fix flaky ci workflow",
             "skip the generated lockfile",
-            "codex".into(),
-            Some("session-a".into()),
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("session-a".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
             identity.public_key_bytes(),
             |msg| identity.sign(msg),
         );
@@ -219,11 +274,15 @@ mod tests {
             SignalPostKind::Avoid,
             "repair flaky ci pipeline",
             "skip the generated lockfile",
-            "openclaw".into(),
-            Some("session-b".into()),
+            SignalTraceConfig {
+                model_id: "openclaw".into(),
+                session_id: Some("session-b".into()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
             identity.public_key_bytes(),
             |msg| identity.sign(msg),
         );
+        let trace_b_timestamp = trace_b.timestamp;
 
         let results = summarize_signal_traces(&[trace_a, trace_b], "fix flaky ci workflow", 10);
         assert_eq!(results.len(), 1);
@@ -231,5 +290,43 @@ mod tests {
         assert_eq!(results[0].message, "skip the generated lockfile");
         assert_eq!(results[0].total_posts, 2);
         assert_eq!(results[0].source_count, 2);
+        assert!(results[0].expires_at >= trace_b_timestamp);
+    }
+
+    #[test]
+    fn summarize_signal_posts_ignores_expired_entries() {
+        let identity = NodeIdentity::generate();
+        let base_now = now_ms();
+        let expired = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "ship the current branch",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("session-a".into()),
+                ttl_hours: 1,
+            },
+            base_now.saturating_sub(3 * 60 * 60 * 1000),
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        let fresh = create_signal_trace_at(
+            SignalPostKind::Watch,
+            "ship the current branch",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "openclaw".into(),
+                session_id: Some("session-b".into()),
+                ttl_hours: 24,
+            },
+            base_now,
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+
+        let results = summarize_signal_traces(&[expired, fresh], "ship the current branch", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, "watch");
+        assert_eq!(results[0].total_posts, 1);
     }
 }

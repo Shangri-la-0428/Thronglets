@@ -1298,8 +1298,11 @@ mod tests {
             SignalPostKind::Avoid,
             "repair flaky ci",
             "skip the generated lockfile",
-            "codex".into(),
-            Some("s1".into()),
+            crate::posts::SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("s1".into()),
+                ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
+            },
             id.public_key_bytes(),
             |m| id.sign(m),
         );
@@ -1308,8 +1311,11 @@ mod tests {
             SignalPostKind::Recommend,
             "repair flaky ci",
             "run release-check first",
-            "codex".into(),
-            Some("s2".into()),
+            crate::posts::SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("s2".into()),
+                ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
+            },
             id.public_key_bytes(),
             |m| id.sign(m),
         );

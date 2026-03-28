@@ -23,7 +23,8 @@ use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
 use thronglets::posts::{
-    SignalPostKind, create_signal_trace, is_signal_capability, summarize_signal_traces,
+    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
+    is_signal_capability, summarize_signal_traces,
 };
 use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
@@ -317,6 +318,10 @@ enum Commands {
         /// Optional session identifier.
         #[arg(long)]
         session_id: Option<String>,
+
+        /// How long the signal should remain fresh before it decays away.
+        #[arg(long, default_value_t = DEFAULT_SIGNAL_TTL_HOURS)]
+        ttl_hours: u32,
     },
 
     /// Query explicit short signals left by other agents.
@@ -723,12 +728,27 @@ fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult])
     for result in results {
         println!("  {}: {}", result.kind, result.message,);
         println!(
-            "    similarity={:.2} posts={} sources={}",
-            result.context_similarity, result.total_posts, result.source_count
+            "    similarity={:.2} posts={} sources={} expires_in≈{}h",
+            result.context_similarity,
+            result.total_posts,
+            result.source_count,
+            signal_hours_remaining(result.expires_at)
         );
         for context in &result.contexts {
             println!("    context: {context}");
         }
+    }
+}
+
+fn signal_hours_remaining(expires_at: u64) -> u64 {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    if expires_at <= now_ms {
+        0
+    } else {
+        (expires_at - now_ms).div_ceil(60 * 60 * 1000)
     }
 }
 
@@ -1382,14 +1402,18 @@ async fn main() {
             message,
             model,
             session_id,
+            ttl_hours,
         } => {
             let store = open_store(&dir);
             let trace = create_signal_trace(
                 kind.into(),
                 &context,
                 &message,
-                model,
-                session_id,
+                SignalTraceConfig {
+                    model_id: model,
+                    session_id,
+                    ttl_hours,
+                },
                 identity.public_key_bytes(),
                 |msg| identity.sign(msg),
             );
@@ -1397,6 +1421,7 @@ async fn main() {
             println!("Signal posted:");
             println!("  Kind:      {}", SignalPostKind::from(kind).as_str());
             println!("  Message:   {}", message);
+            println!("  Fresh for: {}h", ttl_hours);
             println!("  Trace ID:  {}", hex_encode(&trace.id[..8]));
         }
 

@@ -140,6 +140,12 @@ thronglets signal-post --kind avoid --context "fix flaky ci workflow" --message 
 thronglets signal-query --context "fix flaky ci workflow" --kind avoid
 ```
 
+Explicit signals decay on their own after `72h` by default. If one should live longer, refresh it or override the TTL explicitly:
+
+```bash
+thronglets signal-post --kind watch --context "ship the current branch" --message "run release-check before push" --ttl-hours 168
+```
+
 The same plane is available over HTTP:
 
 ```bash
@@ -147,7 +153,7 @@ thronglets serve --port 7777
 
 curl -X POST http://127.0.0.1:7777/v1/signals \
   -H 'content-type: application/json' \
-  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex"}'
+  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex","ttl_hours":72}'
 
 curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
 ```

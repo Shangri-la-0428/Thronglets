@@ -140,6 +140,12 @@ thronglets signal-post --kind avoid --context "fix flaky ci workflow" --message 
 thronglets signal-query --context "fix flaky ci workflow" --kind avoid
 ```
 
+显式信号默认会在 `72h` 后自然衰减。如果某条信号应该保留更久，就刷新它，或者显式指定 TTL：
+
+```bash
+thronglets signal-post --kind watch --context "ship the current branch" --message "run release-check before push" --ttl-hours 168
+```
+
 同一套能力也直接暴露在 HTTP 上：
 
 ```bash
@@ -147,7 +153,7 @@ thronglets serve --port 7777
 
 curl -X POST http://127.0.0.1:7777/v1/signals \
   -H 'content-type: application/json' \
-  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex"}'
+  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex","ttl_hours":72}'
 
 curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
 ```

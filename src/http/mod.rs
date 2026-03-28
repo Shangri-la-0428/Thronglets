@@ -14,7 +14,8 @@
 use crate::context::{simhash, similarity};
 use crate::identity::NodeIdentity;
 use crate::posts::{
-    SignalPostKind, create_signal_trace, is_signal_capability, summarize_signal_traces,
+    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
+    is_signal_capability, summarize_signal_traces,
 };
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
@@ -176,13 +177,20 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
     };
     let model = args["model"].as_str().unwrap_or("unknown").to_string();
     let session_id = args["session_id"].as_str().map(str::to_string);
+    let ttl_hours = args["ttl_hours"]
+        .as_u64()
+        .map(|value| value.min(u32::MAX as u64) as u32)
+        .unwrap_or(DEFAULT_SIGNAL_TTL_HOURS);
 
     let trace = create_signal_trace(
         kind,
         context,
         message,
-        model,
-        session_id,
+        SignalTraceConfig {
+            model_id: model,
+            session_id,
+            ttl_hours,
+        },
         ctx.identity.public_key_bytes(),
         |msg| ctx.identity.sign(msg),
     );
@@ -193,6 +201,7 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
             "posted": true,
             "kind": kind.as_str(),
             "message": message,
+            "ttl_hours": ttl_hours,
             "trace_id": trace_id_hex,
         })
         .to_string(),
@@ -458,6 +467,7 @@ mod tests {
         );
         let post_response = parse_body(&handle_http_request(&ctx, post_request));
         assert_eq!(post_response["posted"], true);
+        assert_eq!(post_response["ttl_hours"], DEFAULT_SIGNAL_TTL_HOURS);
 
         let get_response = parse_body(&handle_http_request(
             &ctx,

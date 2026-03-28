@@ -20,7 +20,8 @@ use crate::context::{simhash, similarity};
 use crate::identity::NodeIdentity;
 use crate::network::NetworkCommand;
 use crate::posts::{
-    SignalPostKind, create_signal_trace, is_signal_capability, summarize_signal_traces,
+    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
+    is_signal_capability, summarize_signal_traces,
 };
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
@@ -142,6 +143,10 @@ fn tool_definitions() -> Value {
                         "session_id": {
                             "type": "string",
                             "description": "Optional session identifier"
+                        },
+                        "ttl_hours": {
+                            "type": "integer",
+                            "description": "How long the signal should remain fresh before it decays away (default: 72)"
                         }
                     },
                     "required": ["kind", "context", "message"]
@@ -419,13 +424,21 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
         .get("session_id")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    let ttl_hours = args
+        .get("ttl_hours")
+        .and_then(|v| v.as_u64())
+        .map(|value| value.min(u32::MAX as u64) as u32)
+        .unwrap_or(DEFAULT_SIGNAL_TTL_HOURS);
 
     let trace = create_signal_trace(
         kind,
         context,
         message,
-        model_id,
-        session_id,
+        SignalTraceConfig {
+            model_id,
+            session_id,
+            ttl_hours,
+        },
         ctx.identity.public_key_bytes(),
         |msg| ctx.identity.sign(msg),
     );
@@ -441,6 +454,7 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
                         "posted": true,
                         "kind": kind.as_str(),
                         "message": message,
+                        "ttl_hours": ttl_hours,
                         "trace_id": trace_id_hex,
                     })).unwrap()
                 }]
@@ -1151,6 +1165,13 @@ mod tests {
         };
         let resp = handle_request(&ctx, post_req).await.unwrap();
         assert!(resp.error.is_none(), "signal_post should succeed");
+        let post_text = resp.result.as_ref().unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let post_json: Value =
+            serde_json::from_str(&post_text).expect("signal post response should be valid JSON");
+        assert_eq!(post_json["ttl_hours"], DEFAULT_SIGNAL_TTL_HOURS);
 
         let query_req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
