@@ -41,11 +41,14 @@ struct MachineEnvelope<T> {
 
 #[derive(Serialize)]
 struct BootstrapReport {
+    status: &'static str,
     detections: Vec<AdapterDetection>,
     plans: Vec<AdapterPlan>,
     applied: Vec<AdapterApplyResult>,
     doctor: Vec<AdapterDoctor>,
     healthy: bool,
+    restart_required: bool,
+    next_steps: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -456,15 +459,7 @@ fn render_install_plans(plans: &[AdapterPlan]) {
 fn render_doctor_reports(reports: &[AdapterDoctor]) {
     println!("Adapter health:");
     for report in reports {
-        println!(
-            "  {}: {}",
-            report.agent,
-            if report.healthy {
-                "healthy"
-            } else {
-                "needs-fix"
-            }
-        );
+        println!("  {}: {}", report.agent, report.status);
         for check in &report.checks {
             println!(
                 "    [{}] {} — {}",
@@ -516,14 +511,13 @@ fn render_bootstrap_report(report: &BootstrapReport) {
     }
     render_doctor_reports(&report.doctor);
     println!();
-    println!(
-        "Bootstrap status: {}",
-        if report.healthy {
-            "healthy"
-        } else {
-            "needs-fix"
-        }
-    );
+    println!("Bootstrap status: {}", report.status);
+    if report.restart_required {
+        println!("Restart required: yes");
+    }
+    for step in &report.next_steps {
+        println!("Next: {step}");
+    }
 }
 
 fn apply_selected_adapters(
@@ -658,13 +652,26 @@ fn bootstrap_selected_adapters(
         .map(|adapter| doctor_adapter(home_dir, data_dir, adapter))
         .collect();
     let healthy = !doctor_should_fail(target, &doctor);
+    let restart_required = applied.iter().any(|result| result.requires_restart);
+    let mut next_steps: Vec<_> = doctor
+        .iter()
+        .filter_map(|report| report.fix_command.clone())
+        .collect();
+    if restart_required {
+        next_steps.push("Restart the targeted agent so the new integration is loaded.".into());
+    }
+    next_steps.sort();
+    next_steps.dedup();
 
     Ok(BootstrapReport {
+        status: if healthy { "healthy" } else { "needs-fix" },
         detections,
         plans,
         applied,
         doctor,
         healthy,
+        restart_required,
+        next_steps,
     })
 }
 

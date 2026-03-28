@@ -119,7 +119,9 @@ pub struct AdapterCheck {
 pub struct AdapterDoctor {
     pub agent: String,
     pub present: bool,
+    pub status: String,
     pub healthy: bool,
+    pub fix_command: Option<String>,
     pub checks: Vec<AdapterCheck>,
     pub remediation: Vec<String>,
     pub note: Option<String>,
@@ -447,7 +449,9 @@ pub fn doctor_adapter(home_dir: &Path, data_dir: &Path, agent: AdapterKind) -> A
         AdapterKind::Generic => AdapterDoctor {
             agent: agent.key().into(),
             present: true,
+            status: "healthy".into(),
             healthy: true,
+            fix_command: None,
             checks: vec![AdapterCheck {
                 name: "contract".into(),
                 ok: true,
@@ -560,13 +564,14 @@ fn doctor_claude(home_dir: &Path) -> AdapterDoctor {
         },
     ];
     let healthy = checks.iter().all(|check| check.ok);
+    let fix_command = (!healthy).then_some("thronglets apply-plan --agent claude".into());
     AdapterDoctor {
         agent: AdapterKind::Claude.key().into(),
         present: should_configure_claude(home_dir),
+        status: if healthy { "healthy" } else { "needs-fix" }.into(),
         healthy,
-        remediation: (!healthy)
-            .then_some(vec!["thronglets apply-plan --agent claude".into()])
-            .unwrap_or_default(),
+        fix_command: fix_command.clone(),
+        remediation: fix_command.into_iter().collect(),
         checks,
         note: None,
     }
@@ -612,13 +617,14 @@ fn doctor_codex(home_dir: &Path) -> AdapterDoctor {
         },
     ];
     let healthy = checks.iter().all(|check| check.ok);
+    let fix_command = (!healthy).then_some("thronglets apply-plan --agent codex".into());
     AdapterDoctor {
         agent: AdapterKind::Codex.key().into(),
         present: should_configure_codex(home_dir),
+        status: if healthy { "healthy" } else { "needs-fix" }.into(),
         healthy,
-        remediation: (!healthy)
-            .then_some(vec!["thronglets apply-plan --agent codex".into()])
-            .unwrap_or_default(),
+        fix_command: fix_command.clone(),
+        remediation: fix_command.into_iter().collect(),
         checks,
         note: healthy
             .then_some("Restart Codex after config changes so the MCP server is loaded.".into()),
@@ -665,13 +671,14 @@ fn doctor_openclaw(home_dir: &Path, data_dir: &Path) -> AdapterDoctor {
         },
     ];
     let healthy = checks.iter().all(|check| check.ok);
+    let fix_command = (!healthy).then_some("thronglets apply-plan --agent openclaw".into());
     AdapterDoctor {
         agent: AdapterKind::OpenClaw.key().into(),
         present: should_configure_openclaw(home_dir),
+        status: if healthy { "healthy" } else { "needs-fix" }.into(),
         healthy,
-        remediation: (!healthy)
-            .then_some(vec!["thronglets apply-plan --agent openclaw".into()])
-            .unwrap_or_default(),
+        fix_command: fix_command.clone(),
+        remediation: fix_command.into_iter().collect(),
         checks,
         note: healthy
             .then_some("OpenClaw gateway restart may be required after plugin changes.".into()),

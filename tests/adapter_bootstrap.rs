@@ -113,6 +113,8 @@ fn apply_plan_codex_then_doctor_reports_healthy() {
     let reports = parse_envelope(&doctor_output, "doctor");
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["healthy"], Value::Bool(true));
+    assert_eq!(reports[0]["status"], Value::String("healthy".into()));
+    assert!(reports[0]["fix_command"].is_null());
 }
 
 #[test]
@@ -132,6 +134,11 @@ fn doctor_fails_for_unconfigured_specific_adapter() {
     let reports = parse_envelope(&output, "doctor");
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["healthy"], Value::Bool(false));
+    assert_eq!(reports[0]["status"], Value::String("needs-fix".into()));
+    assert_eq!(
+        reports[0]["fix_command"],
+        Value::String("thronglets apply-plan --agent codex".into())
+    );
 }
 
 #[test]
@@ -158,7 +165,16 @@ fn bootstrap_codex_json_applies_and_reports_healthy() {
         Value::String(SCHEMA_VERSION.into())
     );
     assert_eq!(envelope["command"], Value::String("bootstrap".into()));
+    assert_eq!(envelope["data"]["status"], Value::String("healthy".into()));
     assert_eq!(envelope["data"]["healthy"], Value::Bool(true));
+    assert_eq!(envelope["data"]["restart_required"], Value::Bool(true));
+    assert!(
+        envelope["data"]["next_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step == "Restart the targeted agent so the new integration is loaded.")
+    );
     assert_eq!(envelope["data"]["applied"].as_array().unwrap().len(), 1);
     assert_eq!(
         envelope["data"]["doctor"].as_array().unwrap()[0]["healthy"],

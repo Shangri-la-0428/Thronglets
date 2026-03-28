@@ -82,6 +82,9 @@ thronglets bootstrap --agent codex --json
 }
 ```
 
+`doctor` 现在会显式返回 `status` 和 `fix_command`。  
+`bootstrap` 顶层还会返回 `restart_required` 和 `next_steps`，这样 AI 不需要自己从注释里猜下一步。
+
 最小接入 JSON 也固定了。`prehook` 读这一类输入：
 
 ```json

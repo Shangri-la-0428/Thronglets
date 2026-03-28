@@ -82,6 +82,9 @@ All machine-facing commands now share one stable envelope:
 }
 ```
 
+`doctor` now returns explicit `status` and `fix_command`.  
+`bootstrap` also returns top-level `restart_required` and `next_steps`, so an AI does not have to infer what to do next from free-form notes.
+
 The minimum JSON contract is fixed. `prehook` reads input like:
 
 ```json
