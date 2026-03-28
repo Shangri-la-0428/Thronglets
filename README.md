@@ -4,193 +4,136 @@
 
 AI agent 的 P2P 共享记忆基底。
 
-今天的 AI agent 是孤岛——思考、行动、消亡，彼此隔绝。Thronglets 是它们脚下的土壤：痕迹留存，后来者循迹而行。
+## 你的 AI 看到了什么（真实输出）
 
-## 它做什么
+当你的 AI 准备编辑一个文件时，Thronglets 在它不知情的情况下注入了这些：
 
-Thronglets 是一个完全去中心化的基底，AI agent 在其中留下**执行痕迹**——结构化记录，包含使用了什么能力、结果如何、延迟多少、输入规模、以及 SimHash 语义上下文指纹。这些痕迹通过 P2P 网络传播，汇聚成任何 agent 都可以查询的**集体智慧**。
-
-没有服务器。没有账号。没有 API Key。安装即加入网络。
-
-**这不是 AI 社交网络。** 这是趋化（stigmergy）——通过共享环境间接协调，就像蚂蚁留下信息素。
-
-## 核心概念
-
-- **痕迹（Trace）**：原子级执行记录——capability、outcome、latency、input_size、context_hash、model_id、ed25519 签名
-- **SimHash**：128 位上下文指纹，无需完整 embedding 即可进行语义相似性搜索
-- **内容寻址**：痕迹以内容哈希为 ID，重复不可能存在
-- **Gossipsub**：痕迹在秒级传播到所有相关节点
-- **本地聚合**：每个节点独立计算集体智慧（分位数延迟、成功率、置信度）。不需要全局共识
-- **跨模型智慧**：痕迹携带 `model_id`——Claude 的经验让 GPT 受益，反之亦然
-- **时间衰减**：旧痕迹自动蒸发（默认 7 天 TTL），如同信息素消散
-
-## 安装
-
-```bash
-# 从源码编译
-git clone https://github.com/Shangri-la-0428/Thronglets.git
-cd Thronglets
-cargo install --path .
+```
+[thronglets] substrate context:
+claude-code/Edit: 100% success across 498 traces (p50: 0ms)
+  workflow: after Edit, agents usually → Edit (310x), Bash (91x), Read (54x)
+  git history for main.rs:
+    40 minutes ago   fix: cold start — workspace/git/decision layers work
+    42 minutes ago   feat: P2P sync bridge — hooks write locally, node publishes
+    2 hours ago      feat: strategy-level traces — infer intent from tool sequences
+    2 hours ago      feat: result feedback loop — track if edits are committed
+    2 hours ago      feat: decision history — co-edit patterns + preparation context
+  co-edited with mod.rs: lib.rs (4x), Cargo.toml (2x)
+  prep reads before editing: mod.rs (3x), lib.rs (2x)
+  edit retention: 87% (13/15 committed)
+  current pattern: analyze-modify
 ```
 
-## 快速开始
+AI 从来不调用 Thronglets。它不知道 Thronglets 存在。它只是做出了更好的决策。
+
+## 8 层上下文
+
+每次工具调用前，PreToolUse Hook 注入最多 8 层决策上下文：
+
+| # | 层 | AI 获得什么 |
+|---|---|------------|
+| 1 | 能力统计 | 来自 3000+ 集体痕迹的成功率和延迟分布 |
+| 2 | 工作流模式 | "Bash 之后，agent 通常做 Read (214x)，然后 Edit (132x)" |
+| 3 | 相似上下文 | 类似任务用过的其他工具及其成功率 |
+| 4 | 工作区记忆 | 最近文件、错误、上一次会话摘要 |
+| 5 | Git 上下文 | 正在操作的文件的最近 5 次提交 |
+| 6 | 共编模式 | 通常一起修改的文件 |
+| 7 | 准备阅读 | 之前编辑此文件前预先阅读的文件 |
+| 8 | 编辑保留率 | AI 编辑中有多少被提交 vs 被回滚 |
+
+第 1-3 层需要痕迹数据（集体智慧）。第 4-8 层从第一天就能用。
+
+## 安装（一条命令）
 
 ```bash
-# 生成身份并显示节点信息
-thronglets id
+cargo install thronglets
+thronglets setup
+```
 
-# 启动节点（连接种子节点）
+完成。两个 Hook 自动安装：
+- **PostToolUse** 将每次工具调用记录为签名痕迹 + 更新工作区状态
+- **PreToolUse** 在每次工具调用前注入 8 层上下文
+
+## 为什么这很重要
+
+没有 Thronglets，你的 AI 对每个文件都是盲的。它不知道：
+- 这个文件在过去一小时被编辑了 3 次（其中两次被回滚了）
+- 编辑 `main.rs` 通常还需要编辑 `lib.rs`
+- `cargo build` 在这个项目里有 30% 的失败率
+- 上一个会话在这个文件的重构中途中断了
+
+有了 Thronglets，AI 在决策瞬间拥有上下文。不是记忆（静态的），不是文档（过时的）——来自自身历史和集体网络的实时执行智慧。
+
+## 工作原理
+
+```
+AI 调用 Edit(main.rs)
+        │
+        ├── PreToolUse Hook 触发
+        │   └── thronglets prehook
+        │       ├── [1-3] 查询本地 SQLite 痕迹库
+        │       ├── [4] 加载 workspace.json（文件、错误、会话）
+        │       ├── [5] git log --oneline -5 -- main.rs
+        │       ├── [6-7] 分析动作序列，提取共编/准备模式
+        │       └── [8] 检查待反馈队列（已提交/已回滚）
+        │       → stdout: 上下文注入 AI 的提示词
+        │
+        ├── AI 执行编辑（带上下文）
+        │
+        └── PostToolUse Hook 触发
+            └── thronglets hook
+                ├── 记录签名痕迹到 SQLite
+                ├── 更新工作区状态
+                ├── 追踪动作序列
+                └── 加入待反馈队列
+```
+
+当 `thronglets run` 运行时，本地痕迹通过 gossipsub 同步到 P2P 网络（30 秒扫描间隔）。
+
+## P2P 网络
+
+痕迹通过 libp2p gossipsub 在节点间传播。每个节点独立聚合集体智慧——不需要全局共识。
+
+```bash
+# 加入网络
 thronglets run --bootstrap /ip4/47.93.32.88/tcp/4001
-
-# 记录一条痕迹
-thronglets record "urn:mcp:anthropic:claude:code" --outcome succeeded --latency 200 --input-size 5000 --context "重构异步 Rust 代码" --model "claude-opus-4-6"
-
-# 查询聚合统计
-thronglets query "urn:mcp:anthropic:claude:code"
 
 # 查看节点状态
 thronglets status
 ```
 
-## MCP 集成（AI Agent 接入）
+```
+Thronglets v0.3.0
+  Node ID:          5adeb778
+  Oasyce address:   oasyce10kdfxpxharvmr03egrdujc2sqm4m83udfqwnvx
+  Trace count:      3,100
+  Capabilities:     17
+```
 
-Thronglets 提供 [MCP](https://modelcontextprotocol.io/) 服务器，AI agent 可以直接读写痕迹。
+## MCP 工具（可选）
 
-### Claude Code
+让 agent 显式访问基底：
 
 ```bash
 claude mcp add thronglets -- thronglets mcp
 ```
 
-同时启用 P2P 网络：
-
-```bash
-claude mcp add thronglets -- thronglets mcp --port 0 --bootstrap /ip4/47.93.32.88/tcp/4001
-```
-
-### Claude Desktop
-
-在 `claude_desktop_config.json` 中添加：
-
-```json
-{
-  "mcpServers": {
-    "thronglets": {
-      "command": "thronglets",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-### MCP 工具
-
 | 工具 | 描述 |
 |------|------|
-| `trace_record` | 记录痕迹——记录你使用了某个能力及其结果 |
-| `substrate_query` | 查询基底，支持三种意图：`resolve`（查找能力）、`evaluate`（获取统计）、`explore`（发现可用能力） |
+| `trace_record` | 记录执行痕迹 |
+| `substrate_query` | 查询集体智慧（resolve/evaluate/explore） |
+| `trace_anchor` | 将痕迹锚定到 Oasyce 区块链 |
 
-#### trace_record
+## Oasyce 生态
 
-```json
-{
-  "capability": "urn:mcp:anthropic:claude:code",
-  "outcome": "succeeded",
-  "latency_ms": 200,
-  "input_size": 5000,
-  "context": "重构异步 Rust 代码",
-  "model": "claude-opus-4-6"
-}
-```
+Thronglets 是**体验层** — 决策时刻的上下文智慧。
 
-#### substrate_query
-
-```json
-{
-  "context": "翻译一份技术文档",
-  "intent": "resolve",
-  "limit": 10
-}
-```
-
-意图说明：
-- **resolve**："我需要做 X，有什么能力可用？"——按上下文相似度排序返回能力列表
-- **evaluate**："能力 Y 可靠吗？"——返回聚合统计 + 按模型分组的细分数据
-- **explore**："有什么可用的？"——返回所有已知能力及其统计信息
-
-所有响应均为结构化 JSON，包含统计分布和置信度评分。
-
-## 架构
-
-```
-AI Agent (Claude/GPT/...)
-       |
-       | MCP (JSON-RPC over stdio)
-       |
- Thronglets 节点
- +-- 本地存储 (SQLite)
- +-- 聚合器 (分位数统计, 置信度)
- +-- P2P 网络 (libp2p)
-       |
-       +-- gossipsub (痕迹传播)
-       +-- Kademlia DHT (能力发现)
-       +-- mDNS (本地节点发现)
-```
-
-每个节点做四件事：
-1. **存储** 收到的痕迹
-2. **传播** 新痕迹给邻居节点
-3. **聚合** 本地数据为集体智慧
-4. **服务** 通过 MCP/CLI 响应查询
-
-## 身份
-
-首次运行自动生成 ed25519 密钥对。这个密钥对：
-- 签名所有发出的痕迹（防篡改）
-- 派生 Cosmos 兼容的 `oasyce1...` bech32 地址（未来经济层桥接）
-- 在 P2P 网络中标识节点
-
-没有注册。没有账号。纯密码学身份。
-
-## 设计原则
-
-1. **AI 原生** — 每个接口都为机器消费设计：SimHash 上下文、结构化 JSON、统计分布
-2. **完全 P2P** — 没有服务器，没有守门人，没有单点故障
-3. **参与即贡献** — 使用网络就是喂养网络
-4. **事实而非观点** — 客观执行痕迹，不是主观评分
-5. **信息素模型** — 信号因重复而增强，因时间而消散
-6. **跨模型** — 模型无关的集体智慧
+- **[Psyche](https://psyche.oasyce.com)** — 倾向层：跨会话的持久行为漂移
+- **[Chain](https://chain.oasyce.com)** — 信任层：链上验证，经济结算
 
 ## 技术栈
 
-- **语言**: Rust
-- **网络**: libp2p (gossipsub, Kademlia, mDNS, noise, yamux)
-- **存储**: SQLite (rusqlite)
-- **密码学**: ed25519-dalek
-- **上下文**: SimHash (128 位局部敏感哈希)
-- **Agent 接口**: MCP (JSON-RPC 2.0 over stdio)
-
-## 种子节点
-
-```
-/ip4/47.93.32.88/tcp/4001
-```
-
-## 项目状态
-
-v0.2 — AI 原生重设计完成：
-- [x] 身份系统 (ed25519 + Cosmos bech32)
-- [x] SimHash 上下文指纹 (128 位语义相似性)
-- [x] 痕迹 v2 (capability, context_hash, input_size, model_id)
-- [x] 存储层：分位数聚合 + 相似性查询
-- [x] P2P 网络 (gossipsub + Kademlia + mDNS)
-- [x] MCP 服务器 (2 个工具: trace_record + substrate_query)
-- [x] CLI 命令行
-- [x] 种子节点已部署
-- [x] CI 流水线
-- [x] 31 项测试（单元 + 集成）
-
-完整愿景和设计理念见 [WHITEPAPER.md](WHITEPAPER.md)。
+Rust, libp2p (gossipsub + Kademlia + mDNS), SQLite, ed25519, SimHash (128-bit), MCP (JSON-RPC 2.0)
 
 ## 许可证
 
