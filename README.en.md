@@ -66,6 +66,22 @@ thronglets doctor --agent codex --json
 `apply-plan` writes the config.  
 `doctor` verifies health and exits non-zero when a targeted adapter is still broken.
 
+If you want the whole flow in one step, run:
+
+```bash
+thronglets bootstrap --agent codex --json
+```
+
+All machine-facing commands now share one stable envelope:
+
+```json
+{
+  "schema_version": "thronglets.bootstrap.v1",
+  "command": "bootstrap",
+  "data": {}
+}
+```
+
 The minimum JSON contract is fixed. `prehook` reads input like:
 
 ```json

@@ -1,6 +1,7 @@
 mod setup_support;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 use setup_support::{
     AdapterApplyResult, AdapterDetection, AdapterDoctor, AdapterKind, AdapterPlan, detect_adapter,
     doctor_adapter, install_claude, install_codex, install_openclaw, install_plan,
@@ -28,6 +29,24 @@ use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
 use thronglets::workspace::{self, WorkspaceState};
 use tracing::info;
+
+const BOOTSTRAP_SCHEMA_VERSION: &str = "thronglets.bootstrap.v1";
+
+#[derive(Serialize)]
+struct MachineEnvelope<T> {
+    schema_version: &'static str,
+    command: &'static str,
+    data: T,
+}
+
+#[derive(Serialize)]
+struct BootstrapReport {
+    detections: Vec<AdapterDetection>,
+    plans: Vec<AdapterPlan>,
+    applied: Vec<AdapterApplyResult>,
+    doctor: Vec<AdapterDoctor>,
+    healthy: bool,
+}
 
 #[derive(Parser)]
 #[command(
@@ -222,6 +241,17 @@ enum Commands {
         json: bool,
     },
 
+    /// Detect, plan, apply, and verify adapter setup in one command.
+    Bootstrap {
+        /// Restrict bootstrapping to one adapter family.
+        #[arg(long, value_enum, default_value_t = AdapterArg::All)]
+        agent: AdapterArg,
+
+        /// Emit machine-readable JSON.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
     /// Start HTTP API server for non-MCP agents (Python, LangChain, etc.)
     Serve {
         /// HTTP port to listen on
@@ -376,6 +406,14 @@ fn print_json<T: serde::Serialize>(value: &T) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
 }
 
+fn print_machine_json<T: serde::Serialize>(command: &'static str, value: &T) {
+    print_json(&MachineEnvelope {
+        schema_version: BOOTSTRAP_SCHEMA_VERSION,
+        command,
+        data: value,
+    });
+}
+
 fn render_detections(detections: &[AdapterDetection]) {
     println!("Detected adapters:");
     for detection in detections {
@@ -465,6 +503,27 @@ fn render_apply_results(results: &[AdapterApplyResult]) {
             println!("    note: {note}");
         }
     }
+}
+
+fn render_bootstrap_report(report: &BootstrapReport) {
+    render_detections(&report.detections);
+    println!();
+    render_install_plans(&report.plans);
+    println!();
+    if !report.applied.is_empty() {
+        render_apply_results(&report.applied);
+        println!();
+    }
+    render_doctor_reports(&report.doctor);
+    println!();
+    println!(
+        "Bootstrap status: {}",
+        if report.healthy {
+            "healthy"
+        } else {
+            "needs-fix"
+        }
+    );
 }
 
 fn apply_selected_adapters(
@@ -577,6 +636,36 @@ fn apply_selected_adapters(
     }
 
     Ok(results)
+}
+
+fn bootstrap_selected_adapters(
+    target: AdapterArg,
+    home_dir: &Path,
+    data_dir: &Path,
+    bin_path: &Path,
+) -> std::io::Result<BootstrapReport> {
+    let detections: Vec<_> = selected_adapters(target)
+        .into_iter()
+        .map(|adapter| detect_adapter(home_dir, data_dir, adapter))
+        .collect();
+    let plans: Vec<_> = selected_adapters(target)
+        .into_iter()
+        .map(|adapter| install_plan(home_dir, data_dir, bin_path, adapter))
+        .collect();
+    let applied = apply_selected_adapters(target, home_dir, data_dir, bin_path)?;
+    let doctor: Vec<_> = selected_adapters(target)
+        .into_iter()
+        .map(|adapter| doctor_adapter(home_dir, data_dir, adapter))
+        .collect();
+    let healthy = !doctor_should_fail(target, &doctor);
+
+    Ok(BootstrapReport {
+        detections,
+        plans,
+        applied,
+        doctor,
+        healthy,
+    })
 }
 
 fn doctor_should_fail(target: AdapterArg, reports: &[AdapterDoctor]) -> bool {
@@ -1277,7 +1366,7 @@ async fn main() {
                 .map(|adapter| detect_adapter(&home_dir, &dir, adapter))
                 .collect();
             if json {
-                print_json(&detections);
+                print_machine_json("detect", &detections);
             } else {
                 render_detections(&detections);
             }
@@ -1291,7 +1380,7 @@ async fn main() {
                 .map(|adapter| install_plan(&home_dir, &dir, &bin, adapter))
                 .collect();
             if json {
-                print_json(&plans);
+                print_machine_json("install-plan", &plans);
             } else {
                 render_install_plans(&plans);
             }
@@ -1303,7 +1392,7 @@ async fn main() {
             let results = apply_selected_adapters(agent, &home_dir, &dir, &bin)
                 .expect("failed to apply adapter plan");
             if json {
-                print_json(&results);
+                print_machine_json("apply-plan", &results);
             } else {
                 render_apply_results(&results);
             }
@@ -1316,11 +1405,26 @@ async fn main() {
                 .map(|adapter| doctor_adapter(&home_dir, &dir, adapter))
                 .collect();
             if json {
-                print_json(&reports);
+                print_machine_json("doctor", &reports);
             } else {
                 render_doctor_reports(&reports);
             }
             if doctor_should_fail(agent, &reports) {
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Bootstrap { agent, json } => {
+            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
+            let home_dir = home_dir();
+            let report = bootstrap_selected_adapters(agent, &home_dir, &dir, &bin)
+                .expect("failed to bootstrap adapter plan");
+            if json {
+                print_machine_json("bootstrap", &report);
+            } else {
+                render_bootstrap_report(&report);
+            }
+            if !report.healthy {
                 std::process::exit(1);
             }
         }

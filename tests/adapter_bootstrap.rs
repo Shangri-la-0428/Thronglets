@@ -2,6 +2,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output};
 
+const SCHEMA_VERSION: &str = "thronglets.bootstrap.v1";
+
 fn run_bin(args: &[&str], home: &Path, data_dir: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_thronglets"))
         .args(["--data-dir", data_dir.to_str().unwrap()])
@@ -9,6 +11,16 @@ fn run_bin(args: &[&str], home: &Path, data_dir: &Path) -> Output {
         .env("HOME", home)
         .output()
         .expect("run thronglets")
+}
+
+fn parse_envelope(output: &Output, command: &str) -> Vec<Value> {
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        envelope["schema_version"],
+        Value::String(SCHEMA_VERSION.into())
+    );
+    assert_eq!(envelope["command"], Value::String(command.into()));
+    envelope["data"].as_array().unwrap().clone()
 }
 
 #[test]
@@ -26,7 +38,7 @@ fn detect_json_reports_present_adapters_and_generic_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let detections: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let detections = parse_envelope(&output, "detect");
     let codex = detections
         .iter()
         .find(|entry| entry["agent"] == "codex")
@@ -63,7 +75,7 @@ fn install_plan_generic_json_includes_contract_examples() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let plans: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let plans = parse_envelope(&output, "install-plan");
     assert_eq!(plans.len(), 1);
     let plan = &plans[0];
     assert_eq!(plan["agent"], Value::String("generic".into()));
@@ -88,7 +100,7 @@ fn apply_plan_codex_then_doctor_reports_healthy() {
         "apply-plan failed: {}",
         String::from_utf8_lossy(&apply_output.stderr)
     );
-    let apply_results: Vec<Value> = serde_json::from_slice(&apply_output.stdout).unwrap();
+    let apply_results = parse_envelope(&apply_output, "apply-plan");
     assert_eq!(apply_results.len(), 1);
     assert_eq!(apply_results[0]["applied"], Value::Bool(true));
 
@@ -98,7 +110,7 @@ fn apply_plan_codex_then_doctor_reports_healthy() {
         "doctor failed: {}",
         String::from_utf8_lossy(&doctor_output.stderr)
     );
-    let reports: Vec<Value> = serde_json::from_slice(&doctor_output.stdout).unwrap();
+    let reports = parse_envelope(&doctor_output, "doctor");
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["healthy"], Value::Bool(true));
 }
@@ -117,7 +129,39 @@ fn doctor_fails_for_unconfigured_specific_adapter() {
         String::from_utf8_lossy(&output.stdout)
     );
 
-    let reports: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let reports = parse_envelope(&output, "doctor");
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["healthy"], Value::Bool(false));
+}
+
+#[test]
+fn bootstrap_codex_json_applies_and_reports_healthy() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let output = run_bin(
+        &["bootstrap", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        output.status.success(),
+        "bootstrap failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        envelope["schema_version"],
+        Value::String(SCHEMA_VERSION.into())
+    );
+    assert_eq!(envelope["command"], Value::String("bootstrap".into()));
+    assert_eq!(envelope["data"]["healthy"], Value::Bool(true));
+    assert_eq!(envelope["data"]["applied"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        envelope["data"]["doctor"].as_array().unwrap()[0]["healthy"],
+        Value::Bool(true)
+    );
 }

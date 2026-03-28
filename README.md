@@ -66,6 +66,22 @@ thronglets doctor --agent codex --json
 `apply-plan` 真正写配置。  
 `doctor` 验证是否接通，并在坏状态时返回非零退出码。
 
+如果只想一步完成，直接用：
+
+```bash
+thronglets bootstrap --agent codex --json
+```
+
+所有这些机器命令现在都走同一个稳定 envelope：
+
+```json
+{
+  "schema_version": "thronglets.bootstrap.v1",
+  "command": "bootstrap",
+  "data": {}
+}
+```
+
 最小接入 JSON 也固定了。`prehook` 读这一类输入：
 
 ```json

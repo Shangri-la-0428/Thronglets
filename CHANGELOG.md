@@ -4,7 +4,7 @@
 
 - **One-command known adapters** — `thronglets setup` now auto-configures Claude Code hooks, registers a `thronglets` MCP server for Codex, and installs the local OpenClaw plugin
 - **Universal agent contract** — `thronglets prehook` and `thronglets hook` now accept a generic Claude-compatible JSON payload with optional `agent_source` and `model`, so other agents can reuse the same sparse-signal contract
-- **Machine-facing bootstrap flow** — `thronglets detect`, `install-plan`, `apply-plan`, and `doctor` now expose detection, executable install plans, installation, and health verification as JSON-friendly commands for self-configuring agents
+- **Machine-facing bootstrap flow** — `thronglets detect`, `install-plan`, `apply-plan`, `doctor`, and single-shot `bootstrap` now expose detection, executable install plans, installation, and health verification behind a schema-versioned JSON envelope for self-configuring agents
 - **Offline signal evaluation** — `thronglets eval-signals` now replays recent sessions as a holdout set and reports edit silence rate plus repair / preparation / adjacency precision without touching prehook latency
 - **Machine-readable evaluation** — `thronglets eval-signals --json` now emits structured metrics, per-tool / per-target breakdowns, and a compact diagnosis for scripts and CI
 - **Focused evaluation views** — `thronglets eval-signals` now supports `--focus` and `--top-breakdowns` so operators can inspect one signal family without dumping the entire repo history
