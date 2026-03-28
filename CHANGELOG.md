@@ -10,6 +10,7 @@
 - **Threshold deltas** — non-default `eval-signals` trials now auto-compare against the default `2/2` baseline so operators can see coverage and precision tradeoffs in one run
 - **Release gate** — `thronglets release-check` now combines prehook profile cost checks with offline signal quality checks, using `SKIP` for low-data repos and `FAIL` when measured precision is bad enough to matter
 - **Structured release checks** — `thronglets release-check --json` now emits machine-readable profile/eval gate results so CI and other agents can consume the release decision directly
+- **Explicit release scopes** — `thronglets release-check` now supports `--eval-scope project|global|both`, so operators can gate repo-local quality and global collective quality separately or together
 
 ## v0.4.0 — 2026-03-28
 

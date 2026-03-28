@@ -107,6 +107,16 @@ cat prehook.log | thronglets release-check --global --require-profile-samples
 cat prehook.log | thronglets release-check --global --json
 ```
 
+现在 `release-check` 也支持显式作用域策略：
+
+```bash
+thronglets release-check --eval-scope project
+thronglets release-check --eval-scope global
+thronglets release-check --eval-scope both --json
+```
+
+其中 `both` 会同时返回项目侧和全局侧的 gate 结果，适合判断“这个仓库自己是否够稳”和“collective intelligence 是否已经可靠到可发”。
+
 如果你想看全局 trace 池，而不是当前项目，显式加：
 
 ```bash

@@ -46,6 +46,13 @@ enum EvalSignalFocusArg {
     Adjacency,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ReleaseEvalScopeArg {
+    Project,
+    Global,
+    Both,
+}
+
 impl From<EvalSignalFocusArg> for EvalFocus {
     fn from(value: EvalSignalFocusArg) -> Self {
         match value {
@@ -176,12 +183,16 @@ enum Commands {
         #[arg(long, default_value_t = 200)]
         max_sessions: usize,
 
-        /// Scope evaluation to this project root. Defaults to the current working directory.
+        /// Scope evaluation to this project root when using `project` or `both`.
         #[arg(long)]
         project_root: Option<PathBuf>,
 
-        /// Evaluate across the entire trace store instead of scoping to one project.
-        #[arg(long, default_value_t = false)]
+        /// Choose whether release-check evaluates the current project, the global trace pool, or both.
+        #[arg(long, value_enum, default_value_t = ReleaseEvalScopeArg::Project)]
+        eval_scope: ReleaseEvalScopeArg,
+
+        /// Legacy alias for `--eval-scope global`.
+        #[arg(long, default_value_t = false, hide = true)]
         global: bool,
 
         /// Fail if no prehook profile samples are supplied on stdin.
@@ -1128,6 +1139,7 @@ async fn main() {
             hours,
             max_sessions,
             project_root,
+            eval_scope,
             global,
             require_profile_samples,
             json,
@@ -1135,6 +1147,11 @@ async fn main() {
             let mut input = String::new();
             let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
             let profile_thresholds = ProfileCheckThresholds::default();
+            let effective_eval_scope = if global {
+                ReleaseEvalScopeArg::Global
+            } else {
+                eval_scope
+            };
 
             let profile_section = match summarize_prehook_profiles(&input) {
                 Some(summary) => {
@@ -1189,77 +1206,85 @@ async fn main() {
                 }
             };
 
-            let store = open_store(&dir);
-            let project_scope = if global {
-                None
-            } else {
-                Some(project_root.unwrap_or_else(|| {
-                    std::env::current_dir().expect("failed to determine current working directory")
-                }))
-            };
             let eval_thresholds = EvalCheckThresholds::default();
-            let eval_section = match evaluate_signal_quality(
-                &store,
-                hours,
-                max_sessions,
-                project_scope.as_deref(),
-                EvalConfig::default(),
-            )
-            .expect("failed to evaluate signal quality")
-            {
-                Some(summary) => {
-                    let check = summary.check(&eval_thresholds);
-                    let (status, rendered) = summary.render_check(&eval_thresholds);
+            let store = open_store(&dir);
+            let default_project_root = project_root.unwrap_or_else(|| {
+                std::env::current_dir().expect("failed to determine current working directory")
+            });
+            let eval_sections: Vec<_> = match effective_eval_scope {
+                ReleaseEvalScopeArg::Project => vec![(
+                    "project",
+                    run_release_eval_section(
+                        &store,
+                        hours,
+                        max_sessions,
+                        Some(default_project_root.as_path()),
+                        &eval_thresholds,
+                    ),
+                )],
+                ReleaseEvalScopeArg::Global => vec![(
+                    "global",
+                    run_release_eval_section(&store, hours, max_sessions, None, &eval_thresholds),
+                )],
+                ReleaseEvalScopeArg::Both => vec![
                     (
-                        status.label(),
-                        matches!(status, EvalCheckStatus::Fail),
-                        strip_check_header(&rendered),
-                        serde_json::json!({
-                            "status": status.label(),
-                            "thresholds": eval_thresholds,
-                            "summary": summary,
-                            "check": check,
-                        }),
-                    )
-                }
-                None => {
-                    let notes = vec![
-                        "not enough recent session history to evaluate signals yet".to_string()
-                    ];
+                        "project",
+                        run_release_eval_section(
+                            &store,
+                            hours,
+                            max_sessions,
+                            Some(default_project_root.as_path()),
+                            &eval_thresholds,
+                        ),
+                    ),
                     (
-                        "SKIP",
-                        false,
-                        "notes: not enough recent session history to evaluate signals yet"
-                            .to_string(),
-                        serde_json::json!({
-                            "status": "SKIP",
-                            "thresholds": eval_thresholds,
-                            "summary": serde_json::Value::Null,
-                            "check": {
-                                "status": "Skip",
-                                "violations": Vec::<String>::new(),
-                                "notes": notes,
-                            },
-                        }),
-                    )
-                }
+                        "global",
+                        run_release_eval_section(
+                            &store,
+                            hours,
+                            max_sessions,
+                            None,
+                            &eval_thresholds,
+                        ),
+                    ),
+                ],
             };
 
-            let overall_failed = profile_section.1 || eval_section.1;
+            let overall_failed =
+                profile_section.1 || eval_sections.iter().any(|(_, section)| section.1);
             if json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "status": if overall_failed { "FAIL" } else { "PASS" },
+                        "eval_scope": match effective_eval_scope {
+                            ReleaseEvalScopeArg::Project => "project",
+                            ReleaseEvalScopeArg::Global => "global",
+                            ReleaseEvalScopeArg::Both => "both",
+                        },
                         "profile": profile_section.3,
-                        "eval": eval_section.3,
+                        "eval": if eval_sections.len() == 1 {
+                            eval_sections[0].1.3.clone()
+                        } else {
+                            serde_json::json!({
+                                "project": eval_sections[0].1.3.clone(),
+                                "global": eval_sections[1].1.3.clone(),
+                            })
+                        },
                     }))
                     .expect("failed to serialize release check")
                 );
             } else {
                 println!("{}", if overall_failed { "FAIL" } else { "PASS" });
                 print_release_section("profile", profile_section.0, &profile_section.2);
-                print_release_section("eval", eval_section.0, &eval_section.2);
+                if eval_sections.len() == 1 {
+                    let (label, section) = &eval_sections[0];
+                    print_release_section(&format!("eval ({label})"), section.0, &section.2);
+                } else {
+                    for (label, section) in &eval_sections {
+                        print_release_section(&format!("eval ({label})"), section.0, &section.2);
+                    }
+                }
             }
             if overall_failed {
                 std::process::exit(1);
@@ -1647,6 +1672,59 @@ fn profile_file_guidance_gate(
 
 fn strip_check_header(rendered: &str) -> String {
     rendered.lines().skip(1).collect::<Vec<_>>().join("\n")
+}
+
+fn run_release_eval_section(
+    store: &TraceStore,
+    hours: u64,
+    max_sessions: usize,
+    project_scope: Option<&Path>,
+    thresholds: &EvalCheckThresholds,
+) -> (&'static str, bool, String, serde_json::Value) {
+    match evaluate_signal_quality(
+        store,
+        hours,
+        max_sessions,
+        project_scope,
+        EvalConfig::default(),
+    )
+    .expect("failed to evaluate signal quality")
+    {
+        Some(summary) => {
+            let check = summary.check(thresholds);
+            let (status, rendered) = summary.render_check(thresholds);
+            (
+                status.label(),
+                matches!(status, EvalCheckStatus::Fail),
+                strip_check_header(&rendered),
+                serde_json::json!({
+                    "status": status.label(),
+                    "thresholds": thresholds,
+                    "summary": summary,
+                    "check": check,
+                }),
+            )
+        }
+        None => {
+            let notes =
+                vec!["not enough recent session history to evaluate signals yet".to_string()];
+            (
+                "SKIP",
+                false,
+                "notes: not enough recent session history to evaluate signals yet".to_string(),
+                serde_json::json!({
+                    "status": "SKIP",
+                    "thresholds": thresholds,
+                    "summary": serde_json::Value::Null,
+                    "check": {
+                        "status": "Skip",
+                        "violations": Vec::<String>::new(),
+                        "notes": notes,
+                    },
+                }),
+            )
+        }
+    }
 }
 
 fn print_release_section(name: &str, status: &str, body: &str) {

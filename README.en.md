@@ -107,6 +107,16 @@ If you want CI or another agent to consume the gate result directly, add:
 cat prehook.log | thronglets release-check --global --json
 ```
 
+`release-check` now also supports explicit evaluation scope strategies:
+
+```bash
+thronglets release-check --eval-scope project
+thronglets release-check --eval-scope global
+thronglets release-check --eval-scope both --json
+```
+
+`both` returns separate project and global gate results, which is useful when you want to answer both “is this repo itself stable enough to ship?” and “is the collective signal pool reliable enough to trust?”.
+
 If you want the entire trace pool instead of the current project, add:
 
 ```bash

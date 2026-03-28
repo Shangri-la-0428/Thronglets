@@ -73,7 +73,7 @@ fn release_check_passes_with_good_profile_and_skips_thin_eval() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.starts_with("PASS"));
     assert!(stdout.contains("profile: PASS"));
-    assert!(stdout.contains("eval: SKIP"));
+    assert!(stdout.contains("eval (project): SKIP"));
     assert!(stdout.contains("not enough recent session history"));
 }
 
@@ -124,7 +124,7 @@ fn release_check_fails_when_eval_finds_noisy_adjacency() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.starts_with("FAIL"));
     assert!(stdout.contains("profile: PASS"));
-    assert!(stdout.contains("eval: FAIL"));
+    assert!(stdout.contains("eval (global): FAIL"));
     assert!(stdout.contains("violations:"));
     assert!(stdout.contains("adjacency precision"));
     assert!(stdout.contains("10.0%"));
@@ -167,6 +167,7 @@ fn release_check_can_emit_json() {
     );
     let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse release-check json");
     assert_eq!(parsed["status"], "PASS");
+    assert_eq!(parsed["eval_scope"], "project");
     assert_eq!(parsed["profile"]["status"], "PASS");
     assert_eq!(parsed["eval"]["status"], "SKIP");
 }
@@ -217,6 +218,7 @@ fn release_check_json_reports_eval_failures() {
     let parsed: Value =
         serde_json::from_slice(&output.stdout).expect("parse release-check failure json");
     assert_eq!(parsed["status"], "FAIL");
+    assert_eq!(parsed["eval_scope"], "global");
     assert_eq!(parsed["profile"]["status"], "PASS");
     assert_eq!(parsed["eval"]["status"], "FAIL");
     assert!(
@@ -226,4 +228,80 @@ fn release_check_json_reports_eval_failures() {
             .len()
             >= 1
     );
+}
+
+#[test]
+fn release_check_can_evaluate_both_scopes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = TraceStore::open(&dir.path().join("traces.db")).unwrap();
+    let identity = NodeIdentity::generate();
+
+    let project_root = dir.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let other_root = dir.path().join("other");
+    std::fs::create_dir_all(&other_root).unwrap();
+
+    let mut timestamp = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+    for session in ["p1", "p2"] {
+        let main = project_root.join("main.rs");
+        let trace = make_trace(
+            &identity,
+            "claude-code/Edit",
+            Outcome::Succeeded,
+            &format!("edit file: {}", main.display()),
+            session,
+            timestamp,
+        );
+        store.insert(&trace).unwrap();
+        timestamp += 61_000;
+    }
+
+    for session in ["g1", "g2", "g3", "g4", "g5", "g6", "g7"] {
+        let companion = if matches!(session, "g1" | "g2") {
+            other_root.join("helper.rs")
+        } else {
+            other_root.join("other.rs")
+        };
+        let main = other_root.join("main.rs");
+        let events = [
+            format!("edit file: {}", main.display()),
+            format!("edit file: {}", companion.display()),
+        ];
+        for context in events {
+            let trace = make_trace(
+                &identity,
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                &context,
+                session,
+                timestamp,
+            );
+            store.insert(&trace).unwrap();
+            timestamp += 1_000;
+        }
+        timestamp += 60_000;
+    }
+
+    let output = run_release_check(
+        dir.path().to_str().unwrap(),
+        &[
+            "--eval-scope",
+            "both",
+            "--project-root",
+            project_root.to_str().unwrap(),
+            "--json",
+        ],
+        &sparse_profile_input(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "release-check both unexpectedly passed"
+    );
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).expect("parse release-check both json");
+    assert_eq!(parsed["status"], "FAIL");
+    assert_eq!(parsed["eval_scope"], "both");
+    assert_eq!(parsed["eval"]["project"]["status"], "SKIP");
+    assert_eq!(parsed["eval"]["global"]["status"], "FAIL");
 }
