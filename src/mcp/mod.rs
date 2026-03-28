@@ -20,8 +20,9 @@ use crate::context::{simhash, similarity};
 use crate::identity::NodeIdentity;
 use crate::network::NetworkCommand;
 use crate::posts::{
-    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
-    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
+    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalScopeFilter, SignalTraceConfig,
+    create_signal_trace, filter_signal_feed_results, is_signal_capability,
+    summarize_recent_signal_feed, summarize_signal_traces,
 };
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
@@ -161,6 +162,16 @@ fn tool_definitions() -> Value {
                         "hours": {
                             "type": "integer",
                             "description": "Only include signals seen in roughly the last N hours (default: 24)"
+                        },
+                        "kind": {
+                            "type": "string",
+                            "enum": ["recommend", "avoid", "watch", "info"],
+                            "description": "Optional signal kind filter"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "local", "collective", "mixed"],
+                            "description": "Filter feed results by evidence scope (default: all)"
                         },
                         "limit": {
                             "type": "integer",
@@ -828,13 +839,41 @@ fn handle_signals(
 
 fn handle_signal_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
     let hours = args.get("hours").and_then(|v| v.as_u64()).unwrap_or(24) as u32;
+    let kind = match args.get("kind").and_then(|v| v.as_str()) {
+        Some(value) => match SignalPostKind::parse(value) {
+            Some(kind) => Some(kind),
+            None => {
+                return JsonRpcResponse::error(id, -32602, format!("Invalid signal kind: {value}"));
+            }
+        },
+        None => None,
+    };
+    let scope = match args.get("scope").and_then(|v| v.as_str()) {
+        Some(value) => match SignalScopeFilter::parse(value) {
+            Some(scope) => scope,
+            None => {
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    format!("Invalid signal scope: {value}"),
+                );
+            }
+        },
+        None => SignalScopeFilter::All,
+    };
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-    let traces = match ctx.store.query_recent_signal_traces(hours, limit.max(1)) {
+    let traces = match ctx
+        .store
+        .query_recent_signal_traces(hours, kind, limit.max(1))
+    {
         Ok(traces) => traces,
         Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
     };
     let response_json = json!({
-        "signals": summarize_recent_signal_feed(&traces, ctx.identity.public_key_bytes(), limit),
+        "signals": filter_signal_feed_results(
+            summarize_recent_signal_feed(&traces, ctx.identity.public_key_bytes(), limit),
+            scope,
+        ),
     });
     JsonRpcResponse::success(
         id,
@@ -1296,6 +1335,61 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert_eq!(signals[0]["kind"], "recommend");
         assert_eq!(signals[0]["message"], "run release-check before push");
+        assert_eq!(signals[0]["evidence_scope"], "local");
+    }
+
+    #[tokio::test]
+    async fn signal_feed_filters_by_kind_and_scope() {
+        let ctx = make_ctx();
+
+        for (kind, message) in [
+            ("recommend", "run release-check before push"),
+            ("avoid", "skip the generated lockfile"),
+        ] {
+            let post_req = JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(10)),
+                method: "tools/call".into(),
+                params: json!({
+                    "name": "signal_post",
+                    "arguments": {
+                        "kind": kind,
+                        "context": "repair release flow",
+                        "message": message,
+                        "model": "codex"
+                    }
+                }),
+            };
+            let resp = handle_request(&ctx, post_req).await.unwrap();
+            assert!(resp.error.is_none(), "signal_post should succeed");
+        }
+
+        let feed_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(11)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "signal_feed",
+                "arguments": {
+                    "hours": 24,
+                    "kind": "recommend",
+                    "scope": "local",
+                    "limit": 5
+                }
+            }),
+        };
+        let resp = handle_request(&ctx, feed_req).await.unwrap();
+        assert!(resp.error.is_none(), "signal_feed should succeed");
+
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("signal feed response should be valid JSON");
+        let signals = parsed["signals"].as_array().unwrap();
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["kind"], "recommend");
         assert_eq!(signals[0]["evidence_scope"], "local");
     }
 

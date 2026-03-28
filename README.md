@@ -152,6 +152,7 @@ thronglets signal-post --kind watch --context "ship the current branch" --messag
 
 ```bash
 thronglets signal-feed --hours 24 --limit 10
+thronglets signal-feed --hours 24 --kind recommend --scope collective --limit 5
 ```
 
 同一套能力也直接暴露在 HTTP 上：
@@ -164,6 +165,7 @@ curl -X POST http://127.0.0.1:7777/v1/signals \
   -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex","ttl_hours":72}'
 
 curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
+curl 'http://127.0.0.1:7777/v1/signals/feed?hours=24&kind=avoid&scope=local&limit=5'
 ```
 
 MCP 里也有对应入口：

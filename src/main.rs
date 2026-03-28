@@ -23,8 +23,9 @@ use thronglets::identity::NodeIdentity;
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
 use thronglets::posts::{
-    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalTraceConfig, create_signal_trace,
-    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
+    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalScopeFilter, SignalTraceConfig,
+    create_signal_trace, filter_signal_feed_results, is_signal_capability,
+    summarize_recent_signal_feed, summarize_signal_traces,
 };
 use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
@@ -249,6 +250,25 @@ impl From<SignalKindArg> for SignalPostKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SignalScopeArg {
+    All,
+    Local,
+    Collective,
+    Mixed,
+}
+
+impl From<SignalScopeArg> for SignalScopeFilter {
+    fn from(value: SignalScopeArg) -> Self {
+        match value {
+            SignalScopeArg::All => SignalScopeFilter::All,
+            SignalScopeArg::Local => SignalScopeFilter::Local,
+            SignalScopeArg::Collective => SignalScopeFilter::Collective,
+            SignalScopeArg::Mixed => SignalScopeFilter::Mixed,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Start the Thronglets node
@@ -344,6 +364,14 @@ enum Commands {
         /// Only include signals seen in roughly the last N hours.
         #[arg(long, default_value_t = 24)]
         hours: u32,
+
+        /// Restrict the feed to one signal kind.
+        #[arg(long, value_enum)]
+        kind: Option<SignalKindArg>,
+
+        /// Filter by evidence scope.
+        #[arg(long, value_enum, default_value_t = SignalScopeArg::All)]
+        scope: SignalScopeArg,
 
         /// Maximum results to return.
         #[arg(long, default_value_t = 10)]
@@ -1478,12 +1506,20 @@ async fn main() {
             render_signal_query_results(&results);
         }
 
-        Commands::SignalFeed { hours, limit } => {
+        Commands::SignalFeed {
+            hours,
+            kind,
+            scope,
+            limit,
+        } => {
             let store = open_store(&dir);
             let traces = store
-                .query_recent_signal_traces(hours, limit)
+                .query_recent_signal_traces(hours, kind.map(Into::into), limit)
                 .expect("failed to query recent signal traces");
-            let results = summarize_recent_signal_feed(&traces, identity.public_key_bytes(), limit);
+            let results = filter_signal_feed_results(
+                summarize_recent_signal_feed(&traces, identity.public_key_bytes(), limit),
+                scope.into(),
+            );
             render_signal_feed_results(&results);
         }
 

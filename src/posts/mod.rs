@@ -24,6 +24,36 @@ pub enum SignalPostKind {
     Info,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalScopeFilter {
+    All,
+    Local,
+    Collective,
+    Mixed,
+}
+
+impl SignalScopeFilter {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "all" => Some(Self::All),
+            "local" => Some(Self::Local),
+            "collective" => Some(Self::Collective),
+            "mixed" => Some(Self::Mixed),
+            _ => None,
+        }
+    }
+
+    pub fn matches(self, evidence_scope: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Local => evidence_scope == "local",
+            Self::Collective => evidence_scope == "collective",
+            Self::Mixed => evidence_scope == "mixed",
+        }
+    }
+}
+
 impl SignalPostKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -326,6 +356,16 @@ pub fn summarize_recent_signal_feed(
     results
 }
 
+pub fn filter_signal_feed_results(
+    results: Vec<SignalFeedResult>,
+    scope: SignalScopeFilter,
+) -> Vec<SignalFeedResult> {
+    results
+        .into_iter()
+        .filter(|result| scope.matches(&result.evidence_scope))
+        .collect()
+}
+
 fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
     let kind = SignalPostKind::from_capability(&trace.capability)?;
     let payload: SignalTracePayload = serde_json::from_str(trace.context_text.as_deref()?).ok()?;
@@ -561,5 +601,39 @@ mod tests {
         assert_eq!(results[0].message, "run release-check before push");
         assert_eq!(results[0].collective_source_count, 2);
         assert_eq!(results[0].evidence_scope, "collective");
+    }
+
+    #[test]
+    fn filter_signal_feed_results_by_scope() {
+        let results = vec![
+            SignalFeedResult {
+                kind: "recommend".into(),
+                message: "local".into(),
+                total_posts: 1,
+                source_count: 1,
+                local_source_count: 1,
+                collective_source_count: 0,
+                evidence_scope: "local".into(),
+                latest_timestamp: 1,
+                expires_at: 2,
+                contexts: vec!["ctx".into()],
+            },
+            SignalFeedResult {
+                kind: "recommend".into(),
+                message: "collective".into(),
+                total_posts: 2,
+                source_count: 2,
+                local_source_count: 0,
+                collective_source_count: 2,
+                evidence_scope: "collective".into(),
+                latest_timestamp: 2,
+                expires_at: 3,
+                contexts: vec!["ctx".into()],
+            },
+        ];
+
+        let filtered = filter_signal_feed_results(results, SignalScopeFilter::Collective);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].message, "collective");
     }
 }

@@ -488,22 +488,38 @@ impl TraceStore {
     pub fn query_recent_signal_traces(
         &self,
         hours: u32,
+        kind: Option<SignalPostKind>,
         limit: usize,
     ) -> rusqlite::Result<Vec<Trace>> {
         let conn = self.conn.lock().unwrap();
-        let like = format!("{SIGNAL_CAPABILITY_PREFIX}%");
         let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
         let query_limit = (limit.max(1) * 20) as i64;
-        let mut stmt = conn.prepare(
-            "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
-                    context_text, session_id, model_id, timestamp, node_pubkey, signature
-             FROM traces
-             WHERE capability LIKE ?1
-               AND timestamp >= ?2
-             ORDER BY timestamp DESC
-             LIMIT ?3",
-        )?;
-        let mut traces = Self::collect_traces(&mut stmt, params![like, cutoff_ms, query_limit])?;
+
+        let mut traces = if let Some(kind) = kind {
+            let capability = kind.capability();
+            let mut stmt = conn.prepare(
+                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                        context_text, session_id, model_id, timestamp, node_pubkey, signature
+                 FROM traces
+                 WHERE capability = ?1
+                   AND timestamp >= ?2
+                 ORDER BY timestamp DESC
+                 LIMIT ?3",
+            )?;
+            Self::collect_traces(&mut stmt, params![capability, cutoff_ms, query_limit])?
+        } else {
+            let like = format!("{SIGNAL_CAPABILITY_PREFIX}%");
+            let mut stmt = conn.prepare(
+                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                        context_text, session_id, model_id, timestamp, node_pubkey, signature
+                 FROM traces
+                 WHERE capability LIKE ?1
+                   AND timestamp >= ?2
+                 ORDER BY timestamp DESC
+                 LIMIT ?3",
+            )?;
+            Self::collect_traces(&mut stmt, params![like, cutoff_ms, query_limit])?
+        };
         traces.truncate(limit);
         Ok(traces)
     }
@@ -1397,7 +1413,7 @@ mod tests {
         old.timestamp = old.timestamp.saturating_sub(48 * 3_600_000);
         store.insert(&old).unwrap();
 
-        let results = store.query_recent_signal_traces(24, 10).unwrap();
+        let results = store.query_recent_signal_traces(24, None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id.as_deref(), Some("recent"));
     }
