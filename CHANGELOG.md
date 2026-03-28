@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **One-command known adapters** — `thronglets setup` now auto-configures Claude Code hooks, registers a `thronglets` MCP server for Codex, and installs the local OpenClaw plugin
+- **One-command known adapters** — `thronglets setup` now auto-configures Claude Code hooks, registers a `thronglets` MCP server for Codex, installs the local OpenClaw plugin, and reports restart/next-step guidance from the same bootstrap health pass
 - **Universal agent contract** — `thronglets prehook` and `thronglets hook` now accept a generic Claude-compatible JSON payload with optional `agent_source` and `model`, so other agents can reuse the same sparse-signal contract
 - **Machine-facing bootstrap flow** — `thronglets detect`, `install-plan`, `apply-plan`, `doctor`, and single-shot `bootstrap` now expose detection, executable install plans, installation, and health verification behind a schema-versioned JSON envelope, with top-level summaries plus explicit `status`, `healthy`, `fix_command`, `restart_required`, and `next_steps` for self-configuring agents
 - **Offline signal evaluation** — `thronglets eval-signals` now replays recent sessions as a holdout set and reports edit silence rate plus repair / preparation / adjacency precision without touching prehook latency

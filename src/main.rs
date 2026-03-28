@@ -468,6 +468,18 @@ fn render_detections(detections: &[AdapterDetection]) {
     }
 }
 
+fn render_detect_report(summary: &DetectReport) {
+    println!("Detect status: {}", summary.status);
+    if !summary.detected_agents.is_empty() {
+        println!("Detected: {}", summary.detected_agents.join(", "));
+    }
+    if !summary.recommended_agents.is_empty() {
+        println!("Recommended: {}", summary.recommended_agents.join(", "));
+    }
+    println!();
+    render_detections(&summary.detections);
+}
+
 fn render_install_plans(plans: &[AdapterPlan]) {
     println!("Install plan:");
     for plan in plans {
@@ -486,6 +498,18 @@ fn render_install_plans(plans: &[AdapterPlan]) {
         }
         println!("    doctor: {}", plan.doctor_command);
     }
+}
+
+fn render_install_plan_report(summary: &InstallPlanReport) {
+    println!("Install plan status: {}", summary.status);
+    if summary.restart_required {
+        println!("Restart required: yes");
+    }
+    for step in &summary.next_steps {
+        println!("Next: {step}");
+    }
+    println!();
+    render_install_plans(&summary.plans);
 }
 
 fn render_doctor_reports(reports: &[AdapterDoctor]) {
@@ -507,6 +531,15 @@ fn render_doctor_reports(reports: &[AdapterDoctor]) {
             println!("    note: {note}");
         }
     }
+}
+
+fn render_doctor_report(summary: &DoctorReport) {
+    println!("Doctor status: {}", summary.status);
+    for step in &summary.next_steps {
+        println!("Next: {step}");
+    }
+    println!();
+    render_doctor_reports(&summary.reports);
 }
 
 fn render_apply_results(results: &[AdapterApplyResult]) {
@@ -532,7 +565,27 @@ fn render_apply_results(results: &[AdapterApplyResult]) {
     }
 }
 
+fn render_apply_plan_report(summary: &ApplyPlanReport) {
+    println!("Apply status: {}", summary.status);
+    if summary.restart_required {
+        println!("Restart required: yes");
+    }
+    for step in &summary.next_steps {
+        println!("Next: {step}");
+    }
+    println!();
+    render_apply_results(&summary.results);
+}
+
 fn render_bootstrap_report(report: &BootstrapReport) {
+    println!("Bootstrap status: {}", report.status);
+    if report.restart_required {
+        println!("Restart required: yes");
+    }
+    for step in &report.next_steps {
+        println!("Next: {step}");
+    }
+    println!();
     render_detections(&report.detections);
     println!();
     render_install_plans(&report.plans);
@@ -542,14 +595,26 @@ fn render_bootstrap_report(report: &BootstrapReport) {
         println!();
     }
     render_doctor_reports(&report.doctor);
-    println!();
-    println!("Bootstrap status: {}", report.status);
+}
+
+fn render_setup_report(report: &BootstrapReport) {
+    println!("Thronglets setup: {}", report.status);
+    let installed: Vec<_> = report
+        .applied
+        .iter()
+        .filter(|result| result.applied)
+        .map(|result| result.agent.as_str())
+        .collect();
+    if !installed.is_empty() {
+        println!("Installed: {}", installed.join(", "));
+    }
     if report.restart_required {
         println!("Restart required: yes");
     }
     for step in &report.next_steps {
         println!("Next: {step}");
     }
+    println!("Other agents can reuse `thronglets prehook` and `thronglets hook`.");
 }
 
 fn summarize_doctor_reports(target: AdapterArg, reports: Vec<AdapterDoctor>) -> DoctorReport {
@@ -1453,16 +1518,12 @@ async fn main() {
         Commands::Setup => {
             let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
             let home_dir = home_dir();
-            let results = apply_selected_adapters(AdapterArg::All, &home_dir, &dir, &bin)
-                .expect("failed to apply adapter plan");
-
-            println!("Thronglets setup complete.");
-            println!();
-            render_apply_results(&results);
-            println!();
-            println!(
-                "Known adapters are now installed. Other agents can call `thronglets hook` and `thronglets prehook` with the same JSON contract."
-            );
+            let report = bootstrap_selected_adapters(AdapterArg::All, &home_dir, &dir, &bin)
+                .expect("failed to bootstrap adapter plan");
+            render_setup_report(&report);
+            if !report.healthy {
+                std::process::exit(1);
+            }
         }
 
         Commands::Detect { agent, json } => {
@@ -1475,7 +1536,7 @@ async fn main() {
             if json {
                 print_machine_json("detect", &summary);
             } else {
-                render_detections(&summary.detections);
+                render_detect_report(&summary);
             }
         }
 
@@ -1490,7 +1551,7 @@ async fn main() {
             if json {
                 print_machine_json("install-plan", &summary);
             } else {
-                render_install_plans(&summary.plans);
+                render_install_plan_report(&summary);
             }
         }
 
@@ -1503,7 +1564,7 @@ async fn main() {
             if json {
                 print_machine_json("apply-plan", &summary);
             } else {
-                render_apply_results(&summary.results);
+                render_apply_plan_report(&summary);
             }
         }
 
@@ -1517,7 +1578,7 @@ async fn main() {
             if json {
                 print_machine_json("doctor", &summary);
             } else {
-                render_doctor_reports(&summary.reports);
+                render_doctor_report(&summary);
             }
             if !summary.healthy {
                 std::process::exit(1);

@@ -46,6 +46,8 @@ thronglets setup
 - **Codex**：自动注册 `thronglets` MCP server 到 `~/.codex/config.toml`，并写入一段受管 `AGENTS` 记忆
 - **OpenClaw**：自动安装本地 path plugin，并写入 `~/.openclaw/openclaw.json`
 
+`setup` 现在也会顺手做一次 bootstrap 健康检查，并直接给出 `restart required / next steps`。
+
 底层接入面只有一个统一 contract：
 - `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号
 - `thronglets hook`：任意 agent 在工具执行后喂入 JSON，记录 trace

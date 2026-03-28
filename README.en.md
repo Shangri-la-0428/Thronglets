@@ -46,6 +46,8 @@ That's it. `thronglets setup` auto-installs known local adapters:
 - **Codex**: registers a `thronglets` MCP server in `~/.codex/config.toml` and installs a managed `AGENTS` memory block
 - **OpenClaw**: installs a local path plugin and updates `~/.openclaw/openclaw.json`
 
+`setup` now also runs a bootstrap health pass and returns `restart required / next steps` directly.
+
 Underneath, there is only one agent contract:
 - `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back
 - `thronglets hook`: any agent can send tool-result JSON and record a trace
