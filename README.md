@@ -221,7 +221,7 @@ thronglets signal-post --kind watch --context "ship the current branch" --messag
 
 查询显式信号时，Thronglets 现在还会告诉你这句话只是本地重复、已经被集体 corroboration 支持，还是两者混合；当多种模型独立说出同一句话时，还会显示一个轻量的 `models=N` 提示，机器接口里则直接给出 `corroboration_tier=single_source|repeated_source|multi_model`，并在接近证据下优先排 `multi_model`；ambient feed 还会让更新的群体信号自然压过更旧的共识，并默认聚焦最值得先看的 `primary/secondary` 信号。
 
-现在这条线已经开始向 `Density Substrate` 迈一步：显式 signal 的机器结果里会直接带 `density_score`、`density_tier=sparse|candidate|promoted|dominant` 和 `promotion_state=none|local|collective`，让“局部正在形成共识”不只是排序靠前，而是变成一个可读、可比较、可被 ambient feed 优先呈现的状态。与此同时，`signal-query` / `signal-feed` 自己也会为已经 promoted 的结果留下短 TTL 的 reinforcement trace，让“被读取并复用”开始真的改变 substrate，而不只是改变这一次的展示顺序。
+现在这条线已经开始向 `Density Substrate` 迈一步：显式 signal 的机器结果里会直接带 `density_score`、`density_tier=sparse|candidate|promoted|dominant` 和 `promotion_state=none|local|collective`，让“局部正在形成共识”不只是排序靠前，而是变成一个可读、可比较、可被 ambient feed 优先呈现的状态。与此同时，`signal-query` / `signal-feed` 自己也会为已经 promoted 的结果留下短 TTL 的 reinforcement trace，让“被读取并复用”开始真的改变 substrate，而不只是改变这一次的展示顺序。现在如果某个上下文里已经有 promoted 的 `avoid`，机器结果还会给竞争性的 `recommend/watch/info` 标出 `inhibition_state`，并在排序上真正把这些“被 stop signal 压制”的建议往后放。
 
 如果你想看的不是精确 query，而是 ambient timeline，可以直接用：
 

@@ -987,8 +987,13 @@ fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult])
         } else {
             String::new()
         };
+        let inhibition_suffix = if result.inhibition_state != "none" {
+            format!(" inhibited={}", result.inhibition_state)
+        } else {
+            String::new()
+        };
         println!(
-            "    similarity={:.2} posts={} sources={}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
+            "    similarity={:.2} posts={} sources={}{}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
             result.context_similarity,
             result.total_posts,
             result.source_count,
@@ -996,6 +1001,7 @@ fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult])
             density_suffix,
             promotion_suffix,
             reinforcement_suffix,
+            inhibition_suffix,
             result.local_source_count,
             result.collective_source_count,
             result.evidence_scope,
@@ -1060,8 +1066,13 @@ fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
         } else {
             String::new()
         };
+        let inhibition_suffix = if result.inhibition_state != "none" {
+            format!(" inhibited={}", result.inhibition_state)
+        } else {
+            String::new()
+        };
         println!(
-            "    posts={} sources={}{}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
+            "    posts={} sources={}{}{}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
             result.total_posts,
             result.source_count,
             model_suffix,
@@ -1069,6 +1080,7 @@ fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
             density_suffix,
             promotion_suffix,
             reinforcement_suffix,
+            inhibition_suffix,
             result.local_source_count,
             result.collective_source_count,
             result.evidence_scope,

@@ -117,6 +117,8 @@ pub struct SignalQueryResult {
     pub density_score: u8,
     pub density_tier: String,
     pub promotion_state: String,
+    pub inhibition_penalty: u8,
+    pub inhibition_state: String,
     pub local_source_count: u32,
     pub collective_source_count: u32,
     pub evidence_scope: String,
@@ -137,6 +139,8 @@ pub struct SignalFeedResult {
     pub density_score: u8,
     pub density_tier: String,
     pub promotion_state: String,
+    pub inhibition_penalty: u8,
+    pub inhibition_state: String,
     pub focus_score: u8,
     pub focus_tier: String,
     pub local_source_count: u32,
@@ -368,6 +372,8 @@ pub fn summarize_signal_traces(
                 density_score,
                 density_tier: signal_density_tier(density_score).to_string(),
                 promotion_state: promotion_state.to_string(),
+                inhibition_penalty: 0,
+                inhibition_state: "none".into(),
                 local_source_count,
                 collective_source_count,
                 evidence_scope,
@@ -378,11 +384,14 @@ pub fn summarize_signal_traces(
         })
         .collect();
 
+    apply_query_avoid_inhibition(&mut results);
+
     results.sort_by(|a, b| {
         b.context_similarity
             .partial_cmp(&a.context_similarity)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| b.density_score.cmp(&a.density_score))
+            .then_with(|| a.inhibition_penalty.cmp(&b.inhibition_penalty))
             .then_with(|| b.collective_source_count.cmp(&a.collective_source_count))
             .then_with(|| {
                 signal_corroboration_rank(b.source_count, b.model_count)
@@ -489,6 +498,8 @@ pub fn summarize_recent_signal_feed(
                 density_score,
                 density_tier: signal_density_tier(density_score).to_string(),
                 promotion_state: promotion_state.to_string(),
+                inhibition_penalty: 0,
+                inhibition_state: "none".into(),
                 focus_score,
                 focus_tier: signal_focus_tier(focus_score).to_string(),
                 local_source_count,
@@ -501,10 +512,13 @@ pub fn summarize_recent_signal_feed(
         })
         .collect();
 
+    apply_feed_avoid_inhibition(&mut results);
+
     results.sort_by(|a, b| {
         b.focus_score
             .cmp(&a.focus_score)
             .then_with(|| b.density_score.cmp(&a.density_score))
+            .then_with(|| a.inhibition_penalty.cmp(&b.inhibition_penalty))
             .then_with(|| b.collective_source_count.cmp(&a.collective_source_count))
             .then_with(|| b.source_count.cmp(&a.source_count))
             .then_with(|| b.model_count.cmp(&a.model_count))
@@ -752,6 +766,86 @@ fn signal_focus_tier(focus_score: u8) -> &'static str {
     }
 }
 
+fn apply_query_avoid_inhibition(results: &mut [SignalQueryResult]) {
+    let inhibition_penalty = results
+        .iter()
+        .filter(|result| result.kind == SignalPostKind::Avoid.as_str())
+        .filter(|result| result.promotion_state != "none")
+        .map(|result| promotion_inhibition_penalty(&result.promotion_state))
+        .max()
+        .unwrap_or(0);
+    if inhibition_penalty == 0 {
+        return;
+    }
+
+    for result in results {
+        if result.kind == SignalPostKind::Avoid.as_str() {
+            continue;
+        }
+        if result.context_similarity < 0.85 {
+            continue;
+        }
+        result.inhibition_penalty = inhibition_penalty;
+        result.inhibition_state = inhibition_state_label(inhibition_penalty).into();
+    }
+}
+
+fn apply_feed_avoid_inhibition(results: &mut [SignalFeedResult]) {
+    let avoid_results: Vec<_> = results
+        .iter()
+        .filter(|result| result.kind == SignalPostKind::Avoid.as_str())
+        .filter(|result| result.promotion_state != "none")
+        .map(|result| {
+            (
+                result.contexts.clone(),
+                promotion_inhibition_penalty(&result.promotion_state),
+            )
+        })
+        .collect();
+
+    if avoid_results.is_empty() {
+        return;
+    }
+
+    for result in results {
+        if result.kind == SignalPostKind::Avoid.as_str() {
+            continue;
+        }
+        let inhibition_penalty = avoid_results
+            .iter()
+            .filter(|(contexts, _)| contexts_overlap(contexts, &result.contexts))
+            .map(|(_, penalty)| *penalty)
+            .max()
+            .unwrap_or(0);
+        if inhibition_penalty == 0 {
+            continue;
+        }
+        result.inhibition_penalty = inhibition_penalty;
+        result.inhibition_state = inhibition_state_label(inhibition_penalty).into();
+    }
+}
+
+fn promotion_inhibition_penalty(promotion_state: &str) -> u8 {
+    match promotion_state {
+        "collective" => 2,
+        "local" => 1,
+        _ => 0,
+    }
+}
+
+fn inhibition_state_label(inhibition_penalty: u8) -> &'static str {
+    match inhibition_penalty {
+        2 => "collective",
+        1 => "local",
+        _ => "none",
+    }
+}
+
+fn contexts_overlap(left: &[String], right: &[String]) -> bool {
+    left.iter()
+        .any(|left_context| right.iter().any(|right_context| right_context == left_context))
+}
+
 fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
@@ -983,6 +1077,52 @@ mod tests {
             10,
         );
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn summarize_signal_posts_promoted_avoid_inhibits_competing_recommendation() {
+        let local_identity = NodeIdentity::generate();
+        let remote_a = NodeIdentity::generate();
+        let remote_b = NodeIdentity::generate();
+
+        let recommend = create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            signal_config(&remote_a, "codex", "remote-a"),
+            remote_a.public_key_bytes(),
+            |msg| remote_a.sign(msg),
+        );
+        let avoid_a = create_signal_trace(
+            SignalPostKind::Avoid,
+            "repair release flow",
+            "skip the generated lockfile",
+            signal_config(&remote_a, "openclaw", "remote-b"),
+            remote_a.public_key_bytes(),
+            |msg| remote_a.sign(msg),
+        );
+        let avoid_b = create_signal_trace(
+            SignalPostKind::Avoid,
+            "repair release flow",
+            "skip the generated lockfile",
+            signal_config(&remote_b, "claude", "remote-c"),
+            remote_b.public_key_bytes(),
+            |msg| remote_b.sign(msg),
+        );
+
+        let results = summarize_signal_traces(
+            &[recommend, avoid_a, avoid_b],
+            "repair release flow",
+            &local_identity.device_identity(),
+            local_identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].kind, "avoid");
+        assert_eq!(results[0].inhibition_state, "none");
+        assert_eq!(results[1].kind, "recommend");
+        assert_eq!(results[1].inhibition_state, "collective");
+        assert_eq!(results[1].inhibition_penalty, 2);
     }
 
     #[test]
@@ -1273,6 +1413,51 @@ mod tests {
     }
 
     #[test]
+    fn summarize_recent_signal_feed_inhibits_competing_signal_with_shared_context() {
+        let local_identity = NodeIdentity::generate();
+        let remote_a = NodeIdentity::generate();
+        let remote_b = NodeIdentity::generate();
+        let remote_c = NodeIdentity::generate();
+
+        let recommend = create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            signal_config(&remote_a, "codex", "remote-a"),
+            remote_a.public_key_bytes(),
+            |msg| remote_a.sign(msg),
+        );
+        let avoid_a = create_signal_trace(
+            SignalPostKind::Avoid,
+            "repair release flow",
+            "skip the generated lockfile",
+            signal_config(&remote_b, "openclaw", "remote-b"),
+            remote_b.public_key_bytes(),
+            |msg| remote_b.sign(msg),
+        );
+        let avoid_b = create_signal_trace(
+            SignalPostKind::Avoid,
+            "repair release flow",
+            "skip the generated lockfile",
+            signal_config(&remote_c, "claude", "remote-c"),
+            remote_c.public_key_bytes(),
+            |msg| remote_c.sign(msg),
+        );
+
+        let results = summarize_recent_signal_feed(
+            &[recommend, avoid_a, avoid_b],
+            &local_identity.device_identity(),
+            local_identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].kind, "avoid");
+        assert_eq!(results[1].kind, "recommend");
+        assert_eq!(results[1].inhibition_state, "collective");
+        assert_eq!(results[1].inhibition_penalty, 2);
+    }
+
+    #[test]
     fn filter_signal_feed_results_by_scope() {
         let results = vec![
             SignalFeedResult {
@@ -1286,6 +1471,8 @@ mod tests {
                 density_score: 0,
                 density_tier: "sparse".into(),
                 promotion_state: "none".into(),
+                inhibition_penalty: 0,
+                inhibition_state: "none".into(),
                 focus_score: 0,
                 focus_tier: "background".into(),
                 local_source_count: 1,
@@ -1306,6 +1493,8 @@ mod tests {
                 density_score: 6,
                 density_tier: "dominant".into(),
                 promotion_state: "collective".into(),
+                inhibition_penalty: 0,
+                inhibition_state: "none".into(),
                 focus_score: 6,
                 focus_tier: "primary".into(),
                 local_source_count: 0,
