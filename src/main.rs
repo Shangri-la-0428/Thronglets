@@ -1666,7 +1666,7 @@ fn bootstrap_selected_adapters(
         .collect();
     let plans: Vec<_> = selected_adapters(target)
         .into_iter()
-        .map(|adapter| install_plan(home_dir, data_dir, bin_path, adapter))
+        .map(|adapter| install_plan(home_dir, data_dir, adapter))
         .collect();
     let applied = apply_selected_adapters(target, home_dir, data_dir, bin_path)?;
     let doctor_reports: Vec<_> = selected_adapters(target)
@@ -2768,11 +2768,10 @@ async fn main() {
             runtime,
             json,
         } => {
-            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
             let home_dir = home_dir();
             let mut plans: Vec<_> = selected_adapters(agent)
                 .into_iter()
-                .map(|adapter| install_plan(&home_dir, &dir, &bin, adapter))
+                .map(|adapter| install_plan(&home_dir, &dir, adapter))
                 .collect();
             filter_generic_runtime_snippets(&mut plans, runtime);
             let summary = summarize_install_plans(plans);

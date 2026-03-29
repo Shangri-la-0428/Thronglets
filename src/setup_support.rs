@@ -61,12 +61,6 @@ pub struct CodexSetupResult {
     pub updated_agents_memory: bool,
 }
 
-#[derive(Debug, Clone)]
-struct ManagedLauncher {
-    path: PathBuf,
-    repo_root: Option<PathBuf>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdapterKind {
     Claude,
@@ -240,7 +234,7 @@ pub fn install_claude(
 ) -> io::Result<ClaudeSetupResult> {
     let settings_path = home_dir.join(".claude").join("settings.json");
     let launcher = ensure_managed_launcher(data_dir, bin_path)?;
-    let launcher_cmd = shell_quote_path(&launcher.path);
+    let launcher_cmd = shell_quote_path(&launcher);
 
     let mut settings: Value = if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".into());
@@ -260,7 +254,7 @@ pub fn install_claude(
     let added_post_hook = ensure_hook(
         &mut settings["hooks"]["PostToolUse"],
         &post_hook,
-        launcher.path.to_string_lossy().as_ref(),
+        launcher.to_string_lossy().as_ref(),
     );
 
     let pre_hook = json!({
@@ -270,7 +264,7 @@ pub fn install_claude(
     let added_pre_hook = ensure_hook(
         &mut settings["hooks"]["PreToolUse"],
         &pre_hook,
-        launcher.path.to_string_lossy().as_ref(),
+        launcher.to_string_lossy().as_ref(),
     );
 
     if let Some(parent) = settings_path.parent() {
@@ -311,7 +305,7 @@ pub fn install_openclaw(
         json!({})
     };
 
-    configure_openclaw_config(&mut config, &plugin_dir, &launcher.path, data_dir);
+    configure_openclaw_config(&mut config, &plugin_dir, &launcher, data_dir);
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
@@ -357,7 +351,7 @@ pub fn install_codex(
     } else {
         toml::Table::new()
     };
-    let updated_server = configure_codex_config(&mut config, &launcher.path, data_dir);
+    let updated_server = configure_codex_config(&mut config, &launcher, data_dir);
     let formatted =
         toml::to_string_pretty(&config).map_err(|error| io::Error::other(error.to_string()))?;
     fs::write(&config_path, formatted)?;
@@ -446,12 +440,7 @@ pub fn detect_adapter(home_dir: &Path, data_dir: &Path, agent: AdapterKind) -> A
     }
 }
 
-pub fn install_plan(
-    home_dir: &Path,
-    data_dir: &Path,
-    _bin_path: &Path,
-    agent: AdapterKind,
-) -> AdapterPlan {
+pub fn install_plan(home_dir: &Path, data_dir: &Path, agent: AdapterKind) -> AdapterPlan {
     let detection = detect_adapter(home_dir, data_dir, agent);
     let launcher_path = managed_launcher_path(data_dir);
     match agent {
@@ -671,26 +660,24 @@ fn managed_launcher_path(data_dir: &Path) -> PathBuf {
     data_dir.join("bin").join(MANAGED_LAUNCHER_NAME)
 }
 
-fn ensure_managed_launcher(data_dir: &Path, bin_path: &Path) -> io::Result<ManagedLauncher> {
-    let launcher = ManagedLauncher {
-        path: managed_launcher_path(data_dir),
-        repo_root: detect_repo_root(),
-    };
+fn ensure_managed_launcher(data_dir: &Path, bin_path: &Path) -> io::Result<PathBuf> {
+    let launcher_path = managed_launcher_path(data_dir);
+    let repo_root = detect_repo_root();
 
-    if let Some(parent) = launcher.path.parent() {
+    if let Some(parent) = launcher_path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(
-        &launcher.path,
-        render_managed_launcher(bin_path, launcher.repo_root.as_deref()),
+        &launcher_path,
+        render_managed_launcher(bin_path, repo_root.as_deref()),
     )?;
     #[cfg(unix)]
     {
-        let mut perms = fs::metadata(&launcher.path)?.permissions();
+        let mut perms = fs::metadata(&launcher_path)?.permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&launcher.path, perms)?;
+        fs::set_permissions(&launcher_path, perms)?;
     }
-    Ok(launcher)
+    Ok(launcher_path)
 }
 
 fn detect_repo_root() -> Option<PathBuf> {

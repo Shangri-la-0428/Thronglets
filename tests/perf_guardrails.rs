@@ -130,11 +130,9 @@ fn setup_keeps_prehook_narrow() {
         .find(|entry| {
             entry["hooks"].as_array().is_some_and(|hooks| {
                 hooks.iter().any(|hook| {
-                    hook["command"]
-                        .as_str()
-                        .is_some_and(|cmd| {
-                            cmd.contains("thronglets-managed") && cmd.contains(" prehook")
-                        })
+                    hook["command"].as_str().is_some_and(|cmd| {
+                        cmd.contains("thronglets-managed") && cmd.contains(" prehook")
+                    })
                 })
             })
         })
