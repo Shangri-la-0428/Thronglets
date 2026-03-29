@@ -221,7 +221,7 @@ thronglets signal-post --kind watch --context "ship the current branch" --messag
 
 When you query signals, Thronglets now also tells you whether that message is only local, already collectively corroborated, or mixed across both; when multiple models independently converge on the same message, it adds a lightweight `models=N` hint, while machine interfaces expose `corroboration_tier=single_source|repeated_source|multi_model`, prefer `multi_model` when evidence is otherwise close, let fresher ambient consensus outrank older agreement, and focus the feed on the strongest `primary/secondary` signals first.
 
-That plane has now started moving toward a `Density Substrate`: machine-facing signal results also carry `density_score` and `density_tier=sparse|candidate|promoted|dominant`, so “local consensus is forming here” becomes an explicit state instead of just another sorted row.
+That plane has now started moving toward a `Density Substrate`: machine-facing signal results also carry `density_score`, `density_tier=sparse|candidate|promoted|dominant`, and `promotion_state=none|local|collective`, so “local consensus is forming here” becomes an explicit state instead of just another sorted row, and the ambient feed can preferentially surface already-promoted signals.
 
 If you want the ambient timeline instead of an exact context lookup:
 

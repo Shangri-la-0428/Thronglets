@@ -105,6 +105,7 @@ pub struct SignalQueryResult {
     pub corroboration_tier: String,
     pub density_score: u8,
     pub density_tier: String,
+    pub promotion_state: String,
     pub local_source_count: u32,
     pub collective_source_count: u32,
     pub evidence_scope: String,
@@ -123,6 +124,7 @@ pub struct SignalFeedResult {
     pub corroboration_tier: String,
     pub density_score: u8,
     pub density_tier: String,
+    pub promotion_state: String,
     pub focus_score: u8,
     pub focus_tier: String,
     pub local_source_count: u32,
@@ -279,6 +281,8 @@ pub fn summarize_signal_traces(
                 model_count,
                 0,
             );
+            let promotion_state =
+                signal_promotion_state(density_score, local_source_count, collective_source_count);
             SignalQueryResult {
                 kind: group.kind.as_str().to_string(),
                 message: group.message,
@@ -289,6 +293,7 @@ pub fn summarize_signal_traces(
                 corroboration_tier: signal_corroboration_tier(source_count, model_count).to_string(),
                 density_score,
                 density_tier: signal_density_tier(density_score).to_string(),
+                promotion_state: promotion_state.to_string(),
                 local_source_count,
                 collective_source_count,
                 evidence_scope,
@@ -383,6 +388,8 @@ pub fn summarize_recent_signal_feed(
                 model_count,
                 freshness_rank,
             );
+            let promotion_state =
+                signal_promotion_state(density_score, local_source_count, collective_source_count);
             let focus_score = signal_focus_score(
                 collective_source_count,
                 source_count,
@@ -399,6 +406,7 @@ pub fn summarize_recent_signal_feed(
                     .to_string(),
                 density_score,
                 density_tier: signal_density_tier(density_score).to_string(),
+                promotion_state: promotion_state.to_string(),
                 focus_score,
                 focus_tier: signal_focus_tier(focus_score).to_string(),
                 local_source_count,
@@ -429,10 +437,30 @@ pub fn filter_signal_feed_results(
     results: Vec<SignalFeedResult>,
     scope: SignalScopeFilter,
 ) -> Vec<SignalFeedResult> {
-    results
+    let filtered: Vec<_> = results
         .into_iter()
         .filter(|result| scope.matches(&result.evidence_scope))
-        .collect()
+        .collect();
+
+    let has_promoted = filtered
+        .iter()
+        .any(|result| result.promotion_state != "none");
+    if !has_promoted {
+        return filtered;
+    }
+
+    let mut promoted: Vec<_> = filtered
+        .iter()
+        .filter(|result| result.promotion_state != "none")
+        .cloned()
+        .collect();
+    let mut background: Vec<_> = filtered
+        .iter()
+        .filter(|result| result.promotion_state == "none")
+        .cloned()
+        .collect();
+    promoted.append(&mut background);
+    promoted
 }
 
 fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
@@ -556,6 +584,22 @@ fn signal_density_tier(density_score: u8) -> &'static str {
     }
 }
 
+fn signal_promotion_state(
+    density_score: u8,
+    local_source_count: u32,
+    collective_source_count: u32,
+) -> &'static str {
+    if signal_density_tier(density_score) == "sparse" || signal_density_tier(density_score) == "candidate" {
+        "none"
+    } else if collective_source_count > 0 {
+        "collective"
+    } else if local_source_count > 0 {
+        "local"
+    } else {
+        "none"
+    }
+}
+
 fn signal_focus_tier(focus_score: u8) -> &'static str {
     if focus_score >= 5 {
         "primary"
@@ -622,6 +666,7 @@ mod tests {
         assert_eq!(results[0].model_count, 2);
         assert_eq!(results[0].corroboration_tier, "multi_model");
         assert_eq!(results[0].density_tier, "promoted");
+        assert_eq!(results[0].promotion_state, "local");
         assert_eq!(results[0].local_source_count, 2);
         assert_eq!(results[0].collective_source_count, 0);
         assert_eq!(results[0].evidence_scope, "local");
@@ -710,6 +755,7 @@ mod tests {
         assert_eq!(results[0].model_count, 2);
         assert_eq!(results[0].corroboration_tier, "multi_model");
         assert_eq!(results[0].density_tier, "promoted");
+        assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[0].evidence_scope, "mixed");
     }
 
@@ -756,6 +802,7 @@ mod tests {
         assert_eq!(results[0].model_count, 2);
         assert_eq!(results[0].corroboration_tier, "multi_model");
         assert_eq!(results[0].density_tier, "dominant");
+        assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[0].focus_tier, "primary");
         assert_eq!(results[0].evidence_scope, "collective");
     }
@@ -818,12 +865,14 @@ mod tests {
         assert_eq!(results[0].model_count, 2);
         assert_eq!(results[0].corroboration_tier, "multi_model");
         assert_eq!(results[0].density_tier, "dominant");
+        assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[0].focus_tier, "primary");
         assert_eq!(results[1].message, "rerun the targeted test first");
         assert_eq!(results[1].source_count, 2);
         assert_eq!(results[1].model_count, 1);
         assert_eq!(results[1].corroboration_tier, "repeated_source");
         assert_eq!(results[1].density_tier, "dominant");
+        assert_eq!(results[1].promotion_state, "collective");
         assert_eq!(results[1].focus_tier, "primary");
     }
 
@@ -898,9 +947,11 @@ mod tests {
         assert_eq!(results[0].message, "run release-check before push");
         assert_eq!(results[0].corroboration_tier, "multi_model");
         assert_eq!(results[0].density_tier, "dominant");
+        assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[1].message, "rerun the targeted test first");
         assert_eq!(results[1].corroboration_tier, "repeated_source");
         assert_eq!(results[1].density_tier, "dominant");
+        assert_eq!(results[1].promotion_state, "collective");
         assert!(results[1].source_count > results[0].source_count);
     }
 
@@ -981,10 +1032,12 @@ mod tests {
         assert_eq!(results[0].message, "rerun the targeted test first");
         assert_eq!(results[0].corroboration_tier, "multi_model");
         assert_eq!(results[0].density_tier, "dominant");
+        assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[0].focus_tier, "primary");
         assert_eq!(results[1].message, "run release-check before push");
         assert_eq!(results[1].corroboration_tier, "multi_model");
         assert_eq!(results[1].density_tier, "promoted");
+        assert_eq!(results[1].promotion_state, "collective");
         assert_eq!(results[1].focus_tier, "secondary");
         assert_eq!(results[0].source_count, results[1].source_count);
         assert_eq!(
@@ -1005,6 +1058,7 @@ mod tests {
                 corroboration_tier: "single_source".into(),
                 density_score: 0,
                 density_tier: "sparse".into(),
+                promotion_state: "none".into(),
                 focus_score: 0,
                 focus_tier: "background".into(),
                 local_source_count: 1,
@@ -1023,6 +1077,7 @@ mod tests {
                 corroboration_tier: "multi_model".into(),
                 density_score: 6,
                 density_tier: "dominant".into(),
+                promotion_state: "collective".into(),
                 focus_score: 6,
                 focus_tier: "primary".into(),
                 local_source_count: 0,
@@ -1085,5 +1140,13 @@ mod tests {
         assert_eq!(signal_density_tier(signal_density_score(1, 0, 1, 1, 0)), "candidate");
         assert_eq!(signal_density_tier(signal_density_score(1, 1, 2, 2, 0)), "promoted");
         assert_eq!(signal_density_tier(signal_density_score(1, 2, 2, 2, 1)), "dominant");
+    }
+
+    #[test]
+    fn signal_promotion_state_distinguishes_local_collective_and_none() {
+        assert_eq!(signal_promotion_state(0, 1, 0), "none");
+        assert_eq!(signal_promotion_state(2, 1, 0), "none");
+        assert_eq!(signal_promotion_state(3, 1, 0), "local");
+        assert_eq!(signal_promotion_state(4, 1, 1), "collective");
     }
 }
