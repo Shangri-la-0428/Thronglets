@@ -179,24 +179,26 @@ impl IdentityBinding {
         Ok(())
     }
 
-    pub fn bind_owner_account(mut self, owner_account: String) -> Self {
+    pub fn bind_owner_account(mut self, owner_account: String) -> std::io::Result<Self> {
+        self.ensure_owner_compatible(Some(owner_account.as_str()))?;
         self.owner_account = Some(owner_account);
         self.binding_source = Some("manual".into());
         self.joined_from_device = None;
         self.updated_at = now_ms();
-        self
+        Ok(self)
     }
 
     pub fn joined_via_connection(
         mut self,
         owner_account: Option<String>,
         primary_device: String,
-    ) -> Self {
+    ) -> std::io::Result<Self> {
+        self.ensure_owner_compatible(owner_account.as_deref())?;
         self.owner_account = owner_account;
         self.binding_source = Some("connection_file".into());
         self.joined_from_device = Some(primary_device);
         self.updated_at = now_ms();
-        self
+        Ok(self)
     }
 
     pub fn owner_account_or_unbound(&self) -> &str {
@@ -218,6 +220,20 @@ impl IdentityBinding {
 
     pub fn joined_from_device_or_none(&self) -> &str {
         self.joined_from_device.as_deref().unwrap_or("none")
+    }
+
+    pub fn ensure_owner_compatible(&self, requested_owner: Option<&str>) -> std::io::Result<()> {
+        if let (Some(current), Some(requested)) = (self.owner_account.as_deref(), requested_owner)
+            && current != requested
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "device is already bound to owner {current}; refusing to overwrite with {requested}"
+                ),
+            ));
+        }
+        Ok(())
     }
 
     pub fn verify_for_node(&self, node_identity: &NodeIdentity) -> std::io::Result<()> {
@@ -471,11 +487,26 @@ mod tests {
         assert_eq!(binding.device_identity, node.device_identity());
         assert_eq!(binding.owner_account, None);
 
-        let rebound = binding.clone().bind_owner_account("oasyce1owner".into());
+        let rebound = binding
+            .clone()
+            .bind_owner_account("oasyce1owner".into())
+            .unwrap();
         rebound.save(&path).unwrap();
         let loaded = IdentityBinding::load_or_create(&path, &node).unwrap();
         assert_eq!(loaded.owner_account.as_deref(), Some("oasyce1owner"));
         assert_eq!(loaded.device_identity, node.device_identity());
+    }
+
+    #[test]
+    fn conflicting_owner_rebind_is_rejected() {
+        let node = NodeIdentity::generate();
+        let binding = IdentityBinding::new(node.device_identity())
+            .bind_owner_account("oasyce1owner".into())
+            .unwrap();
+        let error = binding
+            .bind_owner_account("oasyce1other".into())
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]

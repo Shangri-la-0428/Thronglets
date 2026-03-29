@@ -140,6 +140,7 @@ thronglets connection-join --file ./thronglets.connection.json
 - `owner-bind` is the manual advanced fallback
 - `connection-export / connection-join` are the primary onboarding path and verify the primary-device signature by default
 - `connection-export` now emits a `24h` connection file by default and supports `--ttl-hours`; `connection-join` verifies both signature and expiry
+- `owner-bind` and `connection-join` both refuse to silently overwrite an existing different `owner account`
 
 ## Deployment Boundary
 

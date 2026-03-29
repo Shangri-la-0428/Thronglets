@@ -1618,7 +1618,10 @@ async fn main() {
             owner_account,
             json,
         } => {
-            let binding = identity_binding.clone().bind_owner_account(owner_account);
+            let binding = identity_binding
+                .clone()
+                .bind_owner_account(owner_account)
+                .expect("failed to update identity binding");
             binding
                 .save(&identity_binding_path(&dir))
                 .expect("failed to save identity binding");
@@ -1707,10 +1710,13 @@ async fn main() {
 
         Commands::ConnectionJoin { file, json } => {
             let connection = ConnectionFile::load(&file).expect("failed to read connection file");
-            let binding = identity_binding.clone().joined_via_connection(
-                connection.owner_account.clone(),
-                connection.primary_device_identity.clone(),
-            );
+            let binding = identity_binding
+                .clone()
+                .joined_via_connection(
+                    connection.owner_account.clone(),
+                    connection.primary_device_identity.clone(),
+                )
+                .expect("failed to update identity binding");
             binding
                 .save(&identity_binding_path(&dir))
                 .expect("failed to save identity binding");

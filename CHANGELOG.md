@@ -31,6 +31,7 @@
 - **Identity CLI JSON** — `id`, `owner-bind`, `connection-export`, `connection-join`, and `status` now expose summary-first machine JSON under `thronglets.identity.v1`, so multi-device onboarding can be automated without scraping human text
 - **Expiring connection files** — multi-device connection files now default to a `24h` validity window, can be tuned with `--ttl-hours`, and are rejected on join after expiry even if their device signature is otherwise valid
 - **Inspectable owner-bound connection files** — `connection-export` now refuses to emit ownerless onboarding files, and `connection-inspect` gives a machine-readable preflight check for owner, signer, and expiry before a secondary device attempts `connection-join`
+- **Owner conflict protection** — `owner-bind` and `connection-join` now reject conflicting owner rebinds instead of silently overwriting an existing device-to-owner association
 
 ## v0.4.0 — 2026-03-28
 

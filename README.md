@@ -140,6 +140,7 @@ thronglets connection-join --file ./thronglets.connection.json
 - `owner-bind` 是手动高级 fallback
 - `connection-export / connection-join` 是主路径，并且默认验证主设备签名
 - `connection-export` 默认导出 `24h` 有效的 connection file，可用 `--ttl-hours` 调整；`connection-join` 会同时验证签名和过期时间
+- `owner-bind` 和 `connection-join` 默认都不会静默覆盖成另一个 `owner account`
 
 ## 部署边界
 
