@@ -65,7 +65,42 @@ Thronglets 现在的主线已经明确：
 
 ## Now
 
-### 1. Freeze `bootstrap.v2`
+### 1. Shared space continuity
+
+目标：让不同 AI 在同一个项目 / 模块 / 议题上形成连续的局部 substrate，而不是靠用户人工转述。
+
+当前状态：
+- 显式 signal 已支持 `space`
+- `density / promotion / inhibition / reinforcement` 已经都局部化到 `space`
+
+剩余完成标准：
+- hot path 的 `avoid / do next / maybe also` 优先受当前 `space` 的局部共识影响
+- 同一个 `space` 的局部状态能跨 agent / session 连续积累
+
+### 2. Session presence
+
+目标：让纯对话 / 策略讨论场景也能留下轻量痕迹，不再只有工具调用才算“活跃”。
+
+当前状态：
+- 设计已冻结为独立 primitive，而不是 signal 的特例
+
+剩余完成标准：
+- 提供 `presence-ping / presence-feed`
+- 支持 `space`
+- 其他 AI 能感知“谁正在这个 space 里活跃”
+
+### 3. Ambient mode signals
+
+目标：让外部系统可以写入通用模式标签，而不是为 Psyche 之类系统做强绑定。
+
+当前状态：
+- 原则已冻结：Thronglets 只认识通用 `mode`，不认识具体产品名
+
+剩余完成标准：
+- `focus / explore / review / blocked` 一类的 mode 能进入 substrate
+- mode 只作为上下文原语，不变成 case-specific 逻辑
+
+### 4. Freeze `bootstrap.v2`
 
 目标：不要再让机器协议在同一个版本里漂移。
 
@@ -76,7 +111,7 @@ Thronglets 现在的主线已经明确：
 - 在 CI 里把这些 fixture 回归当成明确的协议稳定性门槛
 - 如果后面还要改 shape，必须升 `v3`
 
-### 2. Auto-clear restart state when runtimes can prove they reloaded
+### 5. Auto-clear restart state when runtimes can prove they reloaded
 
 当前状态：
 - `apply-plan / doctor / bootstrap` 已经暴露显式 `restart_commands`
@@ -88,7 +123,7 @@ Thronglets 现在的主线已经明确：
   - OpenClaw: 已完成，插件成功加载后会自动执行 `runtime-ready`
 - 否则继续保持现在这条显式、可验证的清除路径
 
-### 3. Extend adapter matrix only when native runtimes diverge
+### 6. Extend adapter matrix only when native runtimes diverge
 
 当前状态：
 - integration tests 已覆盖 `setup`
@@ -99,7 +134,7 @@ Thronglets 现在的主线已经明确：
 剩余完成标准：
 - 如果后面某个 native runtime 在不同平台或不同安装方式下出现分叉，再补对应 matrix case
 
-### 4. Keep the release recipe single-sourced
+### 7. Keep the release recipe single-sourced
 
 当前状态：
 - `release-check` 已经接上 `profile`
@@ -112,7 +147,7 @@ Thronglets 现在的主线已经明确：
 - 如果阈值或 release 语义变化，只保留一条 canonical recipe
 - 避免文档、本地脚本、CI 三处各自漂移
 
-### 5. Prove outcome value
+### 8. Prove outcome value
 
 目标：证明它不只是“设计得优雅”，而是真的让 AI 更稳。
 
@@ -130,7 +165,7 @@ Thronglets 现在的主线已经明确：
   - 这版更安静了，还是只是更沉默了
   - 这版更准了，还是只是覆盖更低了
 
-### 6. Freeze Identity V1 against Oasyce
+### 9. Freeze Identity V1 against Oasyce
 
 目标：在接入链上结算前，先把 `owner -> device` 身份模型固定住。
 
@@ -161,7 +196,7 @@ Thronglets 现在的主线已经明确：
 
 ## Next
 
-### 7. Native adapters for more AI runtimes
+### 10. Native adapters for more AI runtimes
 
 前提：必须存在稳定本地配置面。没有稳定配置面就继续走 generic contract。
 
@@ -177,7 +212,7 @@ Thronglets 现在的主线已经明确：
 - `doctor`
 全部齐全，不能只补一半
 
-### 8. Installer without cargo
+### 11. Installer without cargo
 
 目标：真正的一行命令安装。
 
@@ -191,7 +226,7 @@ Thronglets 现在的主线已经明确：
 - 默认安装文档切到 shell installer
 - 安装后可以直接跑 `thronglets setup`
 
-### 9. Generic contract examples by runtime
+### 12. Generic contract examples by runtime
 
 目标：未知 AI 也能最快接通。
 
@@ -206,7 +241,7 @@ Thronglets 现在的主线已经明确：
 
 ## Later
 
-### 10. Network-side corroboration quality
+### 13. Network-side corroboration quality
 
 目标：让 collective intelligence 不只是结构上成立，而是结果上成立。
 
@@ -215,7 +250,7 @@ Thronglets 现在的主线已经明确：
 - 评估跨节点 corroboration 对 precision 的真实提升
 - 如果没有提升，就不要继续抬高网络叙事
 
-### 11. Packaging and distribution cleanup
+### 14. Packaging and distribution cleanup
 
 目标：让发布面更像产品。
 

@@ -25,6 +25,10 @@ use crate::posts::{
     create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
     is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
 };
+use crate::presence::{
+    DEFAULT_PRESENCE_TTL_MINUTES, PresenceTraceConfig, create_presence_trace,
+    is_presence_capability, summarize_recent_presence,
+};
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
 
@@ -190,6 +194,56 @@ fn tool_definitions() -> Value {
                 }
             },
             {
+                "name": "presence_ping",
+                "description": "Leave a lightweight session presence heartbeat for a shared space, even when no tool call happened.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "space": {
+                            "type": "string",
+                            "description": "Optional explicit substrate space this session is active in"
+                        },
+                        "mode": {
+                            "type": "string",
+                            "description": "Optional lightweight mode label such as focus / explore / review / blocked"
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Self-reported model identifier (default: \"unknown\")"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session identifier"
+                        },
+                        "ttl_minutes": {
+                            "type": "integer",
+                            "description": "How long this presence heartbeat should remain active (default: 30)"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "presence_feed",
+                "description": "Show recent active sessions in a shared substrate space, including lightweight mode labels when available.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hours": {
+                            "type": "integer",
+                            "description": "Only include heartbeats seen in roughly the last N hours (default: 1)"
+                        },
+                        "space": {
+                            "type": "string",
+                            "description": "Optional explicit substrate space to restrict the feed to"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum sessions to return (default: 10)"
+                        }
+                    }
+                }
+            },
+            {
                 "name": "substrate_query",
                 "description": "Query the Thronglets substrate. Use intent 'resolve' to find capabilities for a task, 'evaluate' to get stats for a specific capability, 'explore' to discover what's available, or 'signals' to find explicit short messages left by other agents.",
                 "inputSchema": {
@@ -342,6 +396,8 @@ async fn handle_tool_call(ctx: &McpContext, id: Value, params: Value) -> JsonRpc
         "trace_record" => handle_trace_record(ctx, id, arguments).await,
         "signal_post" => handle_signal_post(ctx, id, arguments).await,
         "signal_feed" => handle_signal_feed(ctx, id, arguments),
+        "presence_ping" => handle_presence_ping(ctx, id, arguments).await,
+        "presence_feed" => handle_presence_feed(ctx, id, arguments),
         "substrate_query" => handle_substrate_query(ctx, id, arguments),
         "trace_anchor" => handle_trace_anchor(ctx, id, arguments),
         _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
@@ -517,6 +573,98 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
     }
 }
 
+async fn handle_presence_ping(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
+    let space = args
+        .get("space")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let mode = args
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let model_id = args
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let ttl_minutes = args
+        .get("ttl_minutes")
+        .and_then(|v| v.as_u64())
+        .map(|value| value.min(u32::MAX as u64) as u32)
+        .unwrap_or(DEFAULT_PRESENCE_TTL_MINUTES);
+
+    let trace = create_presence_trace(
+        PresenceTraceConfig {
+            model_id,
+            session_id,
+            owner_account: ctx.binding.owner_account.clone(),
+            device_identity: Some(ctx.binding.device_identity.clone()),
+            space: space.clone(),
+            mode: mode.clone(),
+            ttl_minutes,
+        },
+        ctx.identity.public_key_bytes(),
+        |msg| ctx.identity.sign(msg),
+    );
+    let trace_id_hex: String = trace.id[..8].iter().map(|b| format!("{b:02x}")).collect();
+
+    match ctx.store.insert(&trace) {
+        Ok(_) => JsonRpcResponse::success(
+            id,
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string(&json!({
+                        "active": true,
+                        "space": space,
+                        "mode": mode,
+                        "ttl_minutes": ttl_minutes,
+                        "trace_id": trace_id_hex,
+                    })).unwrap()
+                }]
+            }),
+        ),
+        Err(e) => JsonRpcResponse::error(id, -32000, format!("Storage error: {e}")),
+    }
+}
+
+fn handle_presence_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
+    let hours = args.get("hours").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    let space = args.get("space").and_then(|v| v.as_str());
+    let fetch_limit = if space.is_some() {
+        limit.max(1).saturating_mul(10)
+    } else {
+        limit
+    };
+    let traces = match ctx.store.query_recent_presence_traces(hours, fetch_limit) {
+        Ok(traces) => traces,
+        Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
+    };
+    let sessions = summarize_recent_presence(
+        &traces,
+        space,
+        &ctx.binding.device_identity,
+        ctx.identity.public_key_bytes(),
+        limit,
+    );
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&json!({
+                    "sessions": sessions,
+                })).unwrap()
+            }]
+        }),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Tool 2: substrate_query
 // ---------------------------------------------------------------------------
@@ -603,7 +751,7 @@ fn handle_resolve(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
     // Group by capability, compute per-capability stats
     let mut cap_groups: HashMap<&str, Vec<&Trace>> = HashMap::new();
     for t in &traces {
-        if is_signal_capability(&t.capability) {
+        if is_signal_capability(&t.capability) || is_presence_capability(&t.capability) {
             continue;
         }
         cap_groups.entry(&t.capability).or_default().push(t);
@@ -774,7 +922,7 @@ fn handle_explore(ctx: &McpContext, id: Value, context_str: &str, limit: usize) 
     let mut gaps: Vec<String> = Vec::new();
 
     for cap in &caps {
-        if is_signal_capability(cap) {
+        if is_signal_capability(cap) || is_presence_capability(cap) {
             continue;
         }
         match ctx.store.aggregate(cap) {
@@ -1159,7 +1307,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_five_tools() {
+    async fn tools_list_returns_all_machine_tools() {
         let ctx = make_ctx();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -1169,12 +1317,14 @@ mod tests {
         };
         let resp = handle_request(&ctx, req).await.unwrap();
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 7);
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"trace_record"));
         assert!(names.contains(&"signal_post"));
         assert!(names.contains(&"signal_feed"));
+        assert!(names.contains(&"presence_ping"));
+        assert!(names.contains(&"presence_feed"));
         assert!(names.contains(&"substrate_query"));
         assert!(names.contains(&"trace_anchor"));
     }

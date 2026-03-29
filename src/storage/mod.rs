@@ -6,6 +6,7 @@
 use crate::posts::{
     SIGNAL_CAPABILITY_PREFIX, SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX, SignalPostKind,
 };
+use crate::presence::PRESENCE_CAPABILITY_PREFIX;
 use crate::signals::StepAction;
 use crate::trace::{Outcome, Trace};
 use ed25519_dalek::Signature;
@@ -559,6 +560,27 @@ impl TraceStore {
         traces.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         traces.truncate(limit);
         Ok(traces)
+    }
+
+    /// Query recent presence traces for ambient session continuity.
+    pub fn query_recent_presence_traces(
+        &self,
+        hours: u32,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<Trace>> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
+        let like = format!("{PRESENCE_CAPABILITY_PREFIX}%");
+        let mut stmt = conn.prepare(
+            "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                    context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
+             FROM traces
+             WHERE capability LIKE ?1
+               AND timestamp >= ?2
+             ORDER BY timestamp DESC
+             LIMIT ?3",
+        )?;
+        Self::collect_traces(&mut stmt, params![like, cutoff_ms, limit as i64])
     }
 
     /// Evaporate old traces (pheromone decay).

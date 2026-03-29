@@ -6,8 +6,10 @@
 //! Endpoints:
 //! - POST /v1/traces       — record a trace
 //! - POST /v1/signals      — leave an explicit short signal
+//! - POST /v1/presence     — leave a lightweight session presence heartbeat
 //! - GET  /v1/signals      — query explicit short signals
 //! - GET  /v1/signals/feed — show recent converging explicit signals
+//! - GET  /v1/presence/feed — show recent active sessions in a space
 //! - GET  /v1/query        — query the substrate
 //! - GET  /v1/capabilities — list known capabilities
 //! - GET  /v1/status       — node status
@@ -19,6 +21,10 @@ use crate::posts::{
     SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
     create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
     is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
+};
+use crate::presence::{
+    DEFAULT_PRESENCE_TTL_MINUTES, PresenceTraceConfig, create_presence_trace,
+    is_presence_capability, summarize_recent_presence,
 };
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
@@ -89,16 +95,20 @@ fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
     match (method, path_only) {
         ("POST", "/v1/traces") => handle_post_trace(ctx, body),
         ("POST", "/v1/signals") => handle_post_signal(ctx, body),
+        ("POST", "/v1/presence") => handle_post_presence(ctx, body),
         ("GET", "/v1/signals/feed") => handle_get_signal_feed(ctx, path),
         ("GET", "/v1/signals") => handle_get_signals(ctx, path),
+        ("GET", "/v1/presence/feed") => handle_get_presence_feed(ctx, path),
         ("GET", "/v1/query") => handle_get_query(ctx, path),
         ("GET", "/v1/capabilities") => handle_get_capabilities(ctx),
         ("GET", "/v1/status") => handle_get_status(ctx),
         _ => json!({"error": "not found", "endpoints": [
             "POST /v1/traces",
             "POST /v1/signals",
+            "POST /v1/presence",
             "GET /v1/signals?context=...&kind=avoid|recommend|watch|info&space=...&limit=5",
             "GET /v1/signals/feed?hours=24&kind=avoid|recommend|watch|info&scope=all|local|collective|mixed&space=...&limit=10",
+            "GET /v1/presence/feed?hours=1&space=...&limit=10",
             "GET /v1/query?context=...&intent=resolve|evaluate|explore|signals",
             "GET /v1/capabilities",
             "GET /v1/status"
@@ -224,6 +234,49 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
     }
 }
 
+fn handle_post_presence(ctx: &HttpContext, body: &str) -> String {
+    let args: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return json!({"error": format!("invalid JSON: {e}")}).to_string(),
+    };
+
+    let space = args["space"].as_str().map(str::to_string);
+    let mode = args["mode"].as_str().map(str::to_string);
+    let model = args["model"].as_str().unwrap_or("unknown").to_string();
+    let session_id = args["session_id"].as_str().map(str::to_string);
+    let ttl_minutes = args["ttl_minutes"]
+        .as_u64()
+        .map(|value| value.min(u32::MAX as u64) as u32)
+        .unwrap_or(DEFAULT_PRESENCE_TTL_MINUTES);
+
+    let trace = create_presence_trace(
+        PresenceTraceConfig {
+            model_id: model,
+            session_id,
+            owner_account: ctx.binding.owner_account.clone(),
+            device_identity: Some(ctx.binding.device_identity.clone()),
+            space: space.clone(),
+            mode: mode.clone(),
+            ttl_minutes,
+        },
+        ctx.identity.public_key_bytes(),
+        |msg| ctx.identity.sign(msg),
+    );
+    let trace_id_hex: String = trace.id[..8].iter().map(|b| format!("{b:02x}")).collect();
+
+    match ctx.store.insert(&trace) {
+        Ok(_) => json!({
+            "active": true,
+            "space": space,
+            "mode": mode,
+            "ttl_minutes": ttl_minutes,
+            "trace_id": trace_id_hex,
+        })
+        .to_string(),
+        Err(e) => json!({"error": format!("storage: {e}")}).to_string(),
+    }
+}
+
 fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
     let params = parse_query_params(path);
     let context_str = params.get("context").map(String::as_str).unwrap_or("");
@@ -247,7 +300,7 @@ fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
 
             let mut cap_groups: HashMap<&str, Vec<&Trace>> = HashMap::new();
             for trace in &traces {
-                if is_signal_capability(&trace.capability) {
+                if is_signal_capability(&trace.capability) || is_presence_capability(&trace.capability) {
                     continue;
                 }
                 cap_groups.entry(&trace.capability).or_default().push(trace);
@@ -392,6 +445,36 @@ fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
     json!({ "signals": results }).to_string()
 }
 
+fn handle_get_presence_feed(ctx: &HttpContext, path: &str) -> String {
+    let params = parse_query_params(path);
+    let hours: u32 = params
+        .get("hours")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let limit: usize = params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    let space = params.get("space").map(String::as_str);
+    let fetch_limit = if space.is_some() {
+        limit.max(1).saturating_mul(10)
+    } else {
+        limit
+    };
+    let traces = match ctx.store.query_recent_presence_traces(hours, fetch_limit) {
+        Ok(traces) => traces,
+        Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
+    };
+    let results = summarize_recent_presence(
+        &traces,
+        space,
+        &ctx.binding.device_identity,
+        ctx.identity.public_key_bytes(),
+        limit,
+    );
+    json!({ "sessions": results }).to_string()
+}
+
 fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> String {
     let context_str = params.get("context").map(String::as_str).unwrap_or("");
     let kind = match params.get("kind") {
@@ -452,7 +535,7 @@ fn handle_get_capabilities(ctx: &HttpContext) -> String {
     let caps = ctx.store.distinct_capabilities(100).unwrap_or_default();
     let mut result = Vec::new();
     for cap in &caps {
-        if is_signal_capability(cap) {
+        if is_signal_capability(cap) || is_presence_capability(cap) {
             continue;
         }
         if let Ok(Some(stats)) = ctx.store.aggregate(cap) {
@@ -476,7 +559,9 @@ fn handle_get_status(ctx: &HttpContext) -> String {
         .distinct_capabilities(1000)
         .map(|caps| {
             caps.into_iter()
-                .filter(|capability| !is_signal_capability(capability))
+                .filter(|capability| {
+                    !is_signal_capability(capability) && !is_presence_capability(capability)
+                })
                 .count()
         })
         .unwrap_or(0);
@@ -715,5 +800,32 @@ mod tests {
         assert_eq!(signals[0]["corroboration_tier"], "single_source");
         assert_eq!(signals[0]["focus_tier"], "background");
         assert_eq!(signals[0]["evidence_scope"], "local");
+    }
+
+    #[test]
+    fn presence_post_and_feed_roundtrip() {
+        let ctx = make_ctx();
+
+        let post_presence = concat!(
+            "POST /v1/presence HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"space\":\"psyche\",\"mode\":\"focus\",\"model\":\"codex\",\"session_id\":\"codex-1\"}",
+        );
+        let post_response = parse_body(&handle_http_request(&ctx, post_presence));
+        assert_eq!(post_response["active"], true);
+        assert_eq!(post_response["space"], "psyche");
+        assert_eq!(post_response["mode"], "focus");
+
+        let feed_response = parse_body(&handle_http_request(
+            &ctx,
+            "GET /v1/presence/feed?space=psyche&hours=1&limit=5 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ));
+        let sessions = feed_response["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["space"], "psyche");
+        assert_eq!(sessions[0]["mode"], "focus");
+        assert_eq!(sessions[0]["session_id"], "codex-1");
     }
 }

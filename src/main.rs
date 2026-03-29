@@ -31,6 +31,10 @@ use thronglets::posts::{
     create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
     is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
 };
+use thronglets::presence::{
+    DEFAULT_PRESENCE_TTL_MINUTES, PresenceFeedResult, PresenceTraceConfig, create_presence_trace,
+    is_presence_capability, summarize_recent_presence,
+};
 use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
     Recommendation, Signal, SignalKind, StepCandidate, select as select_signals,
@@ -42,6 +46,7 @@ use tracing::info;
 
 const BOOTSTRAP_SCHEMA_VERSION: &str = "thronglets.bootstrap.v2";
 const IDENTITY_SCHEMA_VERSION: &str = "thronglets.identity.v1";
+const PRESENCE_SCHEMA_VERSION: &str = "thronglets.presence.v1";
 const VERSION_SCHEMA_VERSION: &str = "thronglets.version.v1";
 const RELEASE_MAX_LOCAL_RETENTION_DROP_TENTHS_PP: i32 = 50;
 const RELEASE_MAX_FAILED_COMMAND_RATE_RISE_TENTHS_PP: i32 = 50;
@@ -253,6 +258,27 @@ struct VersionData {
     summary: VersionSummary,
     binary_path: String,
     source_hint: &'static str,
+}
+
+#[derive(Serialize)]
+struct PresenceSummary {
+    status: &'static str,
+    active_sessions: usize,
+    space: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PresencePostData {
+    summary: PresenceSummary,
+    mode: Option<String>,
+    ttl_minutes: u32,
+    trace_id: String,
+}
+
+#[derive(Serialize)]
+struct PresenceFeedData {
+    summary: PresenceSummary,
+    sessions: Vec<PresenceFeedResult>,
 }
 
 #[derive(Parser)]
@@ -552,6 +578,52 @@ enum Commands {
         /// Maximum results to return.
         #[arg(long, default_value_t = 10)]
         limit: usize,
+    },
+
+    /// Announce that this session is active in a space, even without tool calls.
+    PresencePing {
+        /// Optional explicit substrate space this presence belongs to.
+        #[arg(long)]
+        space: Option<String>,
+
+        /// Optional lightweight mode label, such as focus / explore / review / blocked.
+        #[arg(long)]
+        mode: Option<String>,
+
+        /// Model identifier.
+        #[arg(long, default_value = "cli")]
+        model: String,
+
+        /// Optional session identifier.
+        #[arg(long)]
+        session_id: Option<String>,
+
+        /// How long this presence heartbeat should remain active.
+        #[arg(long, default_value_t = DEFAULT_PRESENCE_TTL_MINUTES)]
+        ttl_minutes: u32,
+
+        /// Emit machine-readable JSON instead of text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Show recent active sessions in a shared substrate space.
+    PresenceFeed {
+        /// Only include presence heartbeats seen in roughly the last N hours.
+        #[arg(long, default_value_t = 1)]
+        hours: u32,
+
+        /// Restrict to one explicit substrate space.
+        #[arg(long)]
+        space: Option<String>,
+
+        /// Maximum sessions to return.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+
+        /// Emit machine-readable JSON instead of text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 
     /// Start MCP server for AI agent integration (JSON-RPC over stdio)
@@ -1114,6 +1186,32 @@ fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
     }
 }
 
+fn render_presence_feed_results(results: &[PresenceFeedResult]) {
+    if results.is_empty() {
+        println!("No recent active sessions found.");
+        return;
+    }
+
+    println!("Active sessions:");
+    for result in results {
+        let session = result.session_id.as_deref().unwrap_or("unknown-session");
+        let mode = result.mode.as_deref().unwrap_or("active");
+        println!("  {} [{}]", result.model_id, mode);
+        if let Some(space) = &result.space {
+            println!("    space: {space}");
+        }
+        println!("    session: {session}");
+        if let Some(device_identity) = &result.device_identity {
+            println!("    device: {device_identity}");
+        }
+        println!(
+            "    scope={} expires_in≈{}m",
+            result.evidence_scope,
+            presence_minutes_remaining(result.expires_at)
+        );
+    }
+}
+
 fn render_version_report(data: &VersionData) {
     println!("Thronglets version: {}", data.summary.version);
     println!(
@@ -1133,6 +1231,18 @@ fn signal_hours_remaining(expires_at: u64) -> u64 {
         0
     } else {
         (expires_at - now_ms).div_ceil(60 * 60 * 1000)
+    }
+}
+
+fn presence_minutes_remaining(expires_at: u64) -> u64 {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    if expires_at <= now_ms {
+        0
+    } else {
+        (expires_at - now_ms).div_ceil(60 * 1000)
     }
 }
 
@@ -2162,6 +2272,84 @@ async fn main() {
             render_signal_feed_results(&results);
         }
 
+        Commands::PresencePing {
+            space,
+            mode,
+            model,
+            session_id,
+            ttl_minutes,
+            json,
+        } => {
+            let store = open_store(&dir);
+            let trace = create_presence_trace(
+                PresenceTraceConfig {
+                    model_id: model,
+                    session_id,
+                    owner_account: identity_binding.owner_account.clone(),
+                    device_identity: Some(identity_binding.device_identity.clone()),
+                    space: space.clone(),
+                    mode: mode.clone(),
+                    ttl_minutes,
+                },
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&trace).expect("failed to insert presence trace");
+            let data = PresencePostData {
+                summary: PresenceSummary {
+                    status: "active",
+                    active_sessions: 1,
+                    space: space.clone(),
+                },
+                mode: mode.clone(),
+                ttl_minutes,
+                trace_id: hex_encode(&trace.id[..8]),
+            };
+            if json {
+                print_machine_json_with_schema(PRESENCE_SCHEMA_VERSION, "presence-ping", &data);
+            } else {
+                println!("Presence recorded:");
+                if let Some(space) = space {
+                    println!("  Space:      {space}");
+                }
+                println!("  Mode:       {}", mode.unwrap_or_else(|| "active".into()));
+                println!("  Fresh for:  {}m", ttl_minutes);
+                println!("  Trace ID:   {}", data.trace_id);
+            }
+        }
+
+        Commands::PresenceFeed { hours, space, limit, json } => {
+            let store = open_store(&dir);
+            let fetch_limit = if space.is_some() {
+                limit.max(1).saturating_mul(10)
+            } else {
+                limit
+            };
+            let traces = store
+                .query_recent_presence_traces(hours, fetch_limit)
+                .expect("failed to query recent presence traces");
+            let results = summarize_recent_presence(
+                &traces,
+                space.as_deref(),
+                &identity_binding.device_identity,
+                identity.public_key_bytes(),
+                limit,
+            );
+            let data = PresenceFeedData {
+                summary: PresenceSummary {
+                    status: if results.is_empty() { "quiet" } else { "active" },
+                    active_sessions: results.len(),
+                    space: space.clone(),
+                },
+                sessions: results,
+            };
+            if json {
+                print_machine_json_with_schema(PRESENCE_SCHEMA_VERSION, "presence-feed", &data);
+            } else {
+                render_presence_feed_results(&data.sessions);
+            }
+        }
+
         Commands::Run { port, bootstrap } => {
             let store = open_store(&dir);
 
@@ -2237,7 +2425,7 @@ async fn main() {
                     _ = dht_publish_interval.tick() => {
                         if let Ok(caps) = store.distinct_capabilities(100) {
                             for cap in caps {
-                                if is_signal_capability(&cap) {
+                                if is_signal_capability(&cap) || is_presence_capability(&cap) {
                                     continue;
                                 }
                                 if let Ok(Some(stats)) = store.aggregate(&cap) {
@@ -2931,7 +3119,9 @@ async fn main() {
                 .distinct_capabilities(1000)
                 .map(|caps| {
                     caps.into_iter()
-                        .filter(|capability| !is_signal_capability(capability))
+                        .filter(|capability| {
+                            !is_signal_capability(capability) && !is_presence_capability(capability)
+                        })
                         .count()
                 })
                 .unwrap_or(0);

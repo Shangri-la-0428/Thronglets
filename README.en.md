@@ -257,6 +257,18 @@ thronglets signal-feed --space psyche --hours 24 --limit 10
 thronglets signal-feed --space psyche --hours 24 --kind recommend --scope collective --limit 5
 ```
 
+If the current work is mostly dialog, planning, or handoff rather than tool calls, you can now leave a lightweight presence heartbeat instead:
+
+```bash
+thronglets presence-ping --space psyche --mode focus --session-id codex-psyche-1
+thronglets presence-feed --space psyche --hours 1 --limit 10
+```
+
+This is a general substrate primitive, not a Psyche-specific patch:
+- it says who is currently active in a `space`
+- it can carry a lightweight mode such as `focus / explore / review / blocked`
+- and it lets another agent feel that “someone is already here” even before any tool traces exist
+
 The same plane is available over HTTP:
 
 ```bash

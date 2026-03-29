@@ -6,6 +6,7 @@ pub mod http;
 pub mod identity;
 pub mod mcp;
 pub mod network;
+pub mod presence;
 pub mod posts;
 pub mod profile;
 pub mod signals;

@@ -4,6 +4,7 @@
 
 - **Visible substrate activity** — `status --json` and HTTP `/v1/status` now expose `substrate.activity` (`active / learning / quiet`) plus recent intervention metadata, so agents can distinguish Thronglets intervention from ordinary runtime failure instead of guessing
 - **OpenClaw legacy path cleanup** — `setup / bootstrap / apply-plan` now prune the legacy `openclaw-plugin` load path, stale entry, and stale install record so gateway restarts stop spamming manifest/id mismatch warnings
+- **Ambient presence primitive** — Thronglets now exposes `presence-ping / presence-feed` across CLI, HTTP, and MCP, so pure dialog / planning sessions can leave lightweight space-local activity heartbeats with optional mode labels even when no tool call happened
 
 ## v0.4.1 — 2026-03-29
 

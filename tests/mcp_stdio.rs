@@ -106,13 +106,15 @@ async fn mcp_full_protocol_handshake() {
     .await;
 
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 7);
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(tool_names.contains(&"trace_record"));
     assert!(tool_names.contains(&"substrate_query"));
     assert!(tool_names.contains(&"trace_anchor"));
     assert!(tool_names.contains(&"signal_post"));
     assert!(tool_names.contains(&"signal_feed"));
+    assert!(tool_names.contains(&"presence_ping"));
+    assert!(tool_names.contains(&"presence_feed"));
 
     // 4. Record a trace
     let resp = rpc_call(
