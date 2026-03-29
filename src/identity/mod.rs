@@ -17,6 +17,7 @@ use std::path::Path;
 const IDENTITY_BINDING_SCHEMA_VERSION: &str = "thronglets.identity.v1";
 const CONNECTION_FILE_SCHEMA_VERSION: &str = "thronglets.connection.v1";
 const CONNECTION_FILE_SIGNING_DOMAIN: &[u8] = b"thronglets.connection.v1";
+pub const DEFAULT_CONNECTION_FILE_TTL_HOURS: u32 = 24;
 
 /// A node's identity: ed25519 keypair + derived addresses.
 pub struct NodeIdentity {
@@ -45,6 +46,7 @@ pub struct ConnectionFile {
     pub primary_device_identity: String,
     pub primary_device_pubkey: String,
     pub exported_at: u64,
+    pub expires_at: u64,
     pub signature: String,
 }
 
@@ -231,17 +233,22 @@ impl IdentityBinding {
 }
 
 impl ConnectionFile {
-    pub fn from_binding(binding: &IdentityBinding, node_identity: &NodeIdentity) -> Self {
+    pub fn from_binding(
+        binding: &IdentityBinding,
+        node_identity: &NodeIdentity,
+        ttl_hours: u32,
+    ) -> Self {
+        let exported_at = now_ms();
         let mut file = Self {
             schema_version: CONNECTION_FILE_SCHEMA_VERSION.to_string(),
             owner_account: binding.owner_account.clone(),
             primary_device_identity: binding.device_identity.clone(),
             primary_device_pubkey: hex::encode(&node_identity.public_key_bytes()),
-            exported_at: now_ms(),
+            exported_at,
+            expires_at: exported_at.saturating_add(ttl_hours as u64 * 60 * 60 * 1000),
             signature: String::new(),
         };
-        let signature = node_identity.sign(&file.signable_bytes());
-        file.signature = hex::encode(signature.to_bytes().as_slice());
+        file.sign_with(node_identity);
         file
     }
 
@@ -254,7 +261,19 @@ impl ConnectionFile {
                 "primary_device_identity cannot be empty",
             ));
         }
+        if file.expires_at < file.exported_at {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "expires_at must not be earlier than exported_at",
+            ));
+        }
         file.verify()?;
+        if file.is_expired_at(now_ms()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "connection file has expired",
+            ));
+        }
         Ok(file)
     }
 
@@ -302,6 +321,20 @@ impl ConnectionFile {
         Ok(())
     }
 
+    pub fn is_expired_at(&self, now_ms: u64) -> bool {
+        now_ms >= self.expires_at
+    }
+
+    pub fn ttl_hours(&self) -> u32 {
+        let ttl_ms = self.expires_at.saturating_sub(self.exported_at);
+        (ttl_ms / (60 * 60 * 1000)) as u32
+    }
+
+    fn sign_with(&mut self, node_identity: &NodeIdentity) {
+        let signature = node_identity.sign(&self.signable_bytes());
+        self.signature = hex::encode(signature.to_bytes().as_slice());
+    }
+
     fn signable_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(192);
         buf.extend_from_slice(CONNECTION_FILE_SIGNING_DOMAIN);
@@ -309,6 +342,7 @@ impl ConnectionFile {
         push_optional_bytes(&mut buf, Some(self.primary_device_identity.as_str()));
         push_optional_bytes(&mut buf, Some(self.primary_device_pubkey.as_str()));
         buf.extend_from_slice(&self.exported_at.to_le_bytes());
+        buf.extend_from_slice(&self.expires_at.to_le_bytes());
         buf
     }
 }
@@ -454,7 +488,7 @@ mod tests {
             joined_from_device: None,
             updated_at: 123,
         };
-        let file = ConnectionFile::from_binding(&binding, &node);
+        let file = ConnectionFile::from_binding(&binding, &node, DEFAULT_CONNECTION_FILE_TTL_HOURS);
         let path = dir.path().join("device.thronglets.json");
         file.save(&path).unwrap();
         let loaded = ConnectionFile::load(&path).unwrap();
@@ -464,6 +498,7 @@ mod tests {
             loaded.primary_device_pubkey,
             hex::encode(&node.public_key_bytes())
         );
+        assert!(loaded.expires_at > loaded.exported_at);
     }
 
     #[test]
@@ -478,11 +513,35 @@ mod tests {
             joined_from_device: None,
             updated_at: 123,
         };
-        let mut file = ConnectionFile::from_binding(&binding, &node);
+        let mut file =
+            ConnectionFile::from_binding(&binding, &node, DEFAULT_CONNECTION_FILE_TTL_HOURS);
         file.owner_account = Some("oasyce1other".into());
         let path = dir.path().join("device.thronglets.json");
         file.save(&path).unwrap();
         let error = ConnectionFile::load(&path).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn expired_connection_file_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let node = NodeIdentity::generate();
+        let binding = IdentityBinding {
+            schema_version: IDENTITY_BINDING_SCHEMA_VERSION.into(),
+            owner_account: Some("oasyce1owner".into()),
+            device_identity: node.device_identity(),
+            binding_source: Some("manual".into()),
+            joined_from_device: None,
+            updated_at: 123,
+        };
+        let mut file =
+            ConnectionFile::from_binding(&binding, &node, DEFAULT_CONNECTION_FILE_TTL_HOURS);
+        file.exported_at = now_ms().saturating_sub(10_000);
+        file.expires_at = now_ms().saturating_sub(1_000);
+        file.sign_with(&node);
+        let path = dir.path().join("expired.connection.json");
+        file.save(&path).unwrap();
+        let error = ConnectionFile::load(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     }
 }

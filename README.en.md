@@ -137,6 +137,7 @@ thronglets connection-join --file ./thronglets.connection.json
 - `id` / `owner-bind` / `connection-export` / `connection-join` / `status` all support `--json`
 - `owner-bind` is the manual advanced fallback
 - `connection-export / connection-join` are the primary onboarding path and verify the primary-device signature by default
+- `connection-export` now emits a `24h` connection file by default and supports `--ttl-hours`; `connection-join` verifies both signature and expiry
 
 ## Deployment Boundary
 

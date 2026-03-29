@@ -19,7 +19,10 @@ use thronglets::eval::{
     EvalBaselineComparison, EvalCheckStatus, EvalCheckThresholds, EvalConfig, EvalFocus,
     LocalFeedbackSummary, SignalEvalSummary, evaluate_signal_quality,
 };
-use thronglets::identity::{ConnectionFile, IdentityBinding, NodeIdentity, identity_binding_path};
+use thronglets::identity::{
+    ConnectionFile, DEFAULT_CONNECTION_FILE_TTL_HOURS, IdentityBinding, NodeIdentity,
+    identity_binding_path,
+};
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
 use thronglets::posts::{
@@ -180,6 +183,8 @@ struct ConnectionExportData {
     output: String,
     primary_device_pubkey: String,
     signed_by_device: String,
+    ttl_hours: u32,
+    expires_at: u64,
 }
 
 #[derive(Serialize)]
@@ -187,6 +192,7 @@ struct ConnectionJoinData {
     summary: IdentitySummary,
     file: String,
     signature_verified: bool,
+    source_expires_at: u64,
 }
 
 #[derive(Serialize)]
@@ -355,6 +361,10 @@ enum Commands {
         /// Where to write the connection file.
         #[arg(long)]
         output: PathBuf,
+
+        /// How long the exported connection file should remain valid.
+        #[arg(long, default_value_t = DEFAULT_CONNECTION_FILE_TTL_HOURS)]
+        ttl_hours: u32,
 
         /// Emit machine-readable JSON instead of text.
         #[arg(long, default_value_t = false)]
@@ -1603,8 +1613,12 @@ async fn main() {
             }
         }
 
-        Commands::ConnectionExport { output, json } => {
-            let connection = ConnectionFile::from_binding(&identity_binding, &identity);
+        Commands::ConnectionExport {
+            output,
+            ttl_hours,
+            json,
+        } => {
+            let connection = ConnectionFile::from_binding(&identity_binding, &identity, ttl_hours);
             connection
                 .save(&output)
                 .expect("failed to write connection file");
@@ -1613,6 +1627,8 @@ async fn main() {
                 output: output.display().to_string(),
                 primary_device_pubkey: connection.primary_device_pubkey.clone(),
                 signed_by_device: connection.primary_device_identity.clone(),
+                ttl_hours: connection.ttl_hours(),
+                expires_at: connection.expires_at,
             };
             if json {
                 print_machine_json_with_schema(IDENTITY_SCHEMA_VERSION, "connection-export", &data);
@@ -1625,6 +1641,7 @@ async fn main() {
                 );
                 println!("  Primary device:     {}", identity_binding.device_identity);
                 println!("  Signed by device:   {}", data.signed_by_device);
+                println!("  Expires in:         {}h", data.ttl_hours);
             }
         }
 
@@ -1641,6 +1658,7 @@ async fn main() {
                 summary: identity_summary("joined", &binding),
                 file: file.display().to_string(),
                 signature_verified: true,
+                source_expires_at: connection.expires_at,
             };
             if json {
                 print_machine_json_with_schema(IDENTITY_SCHEMA_VERSION, "connection-join", &data);

@@ -18,6 +18,14 @@ fn run_bin(args: &[&str], data_dir: &Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be valid json")
 }
 
+fn run_bin_raw(args: &[&str], data_dir: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_thronglets"))
+        .args(["--data-dir", data_dir.to_str().unwrap()])
+        .args(args)
+        .output()
+        .expect("failed to run thronglets")
+}
+
 #[test]
 fn id_json_surfaces_identity_summary() {
     let temp = TempDir::new().unwrap();
@@ -68,6 +76,8 @@ fn connection_join_json_preserves_secondary_device_and_owner_binding() {
     assert_eq!(exported["command"], "connection-export");
     assert_eq!(exported["data"]["summary"]["owner_account"], "oasyce1owner");
     assert_eq!(exported["data"]["signed_by_device"], primary_device);
+    assert_eq!(exported["data"]["ttl_hours"], 24);
+    assert!(exported["data"]["expires_at"].as_u64().unwrap() > 0);
 
     let joined = run_bin(
         &[
@@ -112,4 +122,41 @@ fn connection_join_json_preserves_secondary_device_and_owner_binding() {
         status["data"]["summary"]["device_identity"],
         secondary_device.as_str()
     );
+}
+
+#[test]
+fn expired_connection_file_join_fails() {
+    let temp = TempDir::new().unwrap();
+    let primary_dir = temp.path().join("primary");
+    let secondary_dir = temp.path().join("secondary");
+    let connection_file = temp.path().join("expired.connection.json");
+
+    let exported = run_bin(
+        &[
+            "connection-export",
+            "--output",
+            connection_file.to_str().unwrap(),
+            "--ttl-hours",
+            "0",
+            "--json",
+        ],
+        &primary_dir,
+    );
+    assert_eq!(exported["data"]["ttl_hours"], 0);
+
+    let output = run_bin_raw(
+        &[
+            "connection-join",
+            "--file",
+            connection_file.to_str().unwrap(),
+            "--json",
+        ],
+        &secondary_dir,
+    );
+    assert!(
+        !output.status.success(),
+        "expired join unexpectedly succeeded"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("connection file has expired"));
 }
