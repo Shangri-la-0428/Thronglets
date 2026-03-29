@@ -3,7 +3,9 @@
 //! Each node stores traces locally. No global consensus needed.
 //! Traces have TTL — like pheromone evaporation, old signals fade.
 
-use crate::posts::{SIGNAL_CAPABILITY_PREFIX, SignalPostKind};
+use crate::posts::{
+    SIGNAL_CAPABILITY_PREFIX, SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX, SignalPostKind,
+};
 use crate::signals::StepAction;
 use crate::trace::{Outcome, Trace};
 use ed25519_dalek::Signature;
@@ -451,34 +453,47 @@ impl TraceStore {
         let bucket_hi = (target_bucket + bucket_radius).min(65535);
         let query_limit = (limit.max(1) * 20) as i64;
 
-        let candidates = if let Some(kind) = kind {
-            let capability = kind.capability();
-            let mut stmt = conn.prepare(
-                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
-                        context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
-                 FROM traces
-                 WHERE context_bucket BETWEEN ?1 AND ?2
-                   AND capability = ?3
-                 ORDER BY timestamp DESC
-                 LIMIT ?4",
-            )?;
-            Self::collect_traces(
-                &mut stmt,
-                params![bucket_lo, bucket_hi, capability, query_limit],
-            )?
+        let mut candidates = if let Some(kind) = kind {
+            let mut traces = Vec::new();
+            for capability in [kind.capability(), kind.reinforcement_capability()] {
+                let mut stmt = conn.prepare(
+                    "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                            context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
+                     FROM traces
+                     WHERE context_bucket BETWEEN ?1 AND ?2
+                       AND capability = ?3
+                     ORDER BY timestamp DESC
+                     LIMIT ?4",
+                )?;
+                traces.extend(Self::collect_traces(
+                    &mut stmt,
+                    params![bucket_lo, bucket_hi, capability, query_limit],
+                )?);
+            }
+            traces
         } else {
-            let like = format!("{SIGNAL_CAPABILITY_PREFIX}%");
-            let mut stmt = conn.prepare(
-                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
-                        context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
-                 FROM traces
-                 WHERE context_bucket BETWEEN ?1 AND ?2
-                   AND capability LIKE ?3
-                 ORDER BY timestamp DESC
-                 LIMIT ?4",
-            )?;
-            Self::collect_traces(&mut stmt, params![bucket_lo, bucket_hi, like, query_limit])?
+            let mut traces = Vec::new();
+            for like in [
+                format!("{SIGNAL_CAPABILITY_PREFIX}%"),
+                format!("{SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX}%"),
+            ] {
+                let mut stmt = conn.prepare(
+                    "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                            context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
+                     FROM traces
+                     WHERE context_bucket BETWEEN ?1 AND ?2
+                       AND capability LIKE ?3
+                     ORDER BY timestamp DESC
+                     LIMIT ?4",
+                )?;
+                traces.extend(Self::collect_traces(
+                    &mut stmt,
+                    params![bucket_lo, bucket_hi, like, query_limit],
+                )?);
+            }
+            traces
         };
+        candidates.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         let mut matched: Vec<Trace> = candidates
             .into_iter()
@@ -502,30 +517,43 @@ impl TraceStore {
         let query_limit = (limit.max(1) * 20) as i64;
 
         let mut traces = if let Some(kind) = kind {
-            let capability = kind.capability();
-            let mut stmt = conn.prepare(
-                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
-                        context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
-                 FROM traces
-                 WHERE capability = ?1
-                   AND timestamp >= ?2
-                 ORDER BY timestamp DESC
-                 LIMIT ?3",
-            )?;
-            Self::collect_traces(&mut stmt, params![capability, cutoff_ms, query_limit])?
+            let mut traces = Vec::new();
+            for capability in [kind.capability(), kind.reinforcement_capability()] {
+                let mut stmt = conn.prepare(
+                    "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                            context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
+                     FROM traces
+                     WHERE capability = ?1
+                       AND timestamp >= ?2
+                     ORDER BY timestamp DESC
+                     LIMIT ?3",
+                )?;
+                traces.extend(Self::collect_traces(
+                    &mut stmt,
+                    params![capability, cutoff_ms, query_limit],
+                )?);
+            }
+            traces
         } else {
-            let like = format!("{SIGNAL_CAPABILITY_PREFIX}%");
-            let mut stmt = conn.prepare(
-                "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
-                        context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
-                 FROM traces
-                 WHERE capability LIKE ?1
-                   AND timestamp >= ?2
-                 ORDER BY timestamp DESC
-                 LIMIT ?3",
-            )?;
-            Self::collect_traces(&mut stmt, params![like, cutoff_ms, query_limit])?
+            let mut traces = Vec::new();
+            for like in [
+                format!("{SIGNAL_CAPABILITY_PREFIX}%"),
+                format!("{SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX}%"),
+            ] {
+                let mut stmt = conn.prepare(
+                    "SELECT id, capability, outcome, latency_ms, input_size, context_hash,
+                            context_text, session_id, owner_account, device_identity, model_id, timestamp, node_pubkey, signature
+                     FROM traces
+                     WHERE capability LIKE ?1
+                       AND timestamp >= ?2
+                     ORDER BY timestamp DESC
+                     LIMIT ?3",
+                )?;
+                traces.extend(Self::collect_traces(&mut stmt, params![like, cutoff_ms, query_limit])?);
+            }
+            traces
         };
+        traces.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         traces.truncate(limit);
         Ok(traces)
     }
@@ -1381,6 +1409,56 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].capability, SignalPostKind::Avoid.capability());
+    }
+
+    #[test]
+    fn query_signal_traces_includes_reinforcement_for_same_kind() {
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+
+        let signal = crate::posts::create_signal_trace(
+            SignalPostKind::Avoid,
+            "repair flaky ci",
+            "skip the generated lockfile",
+            crate::posts::SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("s1".into()),
+                owner_account: None,
+                device_identity: Some(id.device_identity()),
+                ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        let reinforcement = crate::posts::create_signal_reinforcement_trace(
+            SignalPostKind::Avoid,
+            "repair flaky ci",
+            "skip the generated lockfile",
+            crate::posts::SignalTraceConfig {
+                model_id: "thronglets-query".into(),
+                session_id: None,
+                owner_account: None,
+                device_identity: Some(id.device_identity()),
+                ttl_hours: crate::posts::DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+            },
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+
+        store.insert(&signal).unwrap();
+        store.insert(&reinforcement).unwrap();
+
+        let target = crate::context::simhash("repair flaky ci");
+        let results = store
+            .query_signal_traces(&target, Some(SignalPostKind::Avoid), 48, 10)
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .any(|trace| trace.capability == SignalPostKind::Avoid.capability()));
+        assert!(results
+            .iter()
+            .any(|trace| trace.capability == SignalPostKind::Avoid.reinforcement_capability()));
     }
 
     #[test]

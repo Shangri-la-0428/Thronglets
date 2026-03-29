@@ -15,9 +15,10 @@
 use crate::context::{simhash, similarity};
 use crate::identity::{IdentityBinding, NodeIdentity};
 use crate::posts::{
-    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalScopeFilter, SignalTraceConfig,
-    create_signal_trace, filter_signal_feed_results, is_signal_capability,
-    summarize_recent_signal_feed, summarize_signal_traces,
+    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind,
+    SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
+    create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
+    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
 };
 use crate::storage::TraceStore;
 use crate::trace::{Outcome, Trace};
@@ -352,18 +353,30 @@ fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
         Ok(traces) => traces,
         Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
     };
-    json!({
-        "signals": filter_signal_feed_results(
-            summarize_recent_signal_feed(
-                &traces,
-                &ctx.binding.device_identity,
-                ctx.identity.public_key_bytes(),
-                limit,
-            ),
-            scope,
+    let results = filter_signal_feed_results(
+        summarize_recent_signal_feed(
+            &traces,
+            &ctx.binding.device_identity,
+            ctx.identity.public_key_bytes(),
+            limit,
         ),
-    })
-    .to_string()
+        scope,
+    );
+    for trace in create_feed_reinforcement_traces(
+        &results,
+        SignalTraceConfig {
+            model_id: "thronglets-feed".into(),
+            session_id: None,
+            owner_account: ctx.binding.owner_account.clone(),
+            device_identity: Some(ctx.binding.device_identity.clone()),
+            ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+        },
+        ctx.identity.public_key_bytes(),
+        |msg| ctx.identity.sign(msg),
+    ) {
+        let _ = ctx.store.insert(&trace);
+    }
+    json!({ "signals": results }).to_string()
 }
 
 fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> String {
@@ -388,16 +401,30 @@ fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> 
         Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
     };
 
-    json!({
-        "signals": summarize_signal_traces(
-            &traces,
-            context_str,
-            &ctx.binding.device_identity,
-            ctx.identity.public_key_bytes(),
-            limit,
-        ),
-    })
-    .to_string()
+    let results = summarize_signal_traces(
+        &traces,
+        context_str,
+        &ctx.binding.device_identity,
+        ctx.identity.public_key_bytes(),
+        limit,
+    );
+    for trace in create_query_reinforcement_traces(
+        &results,
+        context_str,
+        SignalTraceConfig {
+            model_id: "thronglets-query".into(),
+            session_id: None,
+            owner_account: ctx.binding.owner_account.clone(),
+            device_identity: Some(ctx.binding.device_identity.clone()),
+            ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+        },
+        ctx.identity.public_key_bytes(),
+        |msg| ctx.identity.sign(msg),
+    ) {
+        let _ = ctx.store.insert(&trace);
+    }
+
+    json!({ "signals": results }).to_string()
 }
 
 fn handle_get_capabilities(ctx: &HttpContext) -> String {

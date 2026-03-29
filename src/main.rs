@@ -26,9 +26,10 @@ use thronglets::identity::{
 use thronglets::mcp::McpContext;
 use thronglets::network::{NetworkCommand, NetworkConfig, NetworkEvent};
 use thronglets::posts::{
-    DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind, SignalScopeFilter, SignalTraceConfig,
-    create_signal_trace, filter_signal_feed_results, is_signal_capability,
-    summarize_recent_signal_feed, summarize_signal_traces,
+    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind,
+    SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
+    create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
+    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
 };
 use thronglets::profile::{ProfileCheckThresholds, summarize_prehook_profiles};
 use thronglets::signals::{
@@ -981,14 +982,20 @@ fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult])
         } else {
             String::new()
         };
+        let reinforcement_suffix = if result.reinforcement_count > 0 {
+            format!(" reads={}", result.reinforcement_count)
+        } else {
+            String::new()
+        };
         println!(
-            "    similarity={:.2} posts={} sources={}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
+            "    similarity={:.2} posts={} sources={}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
             result.context_similarity,
             result.total_posts,
             result.source_count,
             model_suffix,
             density_suffix,
             promotion_suffix,
+            reinforcement_suffix,
             result.local_source_count,
             result.collective_source_count,
             result.evidence_scope,
@@ -1048,14 +1055,20 @@ fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
         } else {
             String::new()
         };
+        let reinforcement_suffix = if result.reinforcement_count > 0 {
+            format!(" reads={}", result.reinforcement_count)
+        } else {
+            String::new()
+        };
         println!(
-            "    posts={} sources={}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
+            "    posts={} sources={}{}{}{}{}{} (local {} / collective {}) scope={} expires_in≈{}h",
             result.total_posts,
             result.source_count,
             model_suffix,
             focus_suffix,
             density_suffix,
             promotion_suffix,
+            reinforcement_suffix,
             result.local_source_count,
             result.collective_source_count,
             result.evidence_scope,
@@ -2042,6 +2055,21 @@ async fn main() {
                 identity.public_key_bytes(),
                 limit,
             );
+            for trace in create_query_reinforcement_traces(
+                &results,
+                &context,
+                SignalTraceConfig {
+                    model_id: "thronglets-query".into(),
+                    session_id: None,
+                    owner_account: identity_binding.owner_account.clone(),
+                    device_identity: Some(identity_binding.device_identity.clone()),
+                    ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+                },
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            ) {
+                let _ = store.insert(&trace);
+            }
             render_signal_query_results(&results);
         }
 
@@ -2064,6 +2092,20 @@ async fn main() {
                 ),
                 scope.into(),
             );
+            for trace in create_feed_reinforcement_traces(
+                &results,
+                SignalTraceConfig {
+                    model_id: "thronglets-feed".into(),
+                    session_id: None,
+                    owner_account: identity_binding.owner_account.clone(),
+                    device_identity: Some(identity_binding.device_identity.clone()),
+                    ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+                },
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            ) {
+                let _ = store.insert(&trace);
+            }
             render_signal_feed_results(&results);
         }
 

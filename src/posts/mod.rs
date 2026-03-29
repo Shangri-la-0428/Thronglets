@@ -6,7 +6,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const SIGNAL_CAPABILITY_PREFIX: &str = "urn:thronglets:signal:";
+pub const SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX: &str = "urn:thronglets:signal-read:";
 pub const DEFAULT_SIGNAL_TTL_HOURS: u32 = 72;
+pub const DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS: u32 = 24;
 
 #[derive(Debug, Clone)]
 pub struct SignalTraceConfig {
@@ -70,6 +72,10 @@ impl SignalPostKind {
         format!("{SIGNAL_CAPABILITY_PREFIX}{}", self.as_str())
     }
 
+    pub fn reinforcement_capability(self) -> String {
+        format!("{SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX}{}", self.as_str())
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "recommend" => Some(Self::Recommend),
@@ -80,10 +86,14 @@ impl SignalPostKind {
         }
     }
 
-    pub fn from_capability(capability: &str) -> Option<Self> {
+    pub fn from_capability(capability: &str) -> Option<(Self, bool)> {
+        if let Some(value) = capability.strip_prefix(SIGNAL_CAPABILITY_PREFIX) {
+            return Self::parse(value).map(|kind| (kind, false));
+        }
         capability
-            .strip_prefix(SIGNAL_CAPABILITY_PREFIX)
+            .strip_prefix(SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX)
             .and_then(Self::parse)
+            .map(|kind| (kind, true))
     }
 }
 
@@ -100,6 +110,7 @@ pub struct SignalQueryResult {
     pub message: String,
     pub context_similarity: f64,
     pub total_posts: u64,
+    pub reinforcement_count: u32,
     pub source_count: u32,
     pub model_count: u32,
     pub corroboration_tier: String,
@@ -119,6 +130,7 @@ pub struct SignalFeedResult {
     pub kind: String,
     pub message: String,
     pub total_posts: u64,
+    pub reinforcement_count: u32,
     pub source_count: u32,
     pub model_count: u32,
     pub corroboration_tier: String,
@@ -138,6 +150,7 @@ pub struct SignalFeedResult {
 #[derive(Debug, Clone)]
 struct DecodedSignalTrace {
     kind: SignalPostKind,
+    reinforcement: bool,
     context: String,
     message: String,
     expires_at: u64,
@@ -149,6 +162,7 @@ struct SignalGroup {
     message: String,
     best_similarity: f64,
     total_posts: u64,
+    reinforcement_count: u32,
     latest_timestamp: u64,
     expires_at: u64,
     contexts: BTreeSet<String>,
@@ -160,6 +174,7 @@ struct SignalGroup {
 
 pub fn is_signal_capability(capability: &str) -> bool {
     capability.starts_with(SIGNAL_CAPABILITY_PREFIX)
+        || capability.starts_with(SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX)
 }
 
 pub fn create_signal_trace(
@@ -170,7 +185,18 @@ pub fn create_signal_trace(
     node_pubkey: [u8; 32],
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
-    create_signal_trace_at(
+    create_signal_trace_at(kind, context, message, config, now_ms(), node_pubkey, sign_fn)
+}
+
+pub fn create_signal_reinforcement_trace(
+    kind: SignalPostKind,
+    context: &str,
+    message: &str,
+    config: SignalTraceConfig,
+    node_pubkey: [u8; 32],
+    sign_fn: impl FnOnce(&[u8]) -> Signature,
+) -> Trace {
+    create_signal_reinforcement_trace_at(
         kind,
         context,
         message,
@@ -190,6 +216,46 @@ fn create_signal_trace_at(
     node_pubkey: [u8; 32],
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
+    create_signal_trace_with_capability(
+        kind.capability(),
+        context,
+        message,
+        config,
+        now_ms,
+        node_pubkey,
+        sign_fn,
+    )
+}
+
+fn create_signal_reinforcement_trace_at(
+    kind: SignalPostKind,
+    context: &str,
+    message: &str,
+    config: SignalTraceConfig,
+    now_ms: u64,
+    node_pubkey: [u8; 32],
+    sign_fn: impl FnOnce(&[u8]) -> Signature,
+) -> Trace {
+    create_signal_trace_with_capability(
+        kind.reinforcement_capability(),
+        context,
+        message,
+        config,
+        now_ms,
+        node_pubkey,
+        sign_fn,
+    )
+}
+
+fn create_signal_trace_with_capability(
+    capability: String,
+    context: &str,
+    message: &str,
+    config: SignalTraceConfig,
+    now_ms: u64,
+    node_pubkey: [u8; 32],
+    sign_fn: impl FnOnce(&[u8]) -> Signature,
+) -> Trace {
     let payload = SignalTracePayload {
         context: context.to_string(),
         message: message.to_string(),
@@ -197,7 +263,7 @@ fn create_signal_trace_at(
     };
 
     let mut trace = Trace::new_with_identity(
-        kind.capability(),
+        capability,
         Outcome::Succeeded,
         0,
         message.len().min(u32::MAX as usize) as u32,
@@ -240,6 +306,7 @@ pub fn summarize_signal_traces(
             message: decoded.message.clone(),
             best_similarity: similarity_score,
             total_posts: 0,
+            reinforcement_count: 0,
             latest_timestamp: trace.timestamp,
             expires_at: decoded.expires_at,
             contexts: BTreeSet::new(),
@@ -249,24 +316,29 @@ pub fn summarize_signal_traces(
             collective_sources: BTreeSet::new(),
         });
         entry.best_similarity = entry.best_similarity.max(similarity_score);
-        entry.total_posts += 1;
         entry.latest_timestamp = entry.latest_timestamp.max(trace.timestamp);
         entry.expires_at = entry.expires_at.max(decoded.expires_at);
         if !decoded.context.is_empty() {
             entry.contexts.insert(decoded.context);
         }
-        let source = source_key(trace);
-        entry.sources.insert(source.clone());
-        entry.models.insert(trace.model_id.clone());
-        if is_local_source(trace, local_device_identity, &local_node_pubkey) {
-            entry.local_sources.insert(source);
+        if decoded.reinforcement {
+            entry.reinforcement_count = entry.reinforcement_count.saturating_add(1);
         } else {
-            entry.collective_sources.insert(source);
+            entry.total_posts += 1;
+            let source = source_key(trace);
+            entry.sources.insert(source.clone());
+            entry.models.insert(trace.model_id.clone());
+            if is_local_source(trace, local_device_identity, &local_node_pubkey) {
+                entry.local_sources.insert(source);
+            } else {
+                entry.collective_sources.insert(source);
+            }
         }
     }
 
     let mut results: Vec<_> = groups
         .into_values()
+        .filter(|group| group.total_posts > 0)
         .map(|group| {
             let local_source_count = group.local_sources.len() as u32;
             let collective_source_count = group.collective_sources.len() as u32;
@@ -280,6 +352,7 @@ pub fn summarize_signal_traces(
                 source_count,
                 model_count,
                 0,
+                group.reinforcement_count,
             );
             let promotion_state =
                 signal_promotion_state(density_score, local_source_count, collective_source_count);
@@ -288,6 +361,7 @@ pub fn summarize_signal_traces(
                 message: group.message,
                 context_similarity: round2(group.best_similarity),
                 total_posts: group.total_posts,
+                reinforcement_count: group.reinforcement_count,
                 source_count,
                 model_count,
                 corroboration_tier: signal_corroboration_tier(source_count, model_count).to_string(),
@@ -346,6 +420,7 @@ pub fn summarize_recent_signal_feed(
             message: decoded.message.clone(),
             best_similarity: 0.0,
             total_posts: 0,
+            reinforcement_count: 0,
             latest_timestamp: trace.timestamp,
             expires_at: decoded.expires_at,
             contexts: BTreeSet::new(),
@@ -354,24 +429,29 @@ pub fn summarize_recent_signal_feed(
             local_sources: BTreeSet::new(),
             collective_sources: BTreeSet::new(),
         });
-        entry.total_posts += 1;
         entry.latest_timestamp = entry.latest_timestamp.max(trace.timestamp);
         entry.expires_at = entry.expires_at.max(decoded.expires_at);
         if !decoded.context.is_empty() {
             entry.contexts.insert(decoded.context);
         }
-        let source = source_key(trace);
-        entry.sources.insert(source.clone());
-        entry.models.insert(trace.model_id.clone());
-        if is_local_source(trace, local_device_identity, &local_node_pubkey) {
-            entry.local_sources.insert(source);
+        if decoded.reinforcement {
+            entry.reinforcement_count = entry.reinforcement_count.saturating_add(1);
         } else {
-            entry.collective_sources.insert(source);
+            entry.total_posts += 1;
+            let source = source_key(trace);
+            entry.sources.insert(source.clone());
+            entry.models.insert(trace.model_id.clone());
+            if is_local_source(trace, local_device_identity, &local_node_pubkey) {
+                entry.local_sources.insert(source);
+            } else {
+                entry.collective_sources.insert(source);
+            }
         }
     }
 
     let mut results: Vec<_> = groups
         .into_values()
+        .filter(|group| group.total_posts > 0)
         .map(|group| {
             let local_source_count = group.local_sources.len() as u32;
             let collective_source_count = group.collective_sources.len() as u32;
@@ -387,6 +467,7 @@ pub fn summarize_recent_signal_feed(
                 source_count,
                 model_count,
                 freshness_rank,
+                group.reinforcement_count,
             );
             let promotion_state =
                 signal_promotion_state(density_score, local_source_count, collective_source_count);
@@ -400,6 +481,7 @@ pub fn summarize_recent_signal_feed(
                 kind: group.kind.as_str().to_string(),
                 message: group.message,
                 total_posts: group.total_posts,
+                reinforcement_count: group.reinforcement_count,
                 source_count,
                 model_count,
                 corroboration_tier: signal_corroboration_tier(source_count, model_count)
@@ -463,11 +545,61 @@ pub fn filter_signal_feed_results(
     promoted
 }
 
+pub fn create_query_reinforcement_traces(
+    results: &[SignalQueryResult],
+    query_context: &str,
+    config: SignalTraceConfig,
+    node_pubkey: [u8; 32],
+    sign_fn: impl Fn(&[u8]) -> Signature,
+) -> Vec<Trace> {
+    results
+        .iter()
+        .filter(|result| result.promotion_state != "none")
+        .take(3)
+        .filter_map(|result| {
+            let kind = SignalPostKind::parse(&result.kind)?;
+            Some(create_signal_reinforcement_trace(
+                kind,
+                preferred_reinforcement_context(&result.contexts, query_context),
+                &result.message,
+                config.clone(),
+                node_pubkey,
+                |msg| sign_fn(msg),
+            ))
+        })
+        .collect()
+}
+
+pub fn create_feed_reinforcement_traces(
+    results: &[SignalFeedResult],
+    config: SignalTraceConfig,
+    node_pubkey: [u8; 32],
+    sign_fn: impl Fn(&[u8]) -> Signature,
+) -> Vec<Trace> {
+    results
+        .iter()
+        .filter(|result| result.promotion_state != "none")
+        .take(3)
+        .filter_map(|result| {
+            let kind = SignalPostKind::parse(&result.kind)?;
+            Some(create_signal_reinforcement_trace(
+                kind,
+                preferred_reinforcement_context(&result.contexts, &result.message),
+                &result.message,
+                config.clone(),
+                node_pubkey,
+                |msg| sign_fn(msg),
+            ))
+        })
+        .collect()
+}
+
 fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
-    let kind = SignalPostKind::from_capability(&trace.capability)?;
+    let (kind, reinforcement) = SignalPostKind::from_capability(&trace.capability)?;
     let payload: SignalTracePayload = serde_json::from_str(trace.context_text.as_deref()?).ok()?;
     Some(DecodedSignalTrace {
         kind,
+        reinforcement,
         context: payload.context,
         message: payload.message,
         expires_at: payload.expires_at,
@@ -565,11 +697,21 @@ fn signal_density_score(
     source_count: u32,
     model_count: u32,
     freshness_rank: u8,
+    reinforcement_count: u32,
 ) -> u8 {
     local_source_count.min(2) as u8
         + collective_source_count.min(2) as u8
         + signal_corroboration_rank(source_count, model_count)
         + freshness_rank
+        + reinforcement_count.min(2) as u8
+}
+
+fn preferred_reinforcement_context<'a>(contexts: &'a [String], fallback: &'a str) -> &'a str {
+    contexts
+        .iter()
+        .find(|context| !context.is_empty())
+        .map(String::as_str)
+        .unwrap_or(fallback)
 }
 
 fn signal_density_tier(density_score: u8) -> &'static str {
@@ -757,6 +899,90 @@ mod tests {
         assert_eq!(results[0].density_tier, "promoted");
         assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[0].evidence_scope, "mixed");
+    }
+
+    #[test]
+    fn summarize_signal_posts_reinforcement_increases_density_without_new_sources() {
+        let identity = NodeIdentity::generate();
+        let signal = create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            signal_config(&identity, "codex", "session-a"),
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        let reinforcement_a = create_signal_reinforcement_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "thronglets-query".into(),
+                session_id: None,
+                owner_account: None,
+                device_identity: Some(identity.device_identity()),
+                ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+            },
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        let reinforcement_b = create_signal_reinforcement_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "thronglets-feed".into(),
+                session_id: None,
+                owner_account: None,
+                device_identity: Some(identity.device_identity()),
+                ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+            },
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+
+        let results = summarize_signal_traces(
+            &[signal, reinforcement_a, reinforcement_b],
+            "repair release flow",
+            &identity.device_identity(),
+            identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].total_posts, 1);
+        assert_eq!(results[0].reinforcement_count, 2);
+        assert_eq!(results[0].source_count, 1);
+        assert_eq!(results[0].model_count, 1);
+        assert_eq!(results[0].density_tier, "promoted");
+        assert_eq!(results[0].promotion_state, "local");
+    }
+
+    #[test]
+    fn summarize_signal_posts_ignores_reinforcement_without_base_signal() {
+        let identity = NodeIdentity::generate();
+        let reinforcement = create_signal_reinforcement_trace(
+            SignalPostKind::Watch,
+            "ship the current branch",
+            "run release-check before push",
+            SignalTraceConfig {
+                model_id: "thronglets-query".into(),
+                session_id: None,
+                owner_account: None,
+                device_identity: Some(identity.device_identity()),
+                ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
+            },
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+
+        let results = summarize_signal_traces(
+            &[reinforcement],
+            "ship the current branch",
+            &identity.device_identity(),
+            identity.public_key_bytes(),
+            10,
+        );
+        assert!(results.is_empty());
     }
 
     #[test]
@@ -1053,6 +1279,7 @@ mod tests {
                 kind: "recommend".into(),
                 message: "local".into(),
                 total_posts: 1,
+                reinforcement_count: 0,
                 source_count: 1,
                 model_count: 1,
                 corroboration_tier: "single_source".into(),
@@ -1072,6 +1299,7 @@ mod tests {
                 kind: "recommend".into(),
                 message: "collective".into(),
                 total_posts: 2,
+                reinforcement_count: 0,
                 source_count: 2,
                 model_count: 2,
                 corroboration_tier: "multi_model".into(),
@@ -1136,10 +1364,22 @@ mod tests {
 
     #[test]
     fn signal_density_tier_moves_from_sparse_to_dominant() {
-        assert_eq!(signal_density_tier(signal_density_score(0, 0, 1, 1, 0)), "sparse");
-        assert_eq!(signal_density_tier(signal_density_score(1, 0, 1, 1, 0)), "candidate");
-        assert_eq!(signal_density_tier(signal_density_score(1, 1, 2, 2, 0)), "promoted");
-        assert_eq!(signal_density_tier(signal_density_score(1, 2, 2, 2, 1)), "dominant");
+        assert_eq!(
+            signal_density_tier(signal_density_score(0, 0, 1, 1, 0, 0)),
+            "sparse"
+        );
+        assert_eq!(
+            signal_density_tier(signal_density_score(1, 0, 1, 1, 0, 0)),
+            "candidate"
+        );
+        assert_eq!(
+            signal_density_tier(signal_density_score(1, 1, 2, 2, 0, 0)),
+            "promoted"
+        );
+        assert_eq!(
+            signal_density_tier(signal_density_score(1, 2, 2, 2, 1, 0)),
+            "dominant"
+        );
     }
 
     #[test]
