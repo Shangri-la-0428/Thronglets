@@ -4,6 +4,8 @@ Thronglets 现在的主线已经明确：
 
 - 产品形态：`AI-first decision substrate`
 - 接入形态：`one-command setup + machine bootstrap contract`
+- 核心接口：`CLI + hook/prehook + HTTP`
+- MCP 定位：`optional adapter`, not core product
 - 协议形态：`thronglets.bootstrap.v2`
 - 输出原则：`summary first, details second`
 

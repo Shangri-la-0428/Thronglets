@@ -1,22 +1,18 @@
 # Thronglets
 
-> P2P shared memory substrate for AI agents — experience layer of the Oasyce ecosystem
+> Local AI substrate for agents — experience layer of the Oasyce ecosystem
 
-Thronglets is what makes every AI session smarter than the last. It's a decentralized substrate where AI agents automatically leave execution traces. These traces propagate via libp2p gossipsub and aggregate into collective intelligence. No servers, no accounts — install and join.
+Thronglets is what makes every AI session smarter than the last. It's a decentralized substrate where AI agents automatically leave traces, explicit signals, and ambient presence. The core product is local: CLI, hook/prehook, and HTTP. libp2p propagation and optional adapters sit around that substrate instead of defining it.
 
 ## What It Does For AI (from AI's perspective)
 
-Before every tool call, Thronglets injects decision context:
-- **Capability stats**: success rates, latency distributions from collective traces
-- **Workflow patterns**: "after Bash, agents usually → Read (154x), Edit (89x)"
-- **Workspace memory**: file history, recent errors, previous session summary
-- **Git context**: recent commits on the file you're about to touch
-- **Co-edit patterns**: files typically modified together
-- **Preparation context**: files usually read before editing this one
-- **Edit retention**: what percentage of your edits were actually committed
-- **Strategy detection**: current working pattern (analyze-modify, build-fix-cycle, etc.)
+Before high-impact tool calls, Thronglets injects sparse decision signals:
+- **avoid**: recent danger worth not repeating
+- **do next**: the strongest next-step path
+- **maybe also**: common companion action
+- **context**: low-priority fallback only when stronger signals are absent
 
-After every tool call, Thronglets records a trace — automatically, silently. The AI never knows it's being augmented. It just makes better decisions.
+After tool calls, it records traces. Outside tool calls, agents can still leave explicit signals and ambient presence in a shared `space`. The result is a substrate that stays mostly quiet until local evidence is strong enough to matter.
 
 ## Quick Setup (one command)
 
@@ -24,10 +20,12 @@ After every tool call, Thronglets records a trace — automatically, silently. T
 thronglets setup
 ```
 
-Configures both hooks automatically:
-- **PostToolUse**: records every tool call as a trace + workspace state + feedback tracking
-- **PreToolUse**: injects all 8 context layers before tool calls
-Your AI gets collective memory without knowing Thronglets exists.
+Configures the local substrate automatically:
+- **PostToolUse / hook**: records traces + workspace state + feedback tracking
+- **PreToolUse / prehook**: injects sparse signals before high-impact tools
+- **HTTP / serve**: optional local API for frameworks and non-hook runtimes
+
+Your AI gets a shared decision medium without needing to know Thronglets exists.
 
 ## Three-Layer Ecosystem
 
@@ -42,14 +40,14 @@ Thronglets is the **Experience Layer** — contextual intelligence at decision t
 cargo install thronglets
 ```
 
-## MCP Setup (optional, for explicit tool access)
+## MCP Setup (optional adapter, for explicit tool access)
 
 ```
 claude mcp add thronglets -- thronglets mcp
 claude mcp add thronglets -- thronglets mcp --port 0 --bootstrap /ip4/47.93.32.88/tcp/4001
 ```
 
-## MCP Tools
+## MCP Tools (adapter surface)
 
 trace_record: Record that you used a capability and the outcome.
   - capability (string, required): What was used, e.g. "claude-code/Bash"
@@ -86,6 +84,13 @@ GET  /v1/capabilities — All known capabilities with stats
 GET  /v1/status — Node info: version, node_id, trace_count
 ```
 
+## Core Interfaces
+
+- `thronglets prehook`: sparse hot-path guidance
+- `thronglets hook`: trace recording after tool execution
+- `thronglets serve`: local HTTP substrate contract
+- `thronglets mcp`: optional adapter for MCP-capable runtimes
+
 ## Key Concepts
 
 - **SimHash**: 128-bit context fingerprints for semantic similarity without embeddings
@@ -97,6 +102,7 @@ GET  /v1/status — Node info: version, node_id, trace_count
 - **Workspace persistence**: cross-session memory for files, errors, sessions
 - **Decision context**: co-edit patterns + preparation reads from action history
 - **ed25519 identity**: Cosmos-compatible oasyce1... bech32 address
+- **Optional adapters**: MCP is supported, but the substrate is not defined by MCP
 
 ## Seed Node
 

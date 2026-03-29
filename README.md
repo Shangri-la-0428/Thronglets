@@ -4,7 +4,7 @@
 
 # Thronglets
 
-AI agent 的 P2P 共享记忆基底。
+AI agent 的本地 substrate。核心是 `CLI + hook/prehook + HTTP` contract，MCP 只是可选适配层。
 
 ## 你的 AI 看到了什么（真实输出）
 
@@ -46,8 +46,14 @@ thronglets setup
 
 完成。`thronglets setup` 会自动安装本机已知适配器：
 - **Claude Code**：自动写入 `PostToolUse / PreToolUse` hooks
-- **Codex**：自动注册 `thronglets` MCP server 到 `~/.codex/config.toml`，并写入一段受管 `AGENTS` 记忆
+- **Codex**：自动安装当前 runtime 需要的 MCP 适配，并写入一段受管 `AGENTS` 记忆
 - **OpenClaw**：自动安装本地 path plugin，并写入 `~/.openclaw/openclaw.json`
+
+架构原则是：
+- 核心产品不是 MCP server，而是本地 substrate
+- `prehook / hook / serve` 才是主接口
+- MCP 只是给支持 MCP 的 runtime 用的薄适配器
+- 就算外部生态以后从 MCP 转向 CLI / HTTP，核心 substrate、历史数据、P2P、signals 都不用重写
 
 如果你是在这个仓库源码目录里工作，而不是在用一个正式发布版二进制，优先用 repo-local binary，不要盲信 PATH 上旧版本：
 
@@ -91,7 +97,7 @@ thronglets status --json
 - `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号
 - `thronglets hook`：任意 agent 在工具执行后喂入 JSON，记录 trace
 
-也就是说，已知 AI 走原生适配器，未知 AI 走同一个 `hook/prehook` contract，不需要再发明第二套协议。
+也就是说，已知 AI 走原生适配器，未知 AI 走同一个 `hook/prehook` contract，不需要再发明第二套协议。MCP 只是这个 substrate 的一层可选外壳，不是本体。
 
 如果你要让 AI 自己完成接入，不需要先读文档。直接走这组机器接口：
 
@@ -468,7 +474,7 @@ Thronglets v0.4.1
   Capabilities:     17
 ```
 
-## MCP 工具（可选）
+## MCP 工具（可选适配层）
 
 让 agent 显式访问基底：
 
@@ -491,7 +497,7 @@ Thronglets 是**体验层** — 决策时刻的上下文智慧。
 
 ## 技术栈
 
-Rust, libp2p (gossipsub + Kademlia + mDNS), SQLite, ed25519, SimHash (128-bit), MCP (JSON-RPC 2.0)
+Rust, libp2p (gossipsub + Kademlia + mDNS), SQLite, ed25519, SimHash (128-bit), optional MCP adapter (JSON-RPC 2.0)
 
 ## 许可证
 

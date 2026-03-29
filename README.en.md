@@ -4,7 +4,7 @@ Website: [thronglets.oasyce.com](https://thronglets.oasyce.com)
 
 # Thronglets
 
-P2P shared memory substrate for AI agents.
+A local AI substrate. The core product is the `CLI + hook/prehook + HTTP` contract; MCP is only an optional adapter layer.
 
 ## What Your AI Sees (real output)
 
@@ -46,8 +46,14 @@ thronglets setup
 
 That's it. `thronglets setup` auto-installs known local adapters:
 - **Claude Code**: writes `PostToolUse / PreToolUse` hooks automatically
-- **Codex**: registers a `thronglets` MCP server in `~/.codex/config.toml` and installs a managed `AGENTS` memory block
+- **Codex**: installs the MCP adapter this runtime currently needs and writes a managed `AGENTS` memory block
 - **OpenClaw**: installs a local path plugin and updates `~/.openclaw/openclaw.json`
+
+Architecture principle:
+- the core product is not an MCP server; it is a local substrate
+- `prehook / hook / serve` are the primary interfaces
+- MCP is a thin optional adapter for runtimes that support or require it
+- if the ecosystem later shifts from MCP to CLI / HTTP, the substrate, history, P2P, and signals all remain intact
 
 If you are working from this repository checkout instead of a released binary, prefer the repo-local binary over whatever old `thronglets` may already be on `PATH`:
 
@@ -91,7 +97,7 @@ Underneath, there is only one agent contract:
 - `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back
 - `thronglets hook`: any agent can send tool-result JSON and record a trace
 
-Known AIs use native adapters. Unknown AIs use the same `hook/prehook` contract. No second protocol.
+Known AIs use native adapters. Unknown AIs use the same `hook/prehook` contract. No second protocol. MCP is only an optional shell around that substrate, not the core.
 
 If you want an AI to bootstrap itself, it does not need to read the docs first. Use the machine-facing flow:
 
@@ -468,7 +474,7 @@ Thronglets v0.4.1
   Capabilities:     17
 ```
 
-## MCP Tools (optional)
+## MCP Tools (optional adapter layer)
 
 For agents that want explicit access:
 
@@ -491,7 +497,7 @@ Thronglets is the **Experience Layer** — contextual intelligence at decision t
 
 ## Tech
 
-Rust, libp2p (gossipsub + Kademlia + mDNS), SQLite, ed25519, SimHash (128-bit), MCP (JSON-RPC 2.0)
+Rust, libp2p (gossipsub + Kademlia + mDNS), SQLite, ed25519, SimHash (128-bit), optional MCP adapter (JSON-RPC 2.0)
 
 ## License
 
