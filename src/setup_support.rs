@@ -623,6 +623,8 @@ fn hook_contract_examples() -> HookContractExamples {
         "agent_source": "my-agent",
         "model": "my-model",
         "session_id": "session-123",
+        "space": "shared-space",
+        "mode": "focus",
         "tool_name": "Edit",
         "tool_input": {
             "file_path": "src/main.rs"

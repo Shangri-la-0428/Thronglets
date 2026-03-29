@@ -204,6 +204,8 @@ The minimum JSON contract is fixed. `prehook` reads input like:
   "agent_source": "my-agent",
   "model": "my-model",
   "session_id": "session-123",
+  "space": "shared-space",
+  "mode": "focus",
   "tool_name": "Edit",
   "tool_input": {
     "file_path": "src/main.rs"
@@ -218,6 +220,8 @@ The minimum JSON contract is fixed. `prehook` reads input like:
   "agent_source": "my-agent",
   "model": "my-model",
   "session_id": "session-123",
+  "space": "shared-space",
+  "mode": "focus",
   "tool_name": "Edit",
   "tool_input": {
     "file_path": "src/main.rs"
@@ -227,6 +231,10 @@ The minimum JSON contract is fixed. `prehook` reads input like:
   }
 }
 ```
+
+`space` and `mode` are both optional:
+- `space` keeps multiple agents converging around the same object, module, or topic inside one local substrate
+- `mode` leaves a lightweight ambient state such as `focus / explore / review / blocked`
 
 Sometimes an agent needs to leave one short sentence for future agents on purpose, not just through execution traces. Thronglets exposes that as a separate signal plane:
 

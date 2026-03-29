@@ -5,6 +5,9 @@ use std::process::{Command, Output, Stdio};
 use thronglets::context::simhash;
 use thronglets::contracts::{PREHOOK_HEADER, PREHOOK_MATCHER};
 use thronglets::identity::NodeIdentity;
+use thronglets::presence::{
+    DEFAULT_PRESENCE_TTL_MINUTES, PresenceTraceConfig, create_presence_trace,
+};
 use thronglets::storage::TraceStore;
 use thronglets::trace::{Outcome, Trace};
 use thronglets::workspace::{
@@ -158,6 +161,43 @@ fn prehook_is_silent_without_signals() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+}
+
+#[test]
+fn prehook_surfaces_other_active_sessions_in_same_space() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let store = TraceStore::open(&data_dir.path().join("traces.db")).unwrap();
+    let other_identity = NodeIdentity::generate();
+    let presence = create_presence_trace(
+        PresenceTraceConfig {
+            model_id: "openclaw".into(),
+            session_id: Some("other-session".into()),
+            owner_account: None,
+            device_identity: Some(other_identity.device_identity()),
+            space: Some("psyche".into()),
+            mode: Some("focus".into()),
+            ttl_minutes: DEFAULT_PRESENCE_TTL_MINUTES,
+        },
+        other_identity.public_key_bytes(),
+        |msg| other_identity.sign(msg),
+    );
+    store.insert(&presence).unwrap();
+
+    let payload = r#"{"tool_name":"Bash","session_id":"local-session","space":"psyche","tool_input":{"command":"cargo test"}}"#;
+    let output = run_bin(
+        &["--data-dir", data_dir.path().to_str().unwrap(), "prehook"],
+        Some(payload),
+        None,
+    );
+
+    assert!(
+        output.status.success(),
+        "prehook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(PREHOOK_HEADER));
+    assert!(stdout.contains("context: active in space psyche: openclaw (focus)"));
 }
 
 #[test]

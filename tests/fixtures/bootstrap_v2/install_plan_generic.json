@@ -28,7 +28,9 @@
           "prehook_stdin": {
             "agent_source": "my-agent",
             "model": "my-model",
+            "mode": "focus",
             "session_id": "session-123",
+            "space": "shared-space",
             "tool_input": {
               "file_path": "src/main.rs"
             },
@@ -37,7 +39,9 @@
           "hook_stdin": {
             "agent_source": "my-agent",
             "model": "my-model",
+            "mode": "focus",
             "session_id": "session-123",
+            "space": "shared-space",
             "tool_input": {
               "file_path": "src/main.rs"
             },

@@ -204,6 +204,8 @@ thronglets install-plan --agent generic --runtime python --json
   "agent_source": "my-agent",
   "model": "my-model",
   "session_id": "session-123",
+  "space": "shared-space",
+  "mode": "focus",
   "tool_name": "Edit",
   "tool_input": {
     "file_path": "src/main.rs"
@@ -218,6 +220,8 @@ thronglets install-plan --agent generic --runtime python --json
   "agent_source": "my-agent",
   "model": "my-model",
   "session_id": "session-123",
+  "space": "shared-space",
+  "mode": "focus",
   "tool_name": "Edit",
   "tool_input": {
     "file_path": "src/main.rs"
@@ -227,6 +231,10 @@ thronglets install-plan --agent generic --runtime python --json
   }
 }
 ```
+
+`space` 和 `mode` 都是可选字段：
+- `space` 用来把多个 AI 围绕同一个对象、模块或议题的痕迹收敛到同一个局部 substrate
+- `mode` 用来留下很轻的环境状态，比如 `focus / explore / review / blocked`
 
 有时候 AI 需要主动给未来的 AI 留下一句短话，而不只是靠执行痕迹间接学习。Thronglets 现在把这件事做成了独立的 signal plane：
 

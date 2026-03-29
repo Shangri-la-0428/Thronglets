@@ -72,10 +72,13 @@ Thronglets 现在的主线已经明确：
 当前状态：
 - 显式 signal 已支持 `space`
 - `density / promotion / inhibition / reinforcement` 已经都局部化到 `space`
+- ambient `presence` 已支持 `space + mode`
+- promoted 的 explicit `avoid` 已经可以按当前 `space` 进入 prehook
+- 同一 `space` 的其他活跃 session 已经可以作为轻量 context 被 prehook 感知
 
 剩余完成标准：
-- hot path 的 `avoid / do next / maybe also` 优先受当前 `space` 的局部共识影响
-- 同一个 `space` 的局部状态能跨 agent / session 连续积累
+- hot path 的 `do next / maybe also` 也优先受当前 `space` 的局部共识影响，而不只是 `avoid`
+- 同一个 `space` 的局部状态能继续跨 agent / session 连续积累到 repair / preparation / adjacency 这些隐式学习路径里
 
 ### 2. Session presence
 

@@ -2294,7 +2294,9 @@ async fn main() {
                 identity.public_key_bytes(),
                 |msg| identity.sign(msg),
             );
-            store.insert(&trace).expect("failed to insert presence trace");
+            store
+                .insert(&trace)
+                .expect("failed to insert presence trace");
             let data = PresencePostData {
                 summary: PresenceSummary {
                     status: "active",
@@ -2318,7 +2320,12 @@ async fn main() {
             }
         }
 
-        Commands::PresenceFeed { hours, space, limit, json } => {
+        Commands::PresenceFeed {
+            hours,
+            space,
+            limit,
+            json,
+        } => {
             let store = open_store(&dir);
             let fetch_limit = if space.is_some() {
                 limit.max(1).saturating_mul(10)
@@ -2337,7 +2344,11 @@ async fn main() {
             );
             let data = PresenceFeedData {
                 summary: PresenceSummary {
-                    status: if results.is_empty() { "quiet" } else { "active" },
+                    status: if results.is_empty() {
+                        "quiet"
+                    } else {
+                        "active"
+                    },
                     active_sessions: results.len(),
                     space: space.clone(),
                 },
@@ -2629,6 +2640,8 @@ async fn main() {
                 .as_str()
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("claude-code");
+            let current_space = payload_string(&payload, "space");
+            let current_mode = payload_string(&payload, "mode");
 
             // Map tool to capability URI
             let capability = if tool_name.starts_with("mcp__") {
@@ -2698,6 +2711,22 @@ async fn main() {
                 |msg| identity.sign(msg),
             );
             let _ = store.insert(&trace); // silent — never break the calling agent
+            if current_space.is_some() || current_mode.is_some() {
+                let presence = create_presence_trace(
+                    PresenceTraceConfig {
+                        model_id: trace.model_id.clone(),
+                        session_id: session_id.clone(),
+                        owner_account: identity_binding.owner_account.clone(),
+                        device_identity: Some(identity_binding.device_identity.clone()),
+                        space: current_space,
+                        mode: current_mode,
+                        ttl_minutes: DEFAULT_PRESENCE_TTL_MINUTES,
+                    },
+                    identity.public_key_bytes(),
+                    |msg| identity.sign(msg),
+                );
+                let _ = store.insert(&presence);
+            }
             let outcome_str = if is_error { "failed" } else { "succeeded" };
 
             // Track file interactions
@@ -2752,6 +2781,8 @@ async fn main() {
             };
 
             let tool_name = payload["tool_name"].as_str().unwrap_or("");
+            let current_space = payload_string(&payload, "space");
+            let current_session_id = payload_string(&payload, "session_id");
 
             // Skip thronglets' own calls and empty names
             if tool_name.starts_with("mcp__thronglets") || tool_name.is_empty() {
@@ -2819,6 +2850,7 @@ async fn main() {
                 && let Some(explicit_avoid) = explicit_avoid_signal(
                     store,
                     &hook_context,
+                    current_space.as_deref(),
                     &identity_binding.device_identity,
                     identity.public_key_bytes(),
                 )
@@ -2927,8 +2959,27 @@ async fn main() {
             }
             profiler.stage("adjacency");
 
+            let presence_checked =
+                current_space.is_some() && (!supports_file_guidance || !signals.is_empty());
+            if presence_checked
+                && let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                && let Some(space) = current_space.as_deref()
+                && let Some(presence_signal) = presence_context_signal(
+                    store,
+                    space,
+                    current_session_id.as_deref(),
+                    &identity_binding.device_identity,
+                    identity.public_key_bytes(),
+                )
+            {
+                signals.push(presence_signal);
+            }
+            profiler.stage_or_skip("presence", presence_checked);
+
             // History is a fallback when we don't already know a likely next move.
-            let has_higher_priority_signal = !signals.is_empty();
+            let has_higher_priority_signal = signals
+                .iter()
+                .any(|signal| signal.kind != SignalKind::History);
             let mut git_checked = false;
             if !has_higher_priority_signal && supports_file_guidance {
                 git_checked = true;
@@ -3095,7 +3146,9 @@ async fn main() {
             });
             println!("Thronglets HTTP API on http://0.0.0.0:{port}");
             println!("  POST /v1/traces       — record a trace");
+            println!("  POST /v1/presence     — leave a lightweight session presence heartbeat");
             println!("  POST /v1/signals      — leave an explicit short signal");
+            println!("  GET  /v1/presence/feed — show recent active sessions in a space");
             println!("  GET  /v1/signals      — query explicit short signals");
             println!("  GET  /v1/signals/feed — show recent converging explicit signals");
             println!("  GET  /v1/query        — query the substrate");
@@ -3601,6 +3654,14 @@ fn build_hook_context(tool_name: &str, tool_input: &serde_json::Value) -> String
     }
 }
 
+fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload[key]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn apply_collective_sources(
     candidate: &mut StepCandidate,
     score: &mut i32,
@@ -3612,6 +3673,7 @@ fn apply_collective_sources(
 fn explicit_avoid_signal(
     store: &TraceStore,
     hook_context: &str,
+    space: Option<&str>,
     local_device_identity: &str,
     local_node_pubkey: [u8; 32],
 ) -> Option<Signal> {
@@ -3622,7 +3684,7 @@ fn explicit_avoid_signal(
     let result = summarize_signal_traces(
         &traces,
         hook_context,
-        None,
+        space,
         local_device_identity,
         local_node_pubkey,
         3,
@@ -3639,6 +3701,59 @@ fn explicit_avoid_signal(
         format!("  ⚠ explicit avoid: {}", result.message),
         score,
     ))
+}
+
+fn presence_context_signal(
+    store: &TraceStore,
+    space: &str,
+    current_session_id: Option<&str>,
+    local_device_identity: &str,
+    local_node_pubkey: [u8; 32],
+) -> Option<Signal> {
+    let traces = store.query_recent_presence_traces(1, 24).ok()?;
+    let active_sessions: Vec<_> = summarize_recent_presence(
+        &traces,
+        Some(space),
+        local_device_identity,
+        local_node_pubkey,
+        8,
+    )
+    .into_iter()
+    .filter(|session| {
+        current_session_id.is_none_or(|sid| session.session_id.as_deref() != Some(sid))
+    })
+    .collect();
+
+    if active_sessions.is_empty() {
+        return None;
+    }
+
+    let preview_limit = 2;
+    let collective = active_sessions
+        .iter()
+        .any(|session| session.evidence_scope == "collective");
+    let preview = active_sessions
+        .iter()
+        .take(preview_limit)
+        .map(|session| match session.mode.as_deref() {
+            Some(mode) => format!("{} ({mode})", session.model_id),
+            None => session.model_id.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let remainder = active_sessions.len().saturating_sub(preview_limit);
+    let suffix = if remainder > 0 {
+        format!(" +{remainder} more")
+    } else {
+        String::new()
+    };
+
+    Some(Signal {
+        kind: SignalKind::History,
+        score: if collective { 145 } else { 135 },
+        body: format!("  active in space {space}: {preview}{suffix}"),
+        candidate: None,
+    })
 }
 
 fn claim_collective_query(candidate: &StepCandidate, remaining_queries: &mut usize) -> bool {
@@ -4211,6 +4326,7 @@ mod tests {
             explicit_avoid_signal(
                 &store,
                 "edit file: src/main.rs",
+                None,
                 &local_identity.device_identity(),
                 local_identity.public_key_bytes(),
             )
@@ -4237,12 +4353,71 @@ mod tests {
         let signal = explicit_avoid_signal(
             &store,
             "edit file: src/main.rs",
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
         )
         .expect("promoted avoid should surface in prehook");
         assert_eq!(signal.kind, SignalKind::Danger);
         assert!(signal.body.contains("explicit avoid"));
+        assert!(signal.body.contains("skip the generated lockfile"));
+    }
+
+    #[test]
+    fn explicit_avoid_signal_respects_space() {
+        let local_identity = NodeIdentity::generate();
+        let remote_identity = NodeIdentity::generate();
+        let store = TraceStore::in_memory().unwrap();
+
+        for identity in [&local_identity, &remote_identity] {
+            let trace = create_signal_trace(
+                SignalPostKind::Avoid,
+                "edit file: src/main.rs",
+                "skip the generated lockfile",
+                SignalTraceConfig {
+                    model_id: if identity.public_key_bytes() == local_identity.public_key_bytes() {
+                        "codex".into()
+                    } else {
+                        "openclaw".into()
+                    },
+                    session_id: Some(format!(
+                        "session-{}",
+                        if identity.public_key_bytes() == local_identity.public_key_bytes() {
+                            "local"
+                        } else {
+                            "remote"
+                        }
+                    )),
+                    owner_account: None,
+                    device_identity: Some(identity.device_identity()),
+                    space: Some("other-space".into()),
+                    ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+                },
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&trace).unwrap();
+        }
+
+        assert!(
+            explicit_avoid_signal(
+                &store,
+                "edit file: src/main.rs",
+                Some("psyche"),
+                &local_identity.device_identity(),
+                local_identity.public_key_bytes(),
+            )
+            .is_none()
+        );
+
+        let signal = explicit_avoid_signal(
+            &store,
+            "edit file: src/main.rs",
+            Some("other-space"),
+            &local_identity.device_identity(),
+            local_identity.public_key_bytes(),
+        )
+        .expect("space-matching promoted avoid should surface");
         assert!(signal.body.contains("skip the generated lockfile"));
     }
 }
