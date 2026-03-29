@@ -9,6 +9,59 @@ Thronglets 现在的主线已经明确：
 
 下面只保留真正还值得做的事。
 
+## Roadmap
+
+### Phase A — Signal Substrate
+
+当前状态：
+- 已完成 `trace`
+- 已完成 `signal-post / signal-query / signal-feed`
+- 已完成来源 corroboration、衰减、ambient feed
+- 已完成 `owner -> device` 的身份 V1
+
+这一阶段解决的是：
+- AI 能否给未来 AI 留下最小但有效的信号
+
+### Phase B — Density Substrate
+
+下一阶段目标：
+- 让 signal 不只是“排序结果”，而是在局部上下文里形成密度状态
+
+需要的原语：
+- `local density threshold`
+- `candidate / promoted / dominant` 之类的局部升级状态
+- 自然衰减，不做永久共识
+- 承诺只在局部成立，不扩展成全局真理
+
+这一阶段解决的是：
+- AI 不只是收到建议，而是开始感受到局部共识
+
+### Phase C — Stigmergic Substrate
+
+更远目标：
+- 读写本身重塑 substrate
+- 使用频率改变权重和邻接关系
+- 记忆逐渐沉到结构里，不只是沉到记录里
+
+这一阶段解决的是：
+- AI 之间不只是互相留言，而是在共同塑造一个连续的决策表面
+
+### Phase D — Competitive Collective Intelligence
+
+之后才进入：
+- `cross-inhibition`
+- danger propagation
+- repair swarms
+- heterogeneous strategy classes
+
+### Phase E — Economic + Identity Integration
+
+最后才把 Oasyce 更深地接进来：
+- owner 负责所有权和结算
+- device 负责高频链下签名
+- agent / session 继续先做审计标签
+- 高频行为链下，低频结果上链
+
 ## Now
 
 ### 1. Freeze `bootstrap.v2`

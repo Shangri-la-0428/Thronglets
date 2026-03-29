@@ -35,6 +35,7 @@
 - **OpenClaw runtime-ready auto-report** — the OpenClaw plugin now reports `runtime-ready` as soon as it successfully loads, reducing the post-bootstrap flow to “apply config, restart once, keep going”
 - **Website deployment path** — `docs/index.html`, `docs/robots.txt`, and `docs/sitemap.xml` are now treated as first-class site assets, and a dedicated GitHub Pages workflow deploys the `docs/` directory as the static website root
 - **Machine-readable version surface** — `thronglets version --json` now exposes the running binary version, schema versions, and a repo-local invocation hint so agents can distinguish a checked-out source tree from an older PATH-installed binary before bootstrapping
+- **Density substrate primitives** — explicit signal query/feed results now expose `density_score` and `density_tier` (`sparse / candidate / promoted / dominant`), and ranking starts preferring stronger local-density states instead of treating every corroborated signal as just another sorted row
 
 ## v0.4.0 — 2026-03-28
 
