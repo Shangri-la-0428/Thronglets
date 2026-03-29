@@ -95,8 +95,8 @@ fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
         _ => json!({"error": "not found", "endpoints": [
             "POST /v1/traces",
             "POST /v1/signals",
-            "GET /v1/signals?context=...&kind=avoid|recommend|watch|info&limit=5",
-            "GET /v1/signals/feed?hours=24&kind=avoid|recommend|watch|info&scope=all|local|collective|mixed&limit=10",
+            "GET /v1/signals?context=...&kind=avoid|recommend|watch|info&space=...&limit=5",
+            "GET /v1/signals/feed?hours=24&kind=avoid|recommend|watch|info&scope=all|local|collective|mixed&space=...&limit=10",
             "GET /v1/query?context=...&intent=resolve|evaluate|explore|signals",
             "GET /v1/capabilities",
             "GET /v1/status"
@@ -183,6 +183,7 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
         Some(message) => message,
         None => return json!({"error": "missing field: message"}).to_string(),
     };
+    let space = args["space"].as_str().map(str::to_string);
     let model = args["model"].as_str().unwrap_or("unknown").to_string();
     let session_id = args["session_id"].as_str().map(str::to_string);
     let ttl_hours = args["ttl_hours"]
@@ -199,6 +200,7 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
             session_id,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
+            space: space.clone(),
             ttl_hours,
         },
         ctx.identity.public_key_bytes(),
@@ -211,6 +213,7 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
             "posted": true,
             "kind": kind.as_str(),
             "message": message,
+            "space": space,
             "ttl_hours": ttl_hours,
             "trace_id": trace_id_hex,
         })
@@ -346,9 +349,15 @@ fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
         .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
+    let space = params.get("space").map(String::as_str);
+    let fetch_limit = if space.is_some() {
+        limit.max(1).saturating_mul(10)
+    } else {
+        limit
+    };
     let traces = match ctx
         .store
-        .query_recent_signal_traces(hours, kind, limit.max(1))
+        .query_recent_signal_traces(hours, kind, fetch_limit)
     {
         Ok(traces) => traces,
         Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
@@ -356,6 +365,7 @@ fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
     let results = filter_signal_feed_results(
         summarize_recent_signal_feed(
             &traces,
+            space,
             &ctx.binding.device_identity,
             ctx.identity.public_key_bytes(),
             limit,
@@ -369,6 +379,7 @@ fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
+            space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
         ctx.identity.public_key_bytes(),
@@ -392,10 +403,16 @@ fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> 
         .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
+    let space = params.get("space").map(String::as_str);
     let context_hash = simhash(context_str);
+    let fetch_limit = if space.is_some() {
+        limit.max(1).saturating_mul(10)
+    } else {
+        limit
+    };
     let traces = match ctx
         .store
-        .query_signal_traces(&context_hash, kind, 48, limit.max(1))
+        .query_signal_traces(&context_hash, kind, 48, fetch_limit)
     {
         Ok(traces) => traces,
         Err(e) => return json!({"error": format!("query: {e}")}).to_string(),
@@ -404,6 +421,7 @@ fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> 
     let results = summarize_signal_traces(
         &traces,
         context_str,
+        space,
         &ctx.binding.device_identity,
         ctx.identity.public_key_bytes(),
         limit,
@@ -416,6 +434,7 @@ fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> 
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
+            space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
         ctx.identity.public_key_bytes(),

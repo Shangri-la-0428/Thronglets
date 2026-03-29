@@ -32,6 +32,7 @@ Thronglets 现在的主线已经明确：
 - `candidate / promoted / dominant` 之类的局部升级状态
 - 自然衰减，不做永久共识
 - 承诺只在局部成立，不扩展成全局真理
+- 显式 `space`，让局部 substrate 真正按项目/模块/议题隔离而不是只靠模糊 context
 
 这一阶段解决的是：
 - AI 不只是收到建议，而是开始感受到局部共识

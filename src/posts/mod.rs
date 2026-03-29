@@ -16,6 +16,7 @@ pub struct SignalTraceConfig {
     pub session_id: Option<String>,
     pub owner_account: Option<String>,
     pub device_identity: Option<String>,
+    pub space: Option<String>,
     pub ttl_hours: u32,
 }
 
@@ -101,6 +102,7 @@ impl SignalPostKind {
 struct SignalTracePayload {
     context: String,
     message: String,
+    space: Option<String>,
     expires_at: u64,
 }
 
@@ -108,6 +110,7 @@ struct SignalTracePayload {
 pub struct SignalQueryResult {
     pub kind: String,
     pub message: String,
+    pub space: Option<String>,
     pub context_similarity: f64,
     pub total_posts: u64,
     pub reinforcement_count: u32,
@@ -131,6 +134,7 @@ pub struct SignalQueryResult {
 pub struct SignalFeedResult {
     pub kind: String,
     pub message: String,
+    pub space: Option<String>,
     pub total_posts: u64,
     pub reinforcement_count: u32,
     pub source_count: u32,
@@ -157,6 +161,7 @@ struct DecodedSignalTrace {
     reinforcement: bool,
     context: String,
     message: String,
+    space: Option<String>,
     expires_at: u64,
 }
 
@@ -164,6 +169,7 @@ struct DecodedSignalTrace {
 struct SignalGroup {
     kind: SignalPostKind,
     message: String,
+    space: Option<String>,
     best_similarity: f64,
     total_posts: u64,
     reinforcement_count: u32,
@@ -189,7 +195,15 @@ pub fn create_signal_trace(
     node_pubkey: [u8; 32],
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
-    create_signal_trace_at(kind, context, message, config, now_ms(), node_pubkey, sign_fn)
+    create_signal_trace_at(
+        kind,
+        context,
+        message,
+        config,
+        now_ms(),
+        node_pubkey,
+        sign_fn,
+    )
 }
 
 pub fn create_signal_reinforcement_trace(
@@ -263,6 +277,7 @@ fn create_signal_trace_with_capability(
     let payload = SignalTracePayload {
         context: context.to_string(),
         message: message.to_string(),
+        space: config.space.clone(),
         expires_at: expires_at_ms(now_ms, config.ttl_hours),
     };
 
@@ -287,13 +302,14 @@ fn create_signal_trace_with_capability(
 pub fn summarize_signal_traces(
     traces: &[Trace],
     query_context: &str,
+    space: Option<&str>,
     local_device_identity: &str,
     local_node_pubkey: [u8; 32],
     limit: usize,
 ) -> Vec<SignalQueryResult> {
     let query_hash = simhash(query_context);
     let now_ms = now_ms();
-    let mut groups: HashMap<(SignalPostKind, String), SignalGroup> = HashMap::new();
+    let mut groups: HashMap<(SignalPostKind, String, Option<String>), SignalGroup> = HashMap::new();
 
     for trace in traces {
         let Some(decoded) = decode_signal_trace(trace) else {
@@ -302,12 +318,16 @@ pub fn summarize_signal_traces(
         if decoded.expires_at <= now_ms {
             continue;
         }
+        if !matches_signal_space(decoded.space.as_deref(), space) {
+            continue;
+        }
 
         let similarity_score = similarity(&query_hash, &trace.context_hash);
-        let key = (decoded.kind, decoded.message.clone());
+        let key = (decoded.kind, decoded.message.clone(), decoded.space.clone());
         let entry = groups.entry(key).or_insert_with(|| SignalGroup {
             kind: decoded.kind,
             message: decoded.message.clone(),
+            space: decoded.space.clone(),
             best_similarity: similarity_score,
             total_posts: 0,
             reinforcement_count: 0,
@@ -363,12 +383,14 @@ pub fn summarize_signal_traces(
             SignalQueryResult {
                 kind: group.kind.as_str().to_string(),
                 message: group.message,
+                space: group.space,
                 context_similarity: round2(group.best_similarity),
                 total_posts: group.total_posts,
                 reinforcement_count: group.reinforcement_count,
                 source_count,
                 model_count,
-                corroboration_tier: signal_corroboration_tier(source_count, model_count).to_string(),
+                corroboration_tier: signal_corroboration_tier(source_count, model_count)
+                    .to_string(),
                 density_score,
                 density_tier: signal_density_tier(density_score).to_string(),
                 promotion_state: promotion_state.to_string(),
@@ -408,12 +430,13 @@ pub fn summarize_signal_traces(
 
 pub fn summarize_recent_signal_feed(
     traces: &[Trace],
+    space: Option<&str>,
     local_device_identity: &str,
     local_node_pubkey: [u8; 32],
     limit: usize,
 ) -> Vec<SignalFeedResult> {
     let now_ms = now_ms();
-    let mut groups: HashMap<(SignalPostKind, String), SignalGroup> = HashMap::new();
+    let mut groups: HashMap<(SignalPostKind, String, Option<String>), SignalGroup> = HashMap::new();
 
     for trace in traces {
         let Some(decoded) = decode_signal_trace(trace) else {
@@ -422,11 +445,15 @@ pub fn summarize_recent_signal_feed(
         if decoded.expires_at <= now_ms {
             continue;
         }
+        if !matches_signal_space(decoded.space.as_deref(), space) {
+            continue;
+        }
 
-        let key = (decoded.kind, decoded.message.clone());
+        let key = (decoded.kind, decoded.message.clone(), decoded.space.clone());
         let entry = groups.entry(key).or_insert_with(|| SignalGroup {
             kind: decoded.kind,
             message: decoded.message.clone(),
+            space: decoded.space.clone(),
             best_similarity: 0.0,
             total_posts: 0,
             reinforcement_count: 0,
@@ -489,6 +516,7 @@ pub fn summarize_recent_signal_feed(
             SignalFeedResult {
                 kind: group.kind.as_str().to_string(),
                 message: group.message,
+                space: group.space,
                 total_posts: group.total_posts,
                 reinforcement_count: group.reinforcement_count,
                 source_count,
@@ -572,11 +600,13 @@ pub fn create_query_reinforcement_traces(
         .take(3)
         .filter_map(|result| {
             let kind = SignalPostKind::parse(&result.kind)?;
+            let mut config = config.clone();
+            config.space = result.space.clone();
             Some(create_signal_reinforcement_trace(
                 kind,
                 preferred_reinforcement_context(&result.contexts, query_context),
                 &result.message,
-                config.clone(),
+                config,
                 node_pubkey,
                 |msg| sign_fn(msg),
             ))
@@ -596,11 +626,13 @@ pub fn create_feed_reinforcement_traces(
         .take(3)
         .filter_map(|result| {
             let kind = SignalPostKind::parse(&result.kind)?;
+            let mut config = config.clone();
+            config.space = result.space.clone();
             Some(create_signal_reinforcement_trace(
                 kind,
                 preferred_reinforcement_context(&result.contexts, &result.message),
                 &result.message,
-                config.clone(),
+                config,
                 node_pubkey,
                 |msg| sign_fn(msg),
             ))
@@ -616,8 +648,16 @@ fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
         reinforcement,
         context: payload.context,
         message: payload.message,
+        space: payload.space,
         expires_at: payload.expires_at,
     })
+}
+
+fn matches_signal_space(trace_space: Option<&str>, requested_space: Option<&str>) -> bool {
+    match requested_space {
+        Some(requested_space) => trace_space == Some(requested_space),
+        None => true,
+    }
 }
 
 pub fn expires_at_ms(now_ms: u64, ttl_hours: u32) -> u64 {
@@ -625,23 +665,24 @@ pub fn expires_at_ms(now_ms: u64, ttl_hours: u32) -> u64 {
 }
 
 fn source_key(trace: &Trace) -> String {
-    let node = trace
-        .device_identity
-        .clone()
-        .unwrap_or_else(|| {
-            trace
-                .node_pubkey
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-        });
+    let node = trace.device_identity.clone().unwrap_or_else(|| {
+        trace
+            .node_pubkey
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    });
     match trace.session_id.as_deref() {
         Some(session_id) => format!("{node}:{session_id}"),
         None => node,
     }
 }
 
-fn is_local_source(trace: &Trace, local_device_identity: &str, local_node_pubkey: &[u8; 32]) -> bool {
+fn is_local_source(
+    trace: &Trace,
+    local_device_identity: &str,
+    local_node_pubkey: &[u8; 32],
+) -> bool {
     trace
         .device_identity
         .as_deref()
@@ -745,7 +786,9 @@ fn signal_promotion_state(
     local_source_count: u32,
     collective_source_count: u32,
 ) -> &'static str {
-    if signal_density_tier(density_score) == "sparse" || signal_density_tier(density_score) == "candidate" {
+    if signal_density_tier(density_score) == "sparse"
+        || signal_density_tier(density_score) == "candidate"
+    {
         "none"
     } else if collective_source_count > 0 {
         "collective"
@@ -842,8 +885,11 @@ fn inhibition_state_label(inhibition_penalty: u8) -> &'static str {
 }
 
 fn contexts_overlap(left: &[String], right: &[String]) -> bool {
-    left.iter()
-        .any(|left_context| right.iter().any(|right_context| right_context == left_context))
+    left.iter().any(|left_context| {
+        right
+            .iter()
+            .any(|right_context| right_context == left_context)
+    })
 }
 
 fn round2(v: f64) -> f64 {
@@ -861,6 +907,7 @@ mod tests {
             session_id: Some(session_id.into()),
             owner_account: None,
             device_identity: Some(identity.device_identity()),
+            space: None,
             ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
         }
     }
@@ -890,6 +937,7 @@ mod tests {
         let results = summarize_signal_traces(
             &[trace_a, trace_b],
             "fix flaky ci workflow",
+            None,
             &identity.device_identity(),
             identity.public_key_bytes(),
             10,
@@ -910,6 +958,54 @@ mod tests {
     }
 
     #[test]
+    fn summarize_signal_posts_keeps_identical_messages_separate_across_spaces() {
+        let identity = NodeIdentity::generate();
+        let mut psyche_config = signal_config(&identity, "codex", "session-a");
+        psyche_config.space = Some("psyche".into());
+        let mut thronglets_config = signal_config(&identity, "codex", "session-b");
+        thronglets_config.space = Some("thronglets".into());
+
+        let psyche = create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair parser regressions",
+            "fix parser before UI cleanup",
+            psyche_config,
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        let thronglets = create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair parser regressions",
+            "fix parser before UI cleanup",
+            thronglets_config,
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+
+        let all_results = summarize_signal_traces(
+            &[psyche.clone(), thronglets.clone()],
+            "repair parser regressions",
+            None,
+            &identity.device_identity(),
+            identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(all_results.len(), 2);
+
+        let psyche_results = summarize_signal_traces(
+            &[psyche, thronglets],
+            "repair parser regressions",
+            Some("psyche"),
+            &identity.device_identity(),
+            identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(psyche_results.len(), 1);
+        assert_eq!(psyche_results[0].space.as_deref(), Some("psyche"));
+        assert_eq!(psyche_results[0].total_posts, 1);
+    }
+
+    #[test]
     fn summarize_signal_posts_ignores_expired_entries() {
         let identity = NodeIdentity::generate();
         let base_now = now_ms();
@@ -922,6 +1018,7 @@ mod tests {
                 session_id: Some("session-a".into()),
                 owner_account: None,
                 device_identity: Some(identity.device_identity()),
+                space: None,
                 ttl_hours: 1,
             },
             base_now.saturating_sub(3 * 60 * 60 * 1000),
@@ -937,6 +1034,7 @@ mod tests {
                 session_id: Some("session-b".into()),
                 owner_account: None,
                 device_identity: Some(identity.device_identity()),
+                space: None,
                 ttl_hours: 24,
             },
             base_now,
@@ -947,6 +1045,7 @@ mod tests {
         let results = summarize_signal_traces(
             &[expired, fresh],
             "ship the current branch",
+            None,
             &identity.device_identity(),
             identity.public_key_bytes(),
             10,
@@ -981,6 +1080,7 @@ mod tests {
         let results = summarize_signal_traces(
             &[local, remote],
             "repair release flow",
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1015,6 +1115,7 @@ mod tests {
                 session_id: None,
                 owner_account: None,
                 device_identity: Some(identity.device_identity()),
+                space: None,
                 ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
             },
             identity.public_key_bytes(),
@@ -1029,6 +1130,7 @@ mod tests {
                 session_id: None,
                 owner_account: None,
                 device_identity: Some(identity.device_identity()),
+                space: None,
                 ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
             },
             identity.public_key_bytes(),
@@ -1038,6 +1140,7 @@ mod tests {
         let results = summarize_signal_traces(
             &[signal, reinforcement_a, reinforcement_b],
             "repair release flow",
+            None,
             &identity.device_identity(),
             identity.public_key_bytes(),
             10,
@@ -1063,6 +1166,7 @@ mod tests {
                 session_id: None,
                 owner_account: None,
                 device_identity: Some(identity.device_identity()),
+                space: None,
                 ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
             },
             identity.public_key_bytes(),
@@ -1072,6 +1176,7 @@ mod tests {
         let results = summarize_signal_traces(
             &[reinforcement],
             "ship the current branch",
+            None,
             &identity.device_identity(),
             identity.public_key_bytes(),
             10,
@@ -1113,6 +1218,7 @@ mod tests {
         let results = summarize_signal_traces(
             &[recommend, avoid_a, avoid_b],
             "repair release flow",
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1158,6 +1264,7 @@ mod tests {
 
         let results = summarize_recent_signal_feed(
             &[local_signal, collective_a, collective_b],
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1171,6 +1278,42 @@ mod tests {
         assert_eq!(results[0].promotion_state, "collective");
         assert_eq!(results[0].focus_tier, "primary");
         assert_eq!(results[0].evidence_scope, "collective");
+    }
+
+    #[test]
+    fn summarize_recent_signal_feed_filters_to_requested_space() {
+        let identity = NodeIdentity::generate();
+        let mut psyche_config = signal_config(&identity, "codex", "session-a");
+        psyche_config.space = Some("psyche".into());
+        let mut core_config = signal_config(&identity, "codex", "session-b");
+        core_config.space = Some("core".into());
+
+        let psyche = create_signal_trace(
+            SignalPostKind::Watch,
+            "repair parser regressions",
+            "watch the parser panic path",
+            psyche_config,
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        let core = create_signal_trace(
+            SignalPostKind::Watch,
+            "repair parser regressions",
+            "watch the parser panic path",
+            core_config,
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+
+        let results = summarize_recent_signal_feed(
+            &[psyche, core],
+            Some("core"),
+            &identity.device_identity(),
+            identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].space.as_deref(), Some("core"));
     }
 
     #[test]
@@ -1221,6 +1364,7 @@ mod tests {
 
         let results = summarize_recent_signal_feed(
             &[single_model_a, single_model_b, multi_model_a, multi_model_b],
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1305,6 +1449,7 @@ mod tests {
                 multi_model_a,
                 multi_model_b,
             ],
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1390,6 +1535,7 @@ mod tests {
 
         let results = summarize_recent_signal_feed(
             &[old_a, old_b, old_c, fresh_a, fresh_b, fresh_c],
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1446,6 +1592,7 @@ mod tests {
 
         let results = summarize_recent_signal_feed(
             &[recommend, avoid_a, avoid_b],
+            None,
             &local_identity.device_identity(),
             local_identity.public_key_bytes(),
             10,
@@ -1463,6 +1610,7 @@ mod tests {
             SignalFeedResult {
                 kind: "recommend".into(),
                 message: "local".into(),
+                space: None,
                 total_posts: 1,
                 reinforcement_count: 0,
                 source_count: 1,
@@ -1485,6 +1633,7 @@ mod tests {
             SignalFeedResult {
                 kind: "recommend".into(),
                 message: "collective".into(),
+                space: None,
                 total_posts: 2,
                 reinforcement_count: 0,
                 source_count: 2,

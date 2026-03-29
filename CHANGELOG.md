@@ -40,6 +40,7 @@
 - **Read-side reinforcement** — `signal-query` and `signal-feed` now write short-lived reinforcement traces for already-promoted explicit signals; these reinforcement reads stay separate from ordinary posts, increase `density_score` without inflating source/model corroboration, and let repeated reuse start strengthening the medium itself
 - **Cross-inhibition for explicit signals** — promoted `avoid` signals now suppress competing `recommend/watch/info` results in the same local context, expose a machine-readable `inhibition_state`, and push those competing paths down in query/feed ranking instead of treating them as equally strong
 - **Hot-path explicit stop signals** — prehook now consults promoted local explicit `avoid` signals before file-guidance mining, emits them as `danger`, and skips competing `preparation/adjacency` hints when a matching stop signal is already present
+- **Context-bound substrate spaces** — explicit signals now support an optional `space` across CLI, HTTP, and MCP, so multiple agents can converge around the same project/module/topic without merging identical messages across unrelated work; query/feed filtering, density, promotion, and read-side reinforcement now all stay local to that `space`
 
 ## v0.4.0 — 2026-03-28
 

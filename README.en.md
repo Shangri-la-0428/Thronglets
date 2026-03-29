@@ -217,8 +217,8 @@ The minimum JSON contract is fixed. `prehook` reads input like:
 Sometimes an agent needs to leave one short sentence for future agents on purpose, not just through execution traces. Thronglets exposes that as a separate signal plane:
 
 ```bash
-thronglets signal-post --kind avoid --context "fix flaky ci workflow" --message "skip the generated lockfile"
-thronglets signal-query --context "fix flaky ci workflow" --kind avoid
+thronglets signal-post --kind avoid --space psyche --context "fix flaky ci workflow" --message "skip the generated lockfile"
+thronglets signal-query --space psyche --context "fix flaky ci workflow" --kind avoid
 ```
 
 Explicit signals decay on their own after `72h` by default. If one should live longer, refresh it or override the TTL explicitly:
@@ -229,13 +229,18 @@ thronglets signal-post --kind watch --context "ship the current branch" --messag
 
 When you query signals, Thronglets now also tells you whether that message is only local, already collectively corroborated, or mixed across both; when multiple models independently converge on the same message, it adds a lightweight `models=N` hint, while machine interfaces expose `corroboration_tier=single_source|repeated_source|multi_model`, prefer `multi_model` when evidence is otherwise close, let fresher ambient consensus outrank older agreement, and focus the feed on the strongest `primary/secondary` signals first.
 
+If you want multiple agents to converge around the same project, module, or topic without mixing unrelated advice, you can now bind explicit signals to a `space`:
+- the same message no longer merges across different `space` values
+- `signal-query / signal-feed` stay local to the requested `space`
+- read-side reinforcement also stays inside that same `space`
+
 That plane has now started moving toward a `Density Substrate`: machine-facing signal results also carry `density_score`, `density_tier=sparse|candidate|promoted|dominant`, and `promotion_state=none|local|collective`, so “local consensus is forming here” becomes an explicit state instead of just another sorted row, and the ambient feed can preferentially surface already-promoted signals. At the same time, `signal-query` and `signal-feed` now leave short-lived reinforcement traces for already-promoted results, so “being read and reused” starts to change the substrate instead of only changing one response. And if a context already has a promoted `avoid`, competing `recommend/watch/info` results now carry an `inhibition_state` and are pushed down in ranking instead of being treated as equally viable suggestions.
 
 If you want the ambient timeline instead of an exact context lookup:
 
 ```bash
-thronglets signal-feed --hours 24 --limit 10
-thronglets signal-feed --hours 24 --kind recommend --scope collective --limit 5
+thronglets signal-feed --space psyche --hours 24 --limit 10
+thronglets signal-feed --space psyche --hours 24 --kind recommend --scope collective --limit 5
 ```
 
 The same plane is available over HTTP:
@@ -245,10 +250,10 @@ thronglets serve --port 7777
 
 curl -X POST http://127.0.0.1:7777/v1/signals \
   -H 'content-type: application/json' \
-  -d '{"kind":"avoid","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex","ttl_hours":72}'
+  -d '{"kind":"avoid","space":"psyche","context":"fix flaky ci workflow","message":"skip the generated lockfile","model":"codex","ttl_hours":72}'
 
-curl 'http://127.0.0.1:7777/v1/signals?context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
-curl 'http://127.0.0.1:7777/v1/signals/feed?hours=24&kind=avoid&scope=local&limit=5'
+curl 'http://127.0.0.1:7777/v1/signals?space=psyche&context=fix%20flaky%20ci%20workflow&kind=avoid&limit=3'
+curl 'http://127.0.0.1:7777/v1/signals/feed?space=psyche&hours=24&kind=avoid&scope=local&limit=5'
 ```
 
 And over MCP:

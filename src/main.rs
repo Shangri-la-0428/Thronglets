@@ -502,6 +502,10 @@ enum Commands {
         #[arg(long)]
         session_id: Option<String>,
 
+        /// Optional space this signal belongs to.
+        #[arg(long)]
+        space: Option<String>,
+
         /// How long the signal should remain fresh before it decays away.
         #[arg(long, default_value_t = DEFAULT_SIGNAL_TTL_HOURS)]
         ttl_hours: u32,
@@ -516,6 +520,10 @@ enum Commands {
         /// Restrict to one signal kind.
         #[arg(long, value_enum)]
         kind: Option<SignalKindArg>,
+
+        /// Restrict to one explicit substrate space.
+        #[arg(long)]
+        space: Option<String>,
 
         /// Maximum results to return.
         #[arg(long, default_value_t = 5)]
@@ -535,6 +543,10 @@ enum Commands {
         /// Filter by evidence scope.
         #[arg(long, value_enum, default_value_t = SignalScopeArg::All)]
         scope: SignalScopeArg,
+
+        /// Restrict to one explicit substrate space.
+        #[arg(long)]
+        space: Option<String>,
 
         /// Maximum results to return.
         #[arg(long, default_value_t = 10)]
@@ -967,6 +979,9 @@ fn render_signal_query_results(results: &[thronglets::posts::SignalQueryResult])
     println!("Explicit signals:");
     for result in results {
         println!("  {}: {}", result.kind, result.message,);
+        if let Some(space) = &result.space {
+            println!("    space: {space}");
+        }
         let model_suffix = if result.model_count > 1 {
             format!(" models={}", result.model_count)
         } else {
@@ -1041,6 +1056,9 @@ fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
     );
     for result in display {
         println!("  {}: {}", result.kind, result.message);
+        if let Some(space) = &result.space {
+            println!("    space: {space}");
+        }
         let model_suffix = if result.model_count > 1 {
             format!(" models={}", result.model_count)
         } else {
@@ -2026,6 +2044,7 @@ async fn main() {
             message,
             model,
             session_id,
+            space,
             ttl_hours,
         } => {
             let store = open_store(&dir);
@@ -2038,6 +2057,7 @@ async fn main() {
                     session_id,
                     owner_account: identity_binding.owner_account.clone(),
                     device_identity: Some(identity_binding.device_identity.clone()),
+                    space: space.clone(),
                     ttl_hours,
                 },
                 identity.public_key_bytes(),
@@ -2047,6 +2067,9 @@ async fn main() {
             println!("Signal posted:");
             println!("  Kind:      {}", SignalPostKind::from(kind).as_str());
             println!("  Message:   {}", message);
+            if let Some(space) = space {
+                println!("  Space:     {}", space);
+            }
             println!("  Fresh for: {}h", ttl_hours);
             println!("  Trace ID:  {}", hex_encode(&trace.id[..8]));
         }
@@ -2054,16 +2077,23 @@ async fn main() {
         Commands::SignalQuery {
             context,
             kind,
+            space,
             limit,
         } => {
             let store = open_store(&dir);
             let query_hash = simhash(&context);
+            let fetch_limit = if space.is_some() {
+                limit.max(1).saturating_mul(10)
+            } else {
+                limit
+            };
             let traces = store
-                .query_signal_traces(&query_hash, kind.map(Into::into), 48, limit)
+                .query_signal_traces(&query_hash, kind.map(Into::into), 48, fetch_limit)
                 .expect("failed to query signal traces");
             let results = summarize_signal_traces(
                 &traces,
                 &context,
+                space.as_deref(),
                 &identity_binding.device_identity,
                 identity.public_key_bytes(),
                 limit,
@@ -2076,6 +2106,7 @@ async fn main() {
                     session_id: None,
                     owner_account: identity_binding.owner_account.clone(),
                     device_identity: Some(identity_binding.device_identity.clone()),
+                    space: None,
                     ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
                 },
                 identity.public_key_bytes(),
@@ -2090,15 +2121,22 @@ async fn main() {
             hours,
             kind,
             scope,
+            space,
             limit,
         } => {
             let store = open_store(&dir);
+            let fetch_limit = if space.is_some() {
+                limit.max(1).saturating_mul(10)
+            } else {
+                limit
+            };
             let traces = store
-                .query_recent_signal_traces(hours, kind.map(Into::into), limit)
+                .query_recent_signal_traces(hours, kind.map(Into::into), fetch_limit)
                 .expect("failed to query recent signal traces");
             let results = filter_signal_feed_results(
                 summarize_recent_signal_feed(
                     &traces,
+                    space.as_deref(),
                     &identity_binding.device_identity,
                     identity.public_key_bytes(),
                     limit,
@@ -2112,6 +2150,7 @@ async fn main() {
                     session_id: None,
                     owner_account: identity_binding.owner_account.clone(),
                     device_identity: Some(identity_binding.device_identity.clone()),
+                    space: None,
                     ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
                 },
                 identity.public_key_bytes(),
@@ -3364,6 +3403,7 @@ fn explicit_avoid_signal(
     let result = summarize_signal_traces(
         &traces,
         hook_context,
+        None,
         local_device_identity,
         local_node_pubkey,
         3,
@@ -3940,6 +3980,7 @@ mod tests {
                 session_id: Some("local-a".into()),
                 owner_account: None,
                 device_identity: Some(local_identity.device_identity()),
+                space: None,
                 ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
             },
             local_identity.public_key_bytes(),
@@ -3966,6 +4007,7 @@ mod tests {
                 session_id: Some("remote-a".into()),
                 owner_account: None,
                 device_identity: Some(remote_identity.device_identity()),
+                space: None,
                 ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
             },
             remote_identity.public_key_bytes(),

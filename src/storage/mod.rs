@@ -549,7 +549,10 @@ impl TraceStore {
                      ORDER BY timestamp DESC
                      LIMIT ?3",
                 )?;
-                traces.extend(Self::collect_traces(&mut stmt, params![like, cutoff_ms, query_limit])?);
+                traces.extend(Self::collect_traces(
+                    &mut stmt,
+                    params![like, cutoff_ms, query_limit],
+                )?);
             }
             traces
         };
@@ -1379,6 +1382,7 @@ mod tests {
                 session_id: Some("s1".into()),
                 owner_account: None,
                 device_identity: Some(id.device_identity()),
+                space: None,
                 ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
             },
             id.public_key_bytes(),
@@ -1394,6 +1398,7 @@ mod tests {
                 session_id: Some("s2".into()),
                 owner_account: None,
                 device_identity: Some(id.device_identity()),
+                space: None,
                 ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
             },
             id.public_key_bytes(),
@@ -1425,6 +1430,7 @@ mod tests {
                 session_id: Some("s1".into()),
                 owner_account: None,
                 device_identity: Some(id.device_identity()),
+                space: None,
                 ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
             },
             id.public_key_bytes(),
@@ -1439,6 +1445,7 @@ mod tests {
                 session_id: None,
                 owner_account: None,
                 device_identity: Some(id.device_identity()),
+                space: None,
                 ttl_hours: crate::posts::DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
             },
             id.public_key_bytes(),
@@ -1453,12 +1460,16 @@ mod tests {
             .query_signal_traces(&target, Some(SignalPostKind::Avoid), 48, 10)
             .unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results
-            .iter()
-            .any(|trace| trace.capability == SignalPostKind::Avoid.capability()));
-        assert!(results
-            .iter()
-            .any(|trace| trace.capability == SignalPostKind::Avoid.reinforcement_capability()));
+        assert!(
+            results
+                .iter()
+                .any(|trace| trace.capability == SignalPostKind::Avoid.capability())
+        );
+        assert!(
+            results
+                .iter()
+                .any(|trace| trace.capability == SignalPostKind::Avoid.reinforcement_capability())
+        );
     }
 
     #[test]
@@ -1475,6 +1486,7 @@ mod tests {
                 session_id: Some("recent".into()),
                 owner_account: None,
                 device_identity: Some(id.device_identity()),
+                space: None,
                 ttl_hours: crate::posts::DEFAULT_SIGNAL_TTL_HOURS,
             },
             id.public_key_bytes(),

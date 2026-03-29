@@ -138,6 +138,10 @@ fn tool_definitions() -> Value {
                             "type": "string",
                             "description": "Short message for future agents"
                         },
+                        "space": {
+                            "type": "string",
+                            "description": "Optional explicit substrate space this signal belongs to"
+                        },
                         "model": {
                             "type": "string",
                             "description": "Self-reported model identifier (default: \"unknown\")"
@@ -174,6 +178,10 @@ fn tool_definitions() -> Value {
                             "enum": ["all", "local", "collective", "mixed"],
                             "description": "Filter feed results by evidence scope (default: all)"
                         },
+                        "space": {
+                            "type": "string",
+                            "description": "Optional explicit substrate space to restrict the feed to"
+                        },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum results to return (default: 10)"
@@ -204,6 +212,10 @@ fn tool_definitions() -> Value {
                             "type": "string",
                             "enum": ["recommend", "avoid", "watch", "info"],
                             "description": "Optional signal kind filter (used for 'signals' intent)"
+                        },
+                        "space": {
+                            "type": "string",
+                            "description": "Optional explicit substrate space (used for 'signals' intent)"
                         },
                         "limit": {
                             "type": "integer",
@@ -448,6 +460,10 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
             return JsonRpcResponse::error(id, -32602, "Missing required field: message".into());
         }
     };
+    let space = args
+        .get("space")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let model_id = args
         .get("model")
         .and_then(|v| v.as_str())
@@ -472,6 +488,7 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
             session_id,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
+            space: space.clone(),
             ttl_hours,
         },
         ctx.identity.public_key_bytes(),
@@ -489,6 +506,7 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
                         "posted": true,
                         "kind": kind.as_str(),
                         "message": message,
+                        "space": space,
                         "ttl_hours": ttl_hours,
                         "trace_id": trace_id_hex,
                     })).unwrap()
@@ -551,7 +569,14 @@ fn handle_substrate_query(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRe
                 .transpose();
 
             match kind {
-                Ok(kind) => handle_signals(ctx, id, context_str, kind, limit),
+                Ok(kind) => handle_signals(
+                    ctx,
+                    id,
+                    context_str,
+                    kind,
+                    args.get("space").and_then(|v| v.as_str()),
+                    limit,
+                ),
                 Err(error) => error,
             }
         }
@@ -814,12 +839,18 @@ fn handle_signals(
     id: Value,
     context_str: &str,
     kind: Option<SignalPostKind>,
+    space: Option<&str>,
     limit: usize,
 ) -> JsonRpcResponse {
     let context_hash = simhash(context_str);
+    let fetch_limit = if space.is_some() {
+        limit.max(1).saturating_mul(10)
+    } else {
+        limit.max(1)
+    };
     let traces = match ctx
         .store
-        .query_signal_traces(&context_hash, kind, 48, limit.max(1))
+        .query_signal_traces(&context_hash, kind, 48, fetch_limit)
     {
         Ok(traces) => traces,
         Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
@@ -827,6 +858,7 @@ fn handle_signals(
     let results = summarize_signal_traces(
         &traces,
         context_str,
+        space,
         &ctx.binding.device_identity,
         ctx.identity.public_key_bytes(),
         limit,
@@ -839,6 +871,7 @@ fn handle_signals(
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
+            space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
         ctx.identity.public_key_bytes(),
@@ -883,9 +916,15 @@ fn handle_signal_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespon
         None => SignalScopeFilter::All,
     };
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    let space = args.get("space").and_then(|v| v.as_str());
+    let fetch_limit = if space.is_some() {
+        limit.max(1).saturating_mul(10)
+    } else {
+        limit.max(1)
+    };
     let traces = match ctx
         .store
-        .query_recent_signal_traces(hours, kind, limit.max(1))
+        .query_recent_signal_traces(hours, kind, fetch_limit)
     {
         Ok(traces) => traces,
         Err(e) => return JsonRpcResponse::error(id, -32000, format!("Query error: {e}")),
@@ -893,6 +932,7 @@ fn handle_signal_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespon
     let results = filter_signal_feed_results(
         summarize_recent_signal_feed(
             &traces,
+            space,
             &ctx.binding.device_identity,
             ctx.identity.public_key_bytes(),
             limit,
@@ -906,6 +946,7 @@ fn handle_signal_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespon
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
+            space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
         ctx.identity.public_key_bytes(),
