@@ -2541,6 +2541,7 @@ async fn main() {
             let mut signals: Vec<Signal> = Vec::new();
             let ws = WorkspaceState::load(&dir);
             let current_file = workspace::extract_file_path(tool_name, &payload["tool_input"]);
+            let hook_context = build_hook_context(tool_name, &payload["tool_input"]);
             let supports_file_guidance =
                 matches!(tool_name, "Edit" | "Write") && current_file.is_some();
             let has_repeated_local_file_actions = supports_file_guidance
@@ -2551,6 +2552,7 @@ async fn main() {
             let mut collective_queries_remaining = PREHOOK_MAX_COLLECTIVE_QUERIES;
 
             let mut has_recent_tool_error = false;
+            let mut has_explicit_avoid = false;
 
             // ── Danger pheromone: low edit retention ──
             // If recent edits are mostly reverted, this is a strong warning.
@@ -2582,6 +2584,21 @@ async fn main() {
             }
             profiler.stage("danger");
 
+            let explicit_avoid_checked = !hook_context.is_empty();
+            if explicit_avoid_checked
+                && let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                && let Some(explicit_avoid) = explicit_avoid_signal(
+                    store,
+                    &hook_context,
+                    &identity_binding.device_identity,
+                    identity.public_key_bytes(),
+                )
+            {
+                has_explicit_avoid = true;
+                signals.push(explicit_avoid);
+            }
+            profiler.stage_or_skip("explicit_avoid", explicit_avoid_checked);
+
             if has_recent_tool_error
                 && let Some(repair_hint) = ws
                     .repair_trajectory_hint(tool_name)
@@ -2612,6 +2629,7 @@ async fn main() {
                 .iter()
                 .any(|s| matches!(s.kind, SignalKind::Repair | SignalKind::Preparation));
             if has_repeated_local_file_actions
+                && !has_explicit_avoid
                 && !has_do_next_signal
                 && let Some(mut preparation_hint) =
                     ws.preparation_hint(tool_name, current_file.as_deref())
@@ -2648,6 +2666,7 @@ async fn main() {
             // "Editing A usually means you also need to edit B."
             // Only emitted when patterns exist.
             if has_repeated_local_file_actions
+                && !has_explicit_avoid
                 && let Some(mut adjacency_hint) =
                     ws.adjacency_hint(tool_name, current_file.as_deref())
             {
@@ -3332,6 +3351,37 @@ fn apply_collective_sources(
     *score += candidate.upgrade_collective_sources(collective_sources);
 }
 
+fn explicit_avoid_signal(
+    store: &TraceStore,
+    hook_context: &str,
+    local_device_identity: &str,
+    local_node_pubkey: [u8; 32],
+) -> Option<Signal> {
+    let context_hash = simhash(hook_context);
+    let traces = store
+        .query_signal_traces(&context_hash, Some(SignalPostKind::Avoid), 48, 3)
+        .ok()?;
+    let result = summarize_signal_traces(
+        &traces,
+        hook_context,
+        local_device_identity,
+        local_node_pubkey,
+        3,
+    )
+    .into_iter()
+    .find(|result| result.promotion_state != "none" && result.context_similarity >= 0.85)?;
+
+    let mut score = 320 + i32::from(result.density_score) * 10;
+    if result.promotion_state == "collective" {
+        score += 20;
+    }
+
+    Some(Signal::danger(
+        format!("  ⚠ explicit avoid: {}", result.message),
+        score,
+    ))
+}
+
 fn claim_collective_query(candidate: &StepCandidate, remaining_queries: &mut usize) -> bool {
     if *remaining_queries == 0 || candidate.source_count >= 2 {
         return false;
@@ -3773,6 +3823,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use thronglets::identity::NodeIdentity;
+    use thronglets::posts::{DEFAULT_SIGNAL_TTL_HOURS, SignalTraceConfig, create_signal_trace};
+    use thronglets::storage::TraceStore;
 
     fn eval_summary(
         retention_percent: u32,
@@ -3870,5 +3923,65 @@ mod tests {
         assert_eq!(check.status, "SKIP");
         assert!(check.violations.is_empty());
         assert_eq!(check.notes.len(), 1);
+    }
+
+    #[test]
+    fn explicit_avoid_signal_requires_promoted_support() {
+        let local_identity = NodeIdentity::generate();
+        let remote_identity = NodeIdentity::generate();
+        let store = TraceStore::in_memory().unwrap();
+
+        let weak_avoid = create_signal_trace(
+            SignalPostKind::Avoid,
+            "edit file: src/main.rs",
+            "skip the generated lockfile",
+            SignalTraceConfig {
+                model_id: "codex".into(),
+                session_id: Some("local-a".into()),
+                owner_account: None,
+                device_identity: Some(local_identity.device_identity()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            local_identity.public_key_bytes(),
+            |msg| local_identity.sign(msg),
+        );
+        store.insert(&weak_avoid).unwrap();
+
+        assert!(
+            explicit_avoid_signal(
+                &store,
+                "edit file: src/main.rs",
+                &local_identity.device_identity(),
+                local_identity.public_key_bytes(),
+            )
+            .is_none()
+        );
+
+        let promoted_avoid = create_signal_trace(
+            SignalPostKind::Avoid,
+            "edit file: src/main.rs",
+            "skip the generated lockfile",
+            SignalTraceConfig {
+                model_id: "openclaw".into(),
+                session_id: Some("remote-a".into()),
+                owner_account: None,
+                device_identity: Some(remote_identity.device_identity()),
+                ttl_hours: DEFAULT_SIGNAL_TTL_HOURS,
+            },
+            remote_identity.public_key_bytes(),
+            |msg| remote_identity.sign(msg),
+        );
+        store.insert(&promoted_avoid).unwrap();
+
+        let signal = explicit_avoid_signal(
+            &store,
+            "edit file: src/main.rs",
+            &local_identity.device_identity(),
+            local_identity.public_key_bytes(),
+        )
+        .expect("promoted avoid should surface in prehook");
+        assert_eq!(signal.kind, SignalKind::Danger);
+        assert!(signal.body.contains("explicit avoid"));
+        assert!(signal.body.contains("skip the generated lockfile"));
     }
 }
