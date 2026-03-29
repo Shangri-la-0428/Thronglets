@@ -13,7 +13,7 @@
       "next_steps": [
         "Restart Codex",
         "Restart the targeted agent so the new integration is loaded.",
-        "thronglets clear-restart --agent codex"
+        "thronglets runtime-ready --agent codex"
       ]
     },
     "detections": [
@@ -93,7 +93,7 @@
         ],
         "remediation": [
           "Restart Codex",
-          "thronglets clear-restart --agent codex"
+          "thronglets runtime-ready --agent codex"
         ],
         "note": "Codex config is correct, but the MCP server is still waiting for a client restart."
       }

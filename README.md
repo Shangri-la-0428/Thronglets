@@ -52,7 +52,7 @@ thronglets setup
 如果某个 adapter 需要客户端重启，后续 `doctor` 会显式返回 `restart-pending`，重启后再跑一次：
 
 ```bash
-thronglets clear-restart --agent codex --json
+thronglets runtime-ready --agent codex --json
 ```
 
 底层接入面只有一个统一 contract：
@@ -93,7 +93,7 @@ thronglets bootstrap --agent codex --json
 }
 ```
 
-`detect / install-plan / apply-plan / doctor / bootstrap / clear-restart` 现在都会先给顶层 summary，再给详细列表。  
+`detect / install-plan / apply-plan / doctor / bootstrap / runtime-ready` 现在都会先给顶层 summary，再给详细列表。  
 如果需要重启，summary 里还会直接带 `restart_commands`。  
 `doctor` 现在会显式返回顶层 `status`、`healthy`、`restart_pending`、`next_steps`，以及每个 adapter 的 `fix_command`。  
 `bootstrap` 顶层还会返回 `restart_required` 和 `next_steps`，这样 AI 不需要自己从注释里猜下一步。
@@ -108,6 +108,14 @@ Thronglets 现在把链上身份先收成最小可落地版本：
 - `agent / session` 先只作为审计标签，不先做独立经济主体
 - 高频 `trace / signal` 保持链下，由 `device identity` 发出和签名
 - 低频结果再上链做 `settlement / anchoring`
+
+同一台设备上可以同时跑多个 AI runtime：
+- 同一个 `owner account`
+- 同一个 `device identity`
+- 不同的 `agent label`，例如 `claude-code / openclaw / codex`
+- 每个运行实例各自一个 `session_id`
+
+所以一台电脑上的多个 AI，甚至同一个 `codex` 的多个会话，都不会打穿这套 V1 身份模型。
 
 最简单的理解方式就是“银行卡和账号”：
 
@@ -141,6 +149,7 @@ thronglets connection-join --file ./thronglets.connection.json
 - `connection-export / connection-join` 是主路径，并且默认验证主设备签名
 - `connection-export` 默认导出 `24h` 有效的 connection file，可用 `--ttl-hours` 调整；`connection-join` 会同时验证签名和过期时间
 - `owner-bind` 和 `connection-join` 默认都不会静默覆盖成另一个 `owner account`
+- OpenClaw 插件现在会在成功加载后自动执行 `runtime-ready`，所以用户通常只需要 `bootstrap -> 重启一次 OpenClaw`
 
 ## 部署边界
 

@@ -585,10 +585,10 @@ fn restart_command(agent: AdapterKind) -> Option<String> {
     }
 }
 
-fn clear_restart_command(agent: AdapterKind) -> Option<String> {
+fn runtime_ready_command(agent: AdapterKind) -> Option<String> {
     match agent {
-        AdapterKind::Codex => Some("thronglets clear-restart --agent codex".into()),
-        AdapterKind::OpenClaw => Some("thronglets clear-restart --agent openclaw".into()),
+        AdapterKind::Codex => Some("thronglets runtime-ready --agent codex".into()),
+        AdapterKind::OpenClaw => Some("thronglets runtime-ready --agent openclaw".into()),
         AdapterKind::Claude | AdapterKind::Generic => None,
     }
 }
@@ -758,7 +758,7 @@ fn doctor_codex(home_dir: &Path, data_dir: &Path) -> AdapterDoctor {
         if let Some(command) = restart_command(AdapterKind::Codex) {
             remediation.push(command);
         }
-        if let Some(command) = clear_restart_command(AdapterKind::Codex) {
+        if let Some(command) = runtime_ready_command(AdapterKind::Codex) {
             remediation.push(command);
         }
     }
@@ -839,7 +839,7 @@ fn doctor_openclaw(home_dir: &Path, data_dir: &Path) -> AdapterDoctor {
         if let Some(command) = restart_command(AdapterKind::OpenClaw) {
             remediation.push(command);
         }
-        if let Some(command) = clear_restart_command(AdapterKind::OpenClaw) {
+        if let Some(command) = runtime_ready_command(AdapterKind::OpenClaw) {
             remediation.push(command);
         }
     }

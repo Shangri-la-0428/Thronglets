@@ -16,7 +16,7 @@ Thronglets 现在的主线已经明确：
 目标：不要再让机器协议在同一个版本里漂移。
 
 当前状态：
-- `detect / install-plan / apply-plan / doctor / bootstrap / clear-restart` 已有 golden JSON fixtures
+- `detect / install-plan / apply-plan / doctor / bootstrap / runtime-ready` 已有 golden JSON fixtures
 
 剩余完成标准：
 - 在 CI 里把这些 fixture 回归当成明确的协议稳定性门槛
@@ -27,10 +27,11 @@ Thronglets 现在的主线已经明确：
 当前状态：
 - `apply-plan / doctor / bootstrap` 已经暴露显式 `restart_commands`
 - `doctor` 已区分 `healthy` 和 `restart-pending`
-- `clear-restart` 已提供显式清除路径
+- `runtime-ready` 已提供统一的运行时就绪路径
 
 剩余完成标准：
 - 如果某个 native adapter 能可靠观测“已经真正重启完成”，就自动清除 `restart_pending`
+  - OpenClaw: 已完成，插件成功加载后会自动执行 `runtime-ready`
 - 否则继续保持现在这条显式、可验证的清除路径
 
 ### 3. Extend adapter matrix only when native runtimes diverge

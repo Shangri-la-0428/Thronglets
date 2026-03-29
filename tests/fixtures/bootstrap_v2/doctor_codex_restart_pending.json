@@ -11,7 +11,7 @@
       ],
       "next_steps": [
         "Restart Codex",
-        "thronglets clear-restart --agent codex"
+        "thronglets runtime-ready --agent codex"
       ]
     },
     "reports": [
@@ -37,7 +37,7 @@
         ],
         "remediation": [
           "Restart Codex",
-          "thronglets clear-restart --agent codex"
+          "thronglets runtime-ready --agent codex"
         ],
         "note": "Codex config is correct, but the MCP server is still waiting for a client restart."
       }

@@ -1,0 +1,20 @@
+{
+  "schema_version": "thronglets.bootstrap.v2",
+  "command": "runtime-ready",
+  "data": {
+    "summary": {
+      "status": "ready",
+      "ready_agents": [
+        "codex"
+      ],
+      "next_steps": []
+    },
+    "results": [
+      {
+        "agent": "codex",
+        "ready": true,
+        "note": "Marked runtime as ready after a successful reload."
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@
 
 - **One-command known adapters** — `thronglets setup` now auto-configures Claude Code hooks, registers a `thronglets` MCP server for Codex, installs the local OpenClaw plugin, and reports restart/next-step guidance from the same bootstrap health pass
 - **Universal agent contract** — `thronglets prehook` and `thronglets hook` now accept a generic Claude-compatible JSON payload with optional `agent_source` and `model`, so other agents can reuse the same sparse-signal contract
-- **Machine-facing bootstrap flow** — `thronglets detect`, `install-plan`, `apply-plan`, `doctor`, single-shot `bootstrap`, and `clear-restart` now expose detection, executable install plans, installation, restart-pending state, explicit restart-clearing, and health verification behind the `thronglets.bootstrap.v2` JSON envelope, with a shared `data.summary` shape plus explicit `status`, `healthy`, `restart_pending`, `fix_command`, `restart_required`, `restart_commands`, and `next_steps` for self-configuring agents
+- **Machine-facing bootstrap flow** — `thronglets detect`, `install-plan`, `apply-plan`, `doctor`, single-shot `bootstrap`, and `runtime-ready` now expose detection, executable install plans, installation, restart-pending state, explicit readiness reporting, and health verification behind the `thronglets.bootstrap.v2` JSON envelope, with a shared `data.summary` shape plus explicit `status`, `healthy`, `restart_pending`, `fix_command`, `restart_required`, `restart_commands`, and `next_steps` for self-configuring agents
 - **Offline signal evaluation** — `thronglets eval-signals` now replays recent sessions as a holdout set and reports edit silence rate plus repair / preparation / adjacency precision without touching prehook latency
 - **Machine-readable evaluation** — `thronglets eval-signals --json` now emits structured metrics, per-tool / per-target breakdowns, and a compact diagnosis for scripts and CI
 - **Focused evaluation views** — `thronglets eval-signals` now supports `--focus` and `--top-breakdowns` so operators can inspect one signal family without dumping the entire repo history
@@ -32,6 +32,7 @@
 - **Expiring connection files** — multi-device connection files now default to a `24h` validity window, can be tuned with `--ttl-hours`, and are rejected on join after expiry even if their device signature is otherwise valid
 - **Inspectable owner-bound connection files** — `connection-export` now refuses to emit ownerless onboarding files, and `connection-inspect` gives a machine-readable preflight check for owner, signer, and expiry before a secondary device attempts `connection-join`
 - **Owner conflict protection** — `owner-bind` and `connection-join` now reject conflicting owner rebinds instead of silently overwriting an existing device-to-owner association
+- **OpenClaw runtime-ready auto-report** — the OpenClaw plugin now reports `runtime-ready` as soon as it successfully loads, reducing the post-bootstrap flow to “apply config, restart once, keep going”
 
 ## v0.4.0 — 2026-03-28
 

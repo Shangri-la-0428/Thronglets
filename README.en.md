@@ -52,7 +52,7 @@ That's it. `thronglets setup` auto-installs known local adapters:
 If an adapter still needs a client restart, `doctor` now returns `restart-pending`, and after the runtime is restarted you can clear that state with:
 
 ```bash
-thronglets clear-restart --agent codex --json
+thronglets runtime-ready --agent codex --json
 ```
 
 Underneath, there is only one agent contract:
@@ -93,7 +93,7 @@ All machine-facing commands now share one stable envelope:
 }
 ```
 
-`detect / install-plan / apply-plan / doctor / bootstrap / clear-restart` now all lead with a top-level summary and then carry detailed lists.  
+`detect / install-plan / apply-plan / doctor / bootstrap / runtime-ready` now all lead with a top-level summary and then carry detailed lists.  
 When a restart is needed, the summary also carries explicit `restart_commands`.  
 `doctor` now returns top-level `status`, `healthy`, `restart_pending`, `next_steps`, plus per-adapter `fix_command`.  
 `bootstrap` also returns top-level `restart_required` and `next_steps`, so an AI does not have to infer what to do next from free-form notes.
@@ -108,6 +108,14 @@ Thronglets now freezes the chain-facing identity model at the smallest deployabl
 - `agent / session` stay audit labels for now, not independent economic principals
 - high-frequency `trace / signal` writes stay off-chain and are emitted by the `device identity`
 - low-frequency results can be settled or anchored on-chain
+
+Multiple AI runtimes can safely share the same device:
+- one `owner account`
+- one `device identity`
+- different `agent labels`, such as `claude-code / openclaw / codex`
+- one unique `session_id` per running instance
+
+So three AIs on one machine, or multiple concurrent `codex` sessions, still fit cleanly inside the same V1 identity model.
 
 The simplest mental model is bank card vs account:
 
@@ -141,6 +149,7 @@ thronglets connection-join --file ./thronglets.connection.json
 - `connection-export / connection-join` are the primary onboarding path and verify the primary-device signature by default
 - `connection-export` now emits a `24h` connection file by default and supports `--ttl-hours`; `connection-join` verifies both signature and expiry
 - `owner-bind` and `connection-join` both refuse to silently overwrite an existing different `owner account`
+- the OpenClaw plugin now auto-runs `runtime-ready` after a successful load, so users usually only need `bootstrap -> restart OpenClaw once`
 
 ## Deployment Boundary
 

@@ -142,11 +142,12 @@ function resolveConfig(pluginConfig) {
 }
 
 function throngletsArgs(config, subcommand) {
+  const commandParts = Array.isArray(subcommand) ? subcommand : [subcommand];
   const args = [];
   if (config.dataDir) {
     args.push("--data-dir", config.dataDir);
   }
-  args.push(subcommand);
+  args.push(...commandParts);
   return args;
 }
 
@@ -186,7 +187,11 @@ function runThronglets(config, subcommand, payload, timeoutMs) {
       finish({ ok: code === 0, stdout, stderr, code });
     });
 
-    child.stdin.end(JSON.stringify(payload));
+    if (payload === undefined) {
+      child.stdin.end();
+    } else {
+      child.stdin.end(JSON.stringify(payload));
+    }
   });
 }
 
@@ -231,6 +236,17 @@ export default {
   description: "Sparse-signal decision substrate for OpenClaw tool calls.",
   register(api) {
     const config = resolveConfig(api.pluginConfig);
+
+    void runThronglets(
+      config,
+      ["runtime-ready", "--agent", "openclaw", "--json"],
+      undefined,
+      config.hookTimeoutMs,
+    ).then((result) => {
+      if (!result.ok && result.stderr.trim()) {
+        api.logger.warn?.(`thronglets runtime-ready failed: ${result.stderr.trim()}`);
+      }
+    });
 
     api.on("before_prompt_build", async () => ({
       prependSystemContext: SESSION_GUIDANCE,

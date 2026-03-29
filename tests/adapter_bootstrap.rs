@@ -31,6 +31,10 @@ fn parse_clear_restart_envelope(output: &Output) -> Value {
     parse_command_data(output, "clear-restart")
 }
 
+fn parse_runtime_ready_envelope(output: &Output) -> Value {
+    parse_command_data(output, "runtime-ready")
+}
+
 #[test]
 fn detect_json_reports_present_adapters_and_generic_contract() {
     let temp = tempfile::tempdir().unwrap();
@@ -226,7 +230,7 @@ fn apply_plan_codex_then_doctor_reports_restart_pending() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step == "thronglets clear-restart --agent codex")
+            .any(|step| step == "thronglets runtime-ready --agent codex")
     );
     let reports = summary["reports"].as_array().unwrap();
     assert_eq!(reports.len(), 1);
@@ -383,6 +387,56 @@ fn clear_restart_codex_restores_healthy() {
     );
     assert_eq!(
         summary["summary"]["cleared_agents"].as_array().unwrap()[0],
+        Value::String("codex".into())
+    );
+
+    let doctor_output = run_bin(&["doctor", "--agent", "codex", "--json"], &home, &data_dir);
+    assert!(
+        doctor_output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&doctor_output.stderr)
+    );
+    let summary = parse_doctor_envelope(&doctor_output);
+    assert_eq!(
+        summary["summary"]["status"],
+        Value::String("healthy".into())
+    );
+    assert_eq!(summary["summary"]["healthy"], Value::Bool(true));
+    assert_eq!(summary["summary"]["restart_pending"], Value::Bool(false));
+}
+
+#[test]
+fn runtime_ready_codex_restores_healthy() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let apply_output = run_bin(
+        &["apply-plan", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        apply_output.status.success(),
+        "apply-plan failed: {}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+
+    let ready_output = run_bin(
+        &["runtime-ready", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        ready_output.status.success(),
+        "runtime-ready failed: {}",
+        String::from_utf8_lossy(&ready_output.stderr)
+    );
+    let summary = parse_runtime_ready_envelope(&ready_output);
+    assert_eq!(summary["summary"]["status"], Value::String("ready".into()));
+    assert_eq!(
+        summary["summary"]["ready_agents"].as_array().unwrap()[0],
         Value::String("codex".into())
     );
 

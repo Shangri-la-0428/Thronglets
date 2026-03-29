@@ -154,6 +154,26 @@ struct ClearRestartData {
     results: Vec<ClearRestartResult>,
 }
 
+#[derive(Serialize)]
+struct RuntimeReadySummary {
+    status: &'static str,
+    ready_agents: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct RuntimeReadyResult {
+    agent: String,
+    ready: bool,
+    note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RuntimeReadyData {
+    summary: RuntimeReadySummary,
+    results: Vec<RuntimeReadyResult>,
+}
+
 #[derive(Clone, Serialize)]
 struct IdentitySummary {
     status: &'static str,
@@ -598,6 +618,17 @@ enum Commands {
     /// Clear persisted restart-pending state after the target runtime has been restarted.
     ClearRestart {
         /// Restrict clearing to one adapter family.
+        #[arg(long, value_enum, default_value_t = AdapterArg::All)]
+        agent: AdapterArg,
+
+        /// Emit machine-readable JSON.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Mark a runtime as ready after it has successfully reloaded the Thronglets integration.
+    RuntimeReady {
+        /// Restrict readiness reporting to one adapter family.
         #[arg(long, value_enum, default_value_t = AdapterArg::All)]
         agent: AdapterArg,
 
@@ -1237,6 +1268,44 @@ fn render_clear_restart_report(data: &ClearRestartData) {
     }
 }
 
+fn render_runtime_ready_results(results: &[RuntimeReadyResult]) {
+    println!("Runtime ready:");
+    for result in results {
+        println!(
+            "  {}: {}",
+            result.agent,
+            if result.ready {
+                "ready"
+            } else {
+                "already-ready"
+            }
+        );
+        if let Some(note) = &result.note {
+            println!("    note: {note}");
+        }
+    }
+}
+
+fn render_runtime_ready_report(data: &RuntimeReadyData) {
+    println!("Runtime ready status: {}", data.summary.status);
+    if !data.summary.ready_agents.is_empty() {
+        println!("Ready: {}", data.summary.ready_agents.join(", "));
+    }
+    for step in &data.summary.next_steps {
+        println!("Next: {step}");
+    }
+    let unchanged: Vec<_> = data
+        .results
+        .iter()
+        .filter(|result| !result.ready)
+        .cloned()
+        .collect();
+    if !unchanged.is_empty() {
+        println!();
+        render_runtime_ready_results(&unchanged);
+    }
+}
+
 fn summarize_doctor_reports(target: AdapterArg, reports: Vec<AdapterDoctor>) -> DoctorData {
     let healthy = !doctor_should_fail(target, &reports);
     let restart_pending = reports.iter().any(|report| report.restart_pending);
@@ -1352,6 +1421,31 @@ fn summarize_clear_restart_results(results: Vec<ClearRestartResult>) -> ClearRes
                 "cleared"
             },
             cleared_agents,
+            next_steps,
+        },
+        results,
+    }
+}
+
+fn summarize_runtime_ready_results(results: Vec<RuntimeReadyResult>) -> RuntimeReadyData {
+    let ready_agents: Vec<_> = results
+        .iter()
+        .filter(|result| result.ready)
+        .map(|result| result.agent.clone())
+        .collect();
+    let mut next_steps = Vec::new();
+    if ready_agents.is_empty() {
+        next_steps.push("Run `thronglets doctor --agent <adapter>` to confirm current status.".into());
+    }
+
+    RuntimeReadyData {
+        summary: RuntimeReadySummary {
+            status: if ready_agents.is_empty() {
+                "already-ready"
+            } else {
+                "ready"
+            },
+            ready_agents,
             next_steps,
         },
         results,
@@ -1551,6 +1645,28 @@ fn clear_selected_restart_state(
     }
 
     Ok(summarize_clear_restart_results(results))
+}
+
+fn mark_selected_runtime_ready(
+    target: AdapterArg,
+    data_dir: &Path,
+) -> std::io::Result<RuntimeReadyData> {
+    let mut results = Vec::new();
+
+    for agent in selected_restart_adapters(target) {
+        let ready = clear_restart_pending(data_dir, agent)?;
+        results.push(RuntimeReadyResult {
+            agent: agent.key().into(),
+            ready,
+            note: if ready {
+                Some("Marked runtime as ready after a successful reload.".into())
+            } else {
+                Some("No persisted restart-pending state was present.".into())
+            },
+        });
+    }
+
+    Ok(summarize_runtime_ready_results(results))
 }
 
 fn doctor_should_fail(target: AdapterArg, reports: &[AdapterDoctor]) -> bool {
@@ -2566,6 +2682,16 @@ async fn main() {
                 print_machine_json("clear-restart", &report);
             } else {
                 render_clear_restart_report(&report);
+            }
+        }
+
+        Commands::RuntimeReady { agent, json } => {
+            let report =
+                mark_selected_runtime_ready(agent, &dir).expect("failed to mark runtime ready");
+            if json {
+                print_machine_json("runtime-ready", &report);
+            } else {
+                render_runtime_ready_report(&report);
             }
         }
 

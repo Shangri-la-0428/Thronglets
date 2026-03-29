@@ -446,5 +446,5 @@ fn release_check_fails_when_local_doctor_is_restart_pending() {
     assert!(stdout.starts_with("FAIL"));
     assert!(stdout.contains("doctor: FAIL"));
     assert!(stdout.contains("status: restart-pending"));
-    assert!(stdout.contains("thronglets clear-restart --agent codex"));
+    assert!(stdout.contains("thronglets runtime-ready --agent codex"));
 }

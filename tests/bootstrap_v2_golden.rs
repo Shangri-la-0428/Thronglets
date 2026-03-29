@@ -240,3 +240,34 @@ fn clear_restart_codex_matches_golden_fixture() {
     );
     assert_fixture("clear_restart_codex.json", &output, &home, &data_dir);
 }
+
+#[test]
+fn runtime_ready_codex_matches_golden_fixture() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let apply_output = run_bin(
+        &["apply-plan", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        apply_output.status.success(),
+        "apply-plan failed: {}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+
+    let output = run_bin(
+        &["runtime-ready", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
+    assert!(
+        output.status.success(),
+        "runtime-ready failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_fixture("runtime_ready_codex.json", &output, &home, &data_dir);
+}
