@@ -40,6 +40,7 @@ PreToolUse 不再追求“把所有上下文都塞进去”。现在它只输出
 
 ```bash
 cargo install thronglets
+thronglets version --json
 thronglets setup
 ```
 
@@ -47,6 +48,15 @@ thronglets setup
 - **Claude Code**：自动写入 `PostToolUse / PreToolUse` hooks
 - **Codex**：自动注册 `thronglets` MCP server 到 `~/.codex/config.toml`，并写入一段受管 `AGENTS` 记忆
 - **OpenClaw**：自动安装本地 path plugin，并写入 `~/.openclaw/openclaw.json`
+
+如果你是在这个仓库源码目录里工作，而不是在用一个正式发布版二进制，优先用 repo-local binary，不要盲信 PATH 上旧版本：
+
+```bash
+cargo run --quiet -- version --json
+cargo run --quiet -- setup
+```
+
+这样 AI 读到的 README、当前 checkout 的代码、实际执行的命令会保持一致，不会因为 PATH 上旧版本 `thronglets` 造成自动化误判。
 
 `setup` 现在也会顺手做一次 bootstrap 健康检查，并直接给出 `restart required / next steps`。
 如果某个 adapter 需要客户端重启，后续 `doctor` 会显式返回 `restart-pending`，重启后再跑一次：

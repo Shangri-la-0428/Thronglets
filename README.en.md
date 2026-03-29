@@ -40,6 +40,7 @@ Design constraints:
 
 ```bash
 cargo install thronglets
+thronglets version --json
 thronglets setup
 ```
 
@@ -47,6 +48,15 @@ That's it. `thronglets setup` auto-installs known local adapters:
 - **Claude Code**: writes `PostToolUse / PreToolUse` hooks automatically
 - **Codex**: registers a `thronglets` MCP server in `~/.codex/config.toml` and installs a managed `AGENTS` memory block
 - **OpenClaw**: installs a local path plugin and updates `~/.openclaw/openclaw.json`
+
+If you are working from this repository checkout instead of a released binary, prefer the repo-local binary over whatever old `thronglets` may already be on `PATH`:
+
+```bash
+cargo run --quiet -- version --json
+cargo run --quiet -- setup
+```
+
+That keeps the README, the checked-out source, and the binary you are actually executing in sync, which matters for agent automation.
 
 `setup` now also runs a bootstrap health pass and returns `restart required / next steps` directly.
 If an adapter still needs a client restart, `doctor` now returns `restart-pending`, and after the runtime is restarted you can clear that state with:

@@ -41,6 +41,7 @@ use tracing::info;
 
 const BOOTSTRAP_SCHEMA_VERSION: &str = "thronglets.bootstrap.v2";
 const IDENTITY_SCHEMA_VERSION: &str = "thronglets.identity.v1";
+const VERSION_SCHEMA_VERSION: &str = "thronglets.version.v1";
 const RELEASE_MAX_LOCAL_RETENTION_DROP_TENTHS_PP: i32 = 50;
 const RELEASE_MAX_FAILED_COMMAND_RATE_RISE_TENTHS_PP: i32 = 50;
 const RELEASE_MAX_FIRST_CHANGE_LATENCY_RISE_MS: i64 = 5_000;
@@ -237,6 +238,21 @@ struct StatusData {
     database_size_bytes: u64,
 }
 
+#[derive(Serialize)]
+struct VersionSummary {
+    status: &'static str,
+    version: String,
+    bootstrap_schema_version: &'static str,
+    identity_schema_version: &'static str,
+}
+
+#[derive(Serialize)]
+struct VersionData {
+    summary: VersionSummary,
+    binary_path: String,
+    source_hint: &'static str,
+}
+
 #[derive(Parser)]
 #[command(
     name = "thronglets",
@@ -358,6 +374,13 @@ impl From<SignalScopeArg> for SignalScopeFilter {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Show the running binary version and machine-facing schema versions.
+    Version {
+        /// Emit machine-readable JSON instead of text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
     /// Start the Thronglets node
     Run {
         /// Port to listen on (0 = random)
@@ -1021,6 +1044,16 @@ fn render_signal_feed_results(results: &[thronglets::posts::SignalFeedResult]) {
     if omitted_count > 0 {
         println!("  + {omitted_count} lower-signal entries omitted");
     }
+}
+
+fn render_version_report(data: &VersionData) {
+    println!("Thronglets version: {}", data.summary.version);
+    println!(
+        "Schemas: bootstrap={}, identity={}",
+        data.summary.bootstrap_schema_version, data.summary.identity_schema_version
+    );
+    println!("Binary: {}", data.binary_path);
+    println!("Hint: {}", data.source_hint);
 }
 
 fn signal_hours_remaining(expires_at: u64) -> u64 {
@@ -1701,6 +1734,28 @@ async fn main() {
     let identity_binding = load_identity_binding(&dir, &identity);
 
     match cli.command {
+        Commands::Version { json } => {
+            let binary_path = std::env::current_exe()
+                .unwrap_or_else(|_| PathBuf::from("thronglets"))
+                .display()
+                .to_string();
+            let data = VersionData {
+                summary: VersionSummary {
+                    status: "ready",
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    bootstrap_schema_version: BOOTSTRAP_SCHEMA_VERSION,
+                    identity_schema_version: IDENTITY_SCHEMA_VERSION,
+                },
+                binary_path,
+                source_hint: "If you are operating inside the Thronglets repo, prefer `cargo run --quiet -- <command>` so the binary matches the checked-out docs and source.",
+            };
+            if json {
+                print_machine_json_with_schema(VERSION_SCHEMA_VERSION, "version", &data);
+            } else {
+                render_version_report(&data);
+            }
+        }
+
         Commands::Id { json } => {
             let data = IdentityIdData {
                 summary: identity_summary("healthy", &identity_binding),
