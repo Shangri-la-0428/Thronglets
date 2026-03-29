@@ -182,7 +182,7 @@ Thronglets 现在的主线已经明确：
 目标：真正的一行命令安装。
 
 当前状态：
-- npm / python wrapper metadata and package docs now track the current `v0.4.0` sparse-signal product shape
+- npm / python wrapper metadata and package docs now track the current `v0.4.1` sparse-signal product shape
 - CI 已经会挡住 package-facing 文案和版本再漂回旧的 `0.2.0 / 8 layers`
 - repo 内已经有 tagged release workflow 和 `scripts/install.sh`
 
