@@ -2,18 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Shangri-la-0428/thronglets",
   "title": "Thronglets",
-  "description": "P2P shared memory substrate for AI agents — stigmergic knowledge network via libp2p",
+  "description": "Local AI substrate for agents with sparse signals, hooks, and optional adapters",
   "repository": {
     "url": "https://github.com/Shangri-la-0428/Thronglets",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.4.2",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/Shangri-la-0428/Thronglets/releases/download/v0.2.0/thronglets-mcp-darwin-arm64",
-      "version": "0.2.0",
-      "fileSha256": "7b0546e9381b8dc9180036afc1cbcd504068b4ac13d92f497a44945fc3faad5e",
+      "identifier": "https://github.com/Shangri-la-0428/Thronglets/releases/download/v0.4.2/thronglets-mcp-darwin-arm64",
+      "version": "0.4.2",
+      "fileSha256": "123665d299045c5eb291fcee04bfe3c065ecc941df3e90328b3c192e399e764d",
       "transport": {
         "type": "stdio"
       },
@@ -26,9 +26,9 @@
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/Shangri-la-0428/Thronglets/releases/download/v0.2.0/thronglets-mcp-linux-amd64",
-      "version": "0.2.0",
-      "fileSha256": "d02883a6eecb861de8c1328ee9f264d4eb2d17635eb8db069bdf66ea7e9f33e6",
+      "identifier": "https://github.com/Shangri-la-0428/Thronglets/releases/download/v0.4.2/thronglets-mcp-linux-amd64",
+      "version": "0.4.2",
+      "fileSha256": "382ab8149f77f47310794587159adbb4a46650c0cab471a81d8e3c19edc004cd",
       "transport": {
         "type": "stdio"
       },
