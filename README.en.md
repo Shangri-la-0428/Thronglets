@@ -93,6 +93,7 @@ The response now includes:
 - `network.activity = offline | bootstrapping | connected`
 - `network.transport_mode = offline | direct | relayed | mixed`
 - `network.vps_dependency_level = offline | bootstrap-only | high | medium | low | peer-native`
+- `network.bootstrap_fallback_mode = disabled | immediate | delayed`
 - `network.trusted_peer_seed_count`
 - `network.peer_seed_count`
 
@@ -111,7 +112,7 @@ It classifies the node as:
 - `bootstrap-only`
 - `offline`
 
-and returns concrete next steps, such as importing peer seeds from a connection file or reducing over-reliance on bootstrap / VPS.
+and returns concrete next steps, such as importing peer seeds from a connection file or reducing over-reliance on bootstrap / VPS. It also now exposes `bootstrap_offline_ready=true|false`, so you can tell whether this node already has a remembered-peer path if bootstrap / VPS disappears.
 
 Underneath, there is only one agent contract:
 - `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back

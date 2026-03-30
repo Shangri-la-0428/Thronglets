@@ -269,6 +269,7 @@ Thronglets 现在的主线已经明确（当前 release: `v0.4.2`）：
   - `bootstrap_targets`
   - `bootstrap_contacted_recently`
   - `vps_dependency_level`
+  - `bootstrap_fallback_mode`
   - `trusted_peer_seed_count`
   - `peer_seed_count`
 - 多设备 `connection file` 已开始携带 peer seed 信息
@@ -276,6 +277,7 @@ Thronglets 现在的主线已经明确（当前 release: `v0.4.2`）：
 - `net-check --json` 已能明确诊断当前是 `peer-first / degraded / bootstrap-only / offline`
 - 通过 `connection-join` 导入的 peer seeds 现在会被提升为 `trusted peer seeds`，并在启动时优先于普通 remembered peers
 - 只要 remembered peers 存在，bootstrap 现在就是延迟兜底，不再是每次启动的默认第一跳
+- `net-check --json` 现在还能直接给出 `bootstrap_offline_ready`，判断 VPS / bootstrap 突然消失时节点是否还有 remembered-peer 重连路径
 
 剩余完成标准：
 - 把 relay 继续降级成兜底而不是默认路径

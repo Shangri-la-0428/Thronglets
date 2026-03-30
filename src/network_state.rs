@@ -39,6 +39,7 @@ pub struct NetworkStatus {
     pub activity: &'static str,
     pub transport_mode: &'static str,
     pub vps_dependency_level: &'static str,
+    pub bootstrap_fallback_mode: &'static str,
     pub peer_count: usize,
     pub direct_peer_count: usize,
     pub relay_peer_count: usize,
@@ -201,6 +202,9 @@ impl NetworkSnapshot {
 
     pub fn to_status(&self) -> NetworkStatus {
         let now = now_ms();
+        let has_remembered_peer_paths = !self.trusted_peer_seeds.is_empty()
+            || !self.peer_seeds.is_empty()
+            || self.peers.iter().any(|peer| !peer.addresses.is_empty());
         let bootstrap_contacted_recently = self
             .last_bootstrap_contact_at_ms
             .is_some_and(|ts| now - ts <= RECENT_BOOTSTRAP_WINDOW_MS);
@@ -234,11 +238,19 @@ impl NetworkSnapshot {
                 _ => "low",
             }
         };
+        let bootstrap_fallback_mode = if self.bootstrap_targets == 0 {
+            "disabled"
+        } else if has_remembered_peer_paths {
+            "delayed"
+        } else {
+            "immediate"
+        };
 
         NetworkStatus {
             activity,
             transport_mode,
             vps_dependency_level,
+            bootstrap_fallback_mode,
             peer_count: self.peer_count,
             direct_peer_count: self.direct_peer_count,
             relay_peer_count: self.relay_peer_count,
@@ -299,6 +311,7 @@ mod tests {
         assert_eq!(status.activity, "offline");
         assert_eq!(status.transport_mode, "offline");
         assert_eq!(status.vps_dependency_level, "offline");
+        assert_eq!(status.bootstrap_fallback_mode, "disabled");
         assert_eq!(status.peer_count, 0);
     }
 
@@ -308,6 +321,7 @@ mod tests {
         let status = snapshot.to_status();
         assert_eq!(status.activity, "bootstrapping");
         assert_eq!(status.vps_dependency_level, "bootstrap-only");
+        assert_eq!(status.bootstrap_fallback_mode, "immediate");
         assert!(status.bootstrap_contacted_recently);
     }
 
@@ -319,6 +333,7 @@ mod tests {
         assert_eq!(status.activity, "connected");
         assert_eq!(status.transport_mode, "direct");
         assert_eq!(status.vps_dependency_level, "peer-native");
+        assert_eq!(status.bootstrap_fallback_mode, "disabled");
     }
 
     #[test]
@@ -358,6 +373,7 @@ mod tests {
         let status = snapshot.to_status();
         assert_eq!(status.trusted_peer_seed_count, 1);
         assert_eq!(status.peer_seed_count, 3);
+        assert_eq!(status.bootstrap_fallback_mode, "delayed");
 
         let seeds = snapshot.peer_seed_addresses(4);
         assert_eq!(seeds.len(), 4);

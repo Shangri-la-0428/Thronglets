@@ -93,6 +93,7 @@ thronglets status --json
 - `network.activity = offline | bootstrapping | connected`
 - `network.transport_mode = offline | direct | relayed | mixed`
 - `network.vps_dependency_level = offline | bootstrap-only | high | medium | low | peer-native`
+- `network.bootstrap_fallback_mode = disabled | immediate | delayed`
 - `network.trusted_peer_seed_count`
 - `network.peer_seed_count`
 
@@ -111,7 +112,7 @@ thronglets net-check --json
 - `bootstrap-only`
 - `offline`
 
-并返回下一步建议，比如“先导入 connection file 带来的 peer seeds”，还是“当前仍然太依赖 bootstrap / VPS”。
+并返回下一步建议，比如“先导入 connection file 带来的 peer seeds”，还是“当前仍然太依赖 bootstrap / VPS”。同时它现在还会直接给出 `bootstrap_offline_ready=true|false`，告诉你如果 VPS / bootstrap 此刻消失，这个节点是否已经具备 remembered-peer 的重连路径。
 
 底层接入面只有一个统一 contract：
 - `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号

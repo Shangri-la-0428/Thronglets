@@ -281,8 +281,10 @@ struct NetCheckItem {
 struct NetCheckSummary {
     status: &'static str,
     peer_first_ready: bool,
+    bootstrap_offline_ready: bool,
     transport_mode: &'static str,
     vps_dependency_level: &'static str,
+    bootstrap_fallback_mode: &'static str,
     peer_count: usize,
     trusted_peer_seed_count: usize,
     peer_seed_count: usize,
@@ -1282,6 +1284,8 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
     let direct_connectivity = matches!(status.transport_mode, "direct" | "mixed");
     let remembered_peers = status.known_peer_count > 0 || status.peer_seed_count > 0;
     let trusted_path = status.trusted_peer_seed_count > 0;
+    let bootstrap_offline_ready = status.bootstrap_targets == 0
+        || (remembered_peers && matches!(status.bootstrap_fallback_mode, "delayed" | "disabled"));
     let low_vps_dependence = matches!(
         status.vps_dependency_level,
         "peer-native" | "low" | "medium"
@@ -1332,6 +1336,18 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
             },
         },
         NetCheckItem {
+            name: "bootstrap-offline-path",
+            ok: bootstrap_offline_ready,
+            detail: if bootstrap_offline_ready {
+                format!(
+                    "Current bootstrap fallback mode is {}; this node has a non-bootstrap reconnect path.",
+                    status.bootstrap_fallback_mode
+                )
+            } else {
+                "If bootstrap vanished now, this node would still start from bootstrap immediately because it lacks remembered peer paths.".into()
+            },
+        },
+        NetCheckItem {
             name: "vps-dependence",
             ok: low_vps_dependence,
             detail: format!(
@@ -1345,6 +1361,11 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
     if !remembered_peers {
         next_steps.push(
             "Export or import a connection file from an already connected device so this node inherits direct peer seeds.".into(),
+        );
+    }
+    if !bootstrap_offline_ready {
+        next_steps.push(
+            "Establish and retain at least one remembered peer path before treating this node as resilient to bootstrap / VPS loss.".into(),
         );
     }
     if remembered_peers && !trusted_path {
@@ -1378,8 +1399,10 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
         summary: NetCheckSummary {
             status: status_label,
             peer_first_ready,
+            bootstrap_offline_ready,
             transport_mode: status.transport_mode,
             vps_dependency_level: status.vps_dependency_level,
+            bootstrap_fallback_mode: status.bootstrap_fallback_mode,
             peer_count: status.peer_count,
             trusted_peer_seed_count: status.trusted_peer_seed_count,
             peer_seed_count: status.peer_seed_count,
@@ -1401,8 +1424,18 @@ fn render_net_check(data: &NetCheckData) {
         }
     );
     println!(
-        "Transport: {} | dependency: {}",
-        data.summary.transport_mode, data.summary.vps_dependency_level
+        "Bootstrap-offline ready: {}",
+        if data.summary.bootstrap_offline_ready {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!(
+        "Transport: {} | dependency: {} | fallback: {}",
+        data.summary.transport_mode,
+        data.summary.vps_dependency_level,
+        data.summary.bootstrap_fallback_mode
     );
     println!(
         "Peers: {} connected, {} trusted seeds, {} total remembered seeds, {} bootstrap targets",

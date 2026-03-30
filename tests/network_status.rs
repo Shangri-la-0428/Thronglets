@@ -36,6 +36,10 @@ fn status_json_surfaces_network_snapshot() {
     assert_eq!(status["data"]["network"]["activity"], "connected");
     assert_eq!(status["data"]["network"]["transport_mode"], "direct");
     assert_eq!(status["data"]["network"]["vps_dependency_level"], "low");
+    assert_eq!(
+        status["data"]["network"]["bootstrap_fallback_mode"],
+        "delayed"
+    );
     assert_eq!(status["data"]["network"]["peer_count"], 3);
     assert_eq!(status["data"]["network"]["bootstrap_targets"], 2);
     assert_eq!(status["data"]["network"]["known_peer_count"], 1);
@@ -95,9 +99,14 @@ fn net_check_json_flags_bootstrap_only_nodes() {
     assert_eq!(check["command"], "net-check");
     assert_eq!(check["data"]["summary"]["status"], "bootstrap-only");
     assert_eq!(check["data"]["summary"]["peer_first_ready"], false);
+    assert_eq!(check["data"]["summary"]["bootstrap_offline_ready"], false);
     assert_eq!(
         check["data"]["summary"]["vps_dependency_level"],
         "bootstrap-only"
+    );
+    assert_eq!(
+        check["data"]["summary"]["bootstrap_fallback_mode"],
+        "immediate"
     );
     let next_steps = check["data"]["next_steps"].as_array().unwrap();
     assert!(!next_steps.is_empty());
@@ -118,7 +127,12 @@ fn net_check_json_accepts_peer_first_state() {
     let check = run_bin(&["net-check", "--json"], &data_dir);
     assert_eq!(check["data"]["summary"]["status"], "peer-first");
     assert_eq!(check["data"]["summary"]["peer_first_ready"], true);
+    assert_eq!(check["data"]["summary"]["bootstrap_offline_ready"], true);
     assert_eq!(check["data"]["summary"]["transport_mode"], "direct");
+    assert_eq!(
+        check["data"]["summary"]["bootstrap_fallback_mode"],
+        "delayed"
+    );
     assert_eq!(check["data"]["summary"]["trusted_peer_seed_count"], 1);
     assert_eq!(check["data"]["summary"]["peer_seed_count"], 1);
     assert!(check["data"]["next_steps"].as_array().unwrap().is_empty());
