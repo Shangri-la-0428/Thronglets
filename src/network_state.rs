@@ -29,6 +29,8 @@ pub struct NetworkSnapshot {
     pub last_trace_received_at_ms: Option<i64>,
     pub peers: Vec<ObservedPeer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_peer_seeds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peer_seeds: Vec<String>,
 }
 
@@ -43,6 +45,7 @@ pub struct NetworkStatus {
     pub bootstrap_targets: usize,
     pub bootstrap_contacted_recently: bool,
     pub known_peer_count: usize,
+    pub trusted_peer_seed_count: usize,
     pub peer_seed_count: usize,
     pub last_peer_connected_age_ms: Option<i64>,
     pub last_trace_received_age_ms: Option<i64>,
@@ -138,10 +141,41 @@ impl NetworkSnapshot {
         self.updated_at_ms = now;
         for seed in seeds {
             let trimmed = seed.trim();
-            if trimmed.is_empty() {
+            if trimmed.is_empty()
+                || self
+                    .trusted_peer_seeds
+                    .iter()
+                    .any(|existing| existing == trimmed)
+            {
                 continue;
             }
             push_unique_front(&mut self.peer_seeds, trimmed.to_string(), MAX_PEER_SEEDS);
+        }
+    }
+
+    pub fn merge_trusted_peer_seeds<I>(&mut self, seeds: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let now = now_ms();
+        self.updated_at_ms = now;
+        for seed in seeds {
+            let trimmed = seed.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(index) = self
+                .peer_seeds
+                .iter()
+                .position(|existing| existing == trimmed)
+            {
+                self.peer_seeds.remove(index);
+            }
+            push_unique_front(
+                &mut self.trusted_peer_seeds,
+                trimmed.to_string(),
+                MAX_PEER_SEEDS,
+            );
         }
     }
 
@@ -151,6 +185,9 @@ impl NetworkSnapshot {
             for address in peer.addresses.iter().rev() {
                 push_unique_front(&mut seeds, address.clone(), MAX_PEER_SEEDS.max(limit));
             }
+        }
+        for seed in self.trusted_peer_seeds.iter().rev() {
+            push_unique_front(&mut seeds, seed.clone(), MAX_PEER_SEEDS.max(limit));
         }
         seeds.truncate(limit);
         seeds
@@ -208,7 +245,8 @@ impl NetworkSnapshot {
             bootstrap_targets: self.bootstrap_targets,
             bootstrap_contacted_recently,
             known_peer_count: self.peers.len(),
-            peer_seed_count: self.peer_seeds.len(),
+            trusted_peer_seed_count: self.trusted_peer_seeds.len(),
+            peer_seed_count: self.trusted_peer_seeds.len() + self.peer_seeds.len(),
             last_peer_connected_age_ms: age(now, self.last_peer_connected_at_ms),
             last_trace_received_age_ms: age(now, self.last_trace_received_at_ms),
             last_bootstrap_contact_age_ms: age(now, self.last_bootstrap_contact_at_ms),
@@ -312,16 +350,34 @@ mod tests {
             "/ip4/10.0.0.1/tcp/4001".to_string(),
             "/ip4/10.0.0.2/tcp/4001".to_string(),
         ]);
+        snapshot.merge_trusted_peer_seeds(["/ip4/10.0.0.42/tcp/4001".to_string()]);
         snapshot.observe_peer_address("peer-a", "/ip4/10.0.0.3/tcp/4001");
         snapshot.observe_peer_address("peer-a", "/ip4/10.0.0.4/tcp/4001");
         snapshot.observe_peer_address("peer-b", "/ip4/10.0.0.5/tcp/4001");
 
         let status = snapshot.to_status();
-        assert_eq!(status.peer_seed_count, 2);
+        assert_eq!(status.trusted_peer_seed_count, 1);
+        assert_eq!(status.peer_seed_count, 3);
 
         let seeds = snapshot.peer_seed_addresses(4);
         assert_eq!(seeds.len(), 4);
-        assert_eq!(seeds[0], "/ip4/10.0.0.5/tcp/4001");
-        assert_eq!(seeds[1], "/ip4/10.0.0.4/tcp/4001");
+        assert_eq!(seeds[0], "/ip4/10.0.0.42/tcp/4001");
+    }
+
+    #[test]
+    fn trusted_peer_seeds_take_priority_over_generic_seeds() {
+        let mut snapshot = NetworkSnapshot::begin(1);
+        snapshot.merge_peer_seeds([
+            "/ip4/10.0.0.1/tcp/4001".to_string(),
+            "/ip4/10.0.0.2/tcp/4001".to_string(),
+        ]);
+        snapshot.merge_trusted_peer_seeds([
+            "/ip4/10.0.0.9/tcp/4001".to_string(),
+            "/ip4/10.0.0.8/tcp/4001".to_string(),
+        ]);
+
+        let seeds = snapshot.peer_seed_addresses(4);
+        assert_eq!(seeds[0], "/ip4/10.0.0.8/tcp/4001");
+        assert_eq!(seeds[1], "/ip4/10.0.0.9/tcp/4001");
     }
 }

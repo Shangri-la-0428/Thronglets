@@ -4,6 +4,7 @@
 
 - **Machine-readable network diagnosis** — `thronglets net-check --json` now classifies a node as `peer-first / degraded / bootstrap-only / offline`, surfaces whether direct connectivity and remembered peers are actually in place, and returns concrete next steps for reducing VPS dependence
 - **Direct-first peer seeds** — `connection-export` now includes a small set of recently observed peer addresses, `connection-join` imports those seeds into the local network snapshot, and `run` / `mcp` now try remembered peers before falling back to VPS bootstrap so multi-device onboarding starts closer to true peer-first behavior
+- **Trusted same-owner seeds** — peer seeds imported through owner-bound `connection-join` are now treated as `trusted peer seeds`, surfaced in `status / peers / net-check`, and dialed before generic remembered peers so same-owner devices reconnect directly before leaning on VPS bootstrap
 
 ## v0.4.2 — 2026-03-30
 

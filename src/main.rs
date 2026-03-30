@@ -211,6 +211,7 @@ struct ConnectionExportData {
     output: String,
     primary_device_pubkey: String,
     signed_by_device: String,
+    trusted_peer_seed_count: usize,
     peer_seed_count: usize,
     ttl_hours: u32,
     expires_at: u64,
@@ -221,6 +222,7 @@ struct ConnectionJoinData {
     summary: IdentitySummary,
     file: String,
     signature_verified: bool,
+    imported_trusted_peer_seed_count: usize,
     imported_peer_seed_count: usize,
     source_expires_at: u64,
 }
@@ -230,6 +232,7 @@ struct ConnectionInspectData {
     summary: IdentitySummary,
     file: String,
     primary_device_pubkey: String,
+    trusted_peer_seed_count: usize,
     peer_seed_count: usize,
     exported_at: u64,
     expires_at: u64,
@@ -255,6 +258,7 @@ struct PeersSummary {
     status: &'static str,
     connected_peers: usize,
     known_peers: usize,
+    trusted_peer_seed_count: usize,
     peer_seed_count: usize,
     bootstrap_targets: usize,
     vps_dependency_level: &'static str,
@@ -280,6 +284,7 @@ struct NetCheckSummary {
     transport_mode: &'static str,
     vps_dependency_level: &'static str,
     peer_count: usize,
+    trusted_peer_seed_count: usize,
     peer_seed_count: usize,
     bootstrap_targets: usize,
 }
@@ -1276,6 +1281,7 @@ fn render_presence_feed_results(results: &[PresenceFeedResult]) {
 fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> NetCheckData {
     let direct_connectivity = matches!(status.transport_mode, "direct" | "mixed");
     let remembered_peers = status.known_peer_count > 0 || status.peer_seed_count > 0;
+    let trusted_path = status.trusted_peer_seed_count > 0;
     let low_vps_dependence = matches!(
         status.vps_dependency_level,
         "peer-native" | "low" | "medium"
@@ -1309,9 +1315,21 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
             name: "remembered-peers",
             ok: remembered_peers,
             detail: format!(
-                "{} known peers, {} reusable peer seeds.",
-                status.known_peer_count, status.peer_seed_count
+                "{} known peers, {} trusted seeds, {} total reusable peer seeds.",
+                status.known_peer_count, status.trusted_peer_seed_count, status.peer_seed_count
             ),
+        },
+        NetCheckItem {
+            name: "trusted-owner-path",
+            ok: trusted_path,
+            detail: if trusted_path {
+                format!(
+                    "{} trusted peer seeds came from owner-bound connection files.",
+                    status.trusted_peer_seed_count
+                )
+            } else {
+                "No trusted peer seeds yet; same-owner multi-device reconnects will still lean on generic discovery.".into()
+            },
         },
         NetCheckItem {
             name: "vps-dependence",
@@ -1327,6 +1345,11 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
     if !remembered_peers {
         next_steps.push(
             "Export or import a connection file from an already connected device so this node inherits direct peer seeds.".into(),
+        );
+    }
+    if remembered_peers && !trusted_path {
+        next_steps.push(
+            "For same-owner devices, refresh a connection file so this node learns trusted peer seeds before falling back to generic discovery.".into(),
         );
     }
     if status.peer_count == 0 && status.bootstrap_targets == 0 {
@@ -1358,6 +1381,7 @@ fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> Net
             transport_mode: status.transport_mode,
             vps_dependency_level: status.vps_dependency_level,
             peer_count: status.peer_count,
+            trusted_peer_seed_count: status.trusted_peer_seed_count,
             peer_seed_count: status.peer_seed_count,
             bootstrap_targets: status.bootstrap_targets,
         },
@@ -1370,15 +1394,22 @@ fn render_net_check(data: &NetCheckData) {
     println!("Network check: {}", data.summary.status);
     println!(
         "Peer-first ready: {}",
-        if data.summary.peer_first_ready { "yes" } else { "no" }
+        if data.summary.peer_first_ready {
+            "yes"
+        } else {
+            "no"
+        }
     );
     println!(
         "Transport: {} | dependency: {}",
         data.summary.transport_mode, data.summary.vps_dependency_level
     );
     println!(
-        "Peers: {} connected, {} remembered seeds, {} bootstrap targets",
-        data.summary.peer_count, data.summary.peer_seed_count, data.summary.bootstrap_targets
+        "Peers: {} connected, {} trusted seeds, {} total remembered seeds, {} bootstrap targets",
+        data.summary.peer_count,
+        data.summary.trusted_peer_seed_count,
+        data.summary.peer_seed_count,
+        data.summary.bootstrap_targets
     );
     for check in &data.checks {
         println!(
@@ -2175,6 +2206,7 @@ async fn main() {
             json,
         } => {
             let network_snapshot = thronglets::network_state::NetworkSnapshot::load(&dir);
+            let network_status = network_snapshot.to_status();
             let peer_seeds = network_snapshot.peer_seed_addresses(16);
             let connection =
                 ConnectionFile::from_binding(&identity_binding, &identity, ttl_hours, peer_seeds)
@@ -2187,6 +2219,7 @@ async fn main() {
                 output: output.display().to_string(),
                 primary_device_pubkey: connection.primary_device_pubkey.clone(),
                 signed_by_device: connection.primary_device_identity.clone(),
+                trusted_peer_seed_count: network_status.trusted_peer_seed_count,
                 peer_seed_count: connection.peer_seeds.len(),
                 ttl_hours: connection.ttl_hours(),
                 expires_at: connection.expires_at,
@@ -2202,6 +2235,7 @@ async fn main() {
                 );
                 println!("  Primary device:     {}", identity_binding.device_identity);
                 println!("  Signed by device:   {}", data.signed_by_device);
+                println!("  Trusted seeds:      {}", data.trusted_peer_seed_count);
                 println!("  Peer seeds:         {}", data.peer_seed_count);
                 println!("  Expires in:         {}h", data.ttl_hours);
             }
@@ -2220,6 +2254,7 @@ async fn main() {
                 summary,
                 file: file.display().to_string(),
                 primary_device_pubkey: connection.primary_device_pubkey.clone(),
+                trusted_peer_seed_count: connection.peer_seeds.len(),
                 peer_seed_count: connection.peer_seeds.len(),
                 exported_at: connection.exported_at,
                 expires_at: connection.expires_at,
@@ -2241,6 +2276,7 @@ async fn main() {
                 );
                 println!("  Primary device:     {}", data.summary.device_identity);
                 println!("  Signature verified: yes");
+                println!("  Trusted seeds:      {}", data.trusted_peer_seed_count);
                 println!("  Peer seeds:         {}", data.peer_seed_count);
                 println!("  Expires in:         {}h", data.ttl_hours);
             }
@@ -2259,12 +2295,13 @@ async fn main() {
                 .save(&identity_binding_path(&dir))
                 .expect("failed to save identity binding");
             let mut network_snapshot = thronglets::network_state::NetworkSnapshot::load(&dir);
-            network_snapshot.merge_peer_seeds(connection.peer_seeds.clone());
+            network_snapshot.merge_trusted_peer_seeds(connection.peer_seeds.clone());
             network_snapshot.save(&dir);
             let data = ConnectionJoinData {
                 summary: identity_summary("joined", &binding),
                 file: file.display().to_string(),
                 signature_verified: true,
+                imported_trusted_peer_seed_count: connection.peer_seeds.len(),
                 imported_peer_seed_count: connection.peer_seeds.len(),
                 source_expires_at: connection.expires_at,
             };
@@ -2283,6 +2320,10 @@ async fn main() {
                     connection.primary_device_identity
                 );
                 println!("  Signature verified: yes");
+                println!(
+                    "  Imported trusted seeds: {}",
+                    data.imported_trusted_peer_seed_count
+                );
                 println!("  Imported peer seeds: {}", data.imported_peer_seed_count);
             }
         }
@@ -3430,6 +3471,7 @@ async fn main() {
                     status: status.activity,
                     connected_peers: status.peer_count,
                     known_peers: status.known_peer_count,
+                    trusted_peer_seed_count: status.trusted_peer_seed_count,
                     peer_seed_count: status.peer_seed_count,
                     bootstrap_targets: status.bootstrap_targets,
                     vps_dependency_level: status.vps_dependency_level,
@@ -3446,9 +3488,10 @@ async fn main() {
                 );
             } else {
                 println!(
-                    "Known peers: {} ({} currently connected, {} seeds, dependency {})",
+                    "Known peers: {} ({} currently connected, {} trusted seeds, {} total seeds, dependency {})",
                     data.summary.known_peers,
                     data.summary.connected_peers,
+                    data.summary.trusted_peer_seed_count,
                     data.summary.peer_seed_count,
                     data.summary.vps_dependency_level
                 );
@@ -3556,7 +3599,12 @@ async fn main() {
                     "  Bootstrap:       {} targets, dependency {}",
                     data.network.bootstrap_targets, data.network.vps_dependency_level
                 );
-                println!("  Known peers:     {}", data.network.known_peer_count);
+                println!(
+                    "  Known peers:     {} ({} trusted seeds, {} total seeds)",
+                    data.network.known_peer_count,
+                    data.network.trusted_peer_seed_count,
+                    data.network.peer_seed_count
+                );
                 println!(
                     "  Bootstrap seen:  {}",
                     if data.network.bootstrap_contacted_recently {

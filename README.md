@@ -93,6 +93,7 @@ thronglets status --json
 - `network.activity = offline | bootstrapping | connected`
 - `network.transport_mode = offline | direct | relayed | mixed`
 - `network.vps_dependency_level = offline | bootstrap-only | high | medium | low | peer-native`
+- `network.trusted_peer_seed_count`
 - `network.peer_seed_count`
 
 也就是说，AI 和操作者都不需要再猜“刚才那次绕路是不是 Thronglets 在起作用”。
@@ -206,7 +207,7 @@ thronglets connection-join --file ./thronglets.connection.json
 - `owner-bind` 是手动高级 fallback
 - `connection-export / connection-join` 是主路径，并且默认验证主设备签名
 - `connection-export` 默认导出 `24h` 有效的 connection file，可用 `--ttl-hours` 调整；`connection-join` 会同时验证签名和过期时间
-- `connection-export` 会把最近观察到的 peer 地址一起写进 connection file；`connection-join` 会把这些 seeds 合并进本地 network snapshot
+- `connection-export` 会把最近观察到的 peer 地址一起写进 connection file；`connection-join` 会把这些 seeds 当作 `trusted peer seeds` 合并进本地 network snapshot，并在启动时优先于普通 peer seeds 拨号
 - `owner-bind` 和 `connection-join` 默认都不会静默覆盖成另一个 `owner account`
 - OpenClaw 插件现在会在成功加载后自动执行 `runtime-ready`，所以用户通常只需要 `bootstrap -> 重启一次 OpenClaw`
 

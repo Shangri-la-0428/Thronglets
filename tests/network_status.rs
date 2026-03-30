@@ -28,6 +28,7 @@ fn status_json_surfaces_network_snapshot() {
     snapshot.mark_peer_connected("12D3KooWStatus", 3);
     snapshot.observe_peer_address("12D3KooWStatus", "/ip4/10.0.0.3/tcp/4001");
     snapshot.merge_peer_seeds(["/ip4/10.0.0.9/tcp/4001".to_string()]);
+    snapshot.merge_trusted_peer_seeds(["/ip4/10.0.0.8/tcp/4001".to_string()]);
     snapshot.mark_trace_received();
     snapshot.save(&data_dir);
 
@@ -38,7 +39,8 @@ fn status_json_surfaces_network_snapshot() {
     assert_eq!(status["data"]["network"]["peer_count"], 3);
     assert_eq!(status["data"]["network"]["bootstrap_targets"], 2);
     assert_eq!(status["data"]["network"]["known_peer_count"], 1);
-    assert_eq!(status["data"]["network"]["peer_seed_count"], 1);
+    assert_eq!(status["data"]["network"]["trusted_peer_seed_count"], 1);
+    assert_eq!(status["data"]["network"]["peer_seed_count"], 2);
 }
 
 #[test]
@@ -54,6 +56,7 @@ fn peers_json_surfaces_known_peer_book() {
     snapshot.observe_peer_address("12D3KooWBob", "/ip4/127.0.0.1/tcp/4002");
     snapshot.mark_peer_disconnected("12D3KooWAlice", 1);
     snapshot.merge_peer_seeds(["/ip4/127.0.0.1/tcp/4999".to_string()]);
+    snapshot.merge_trusted_peer_seeds(["/ip4/127.0.0.1/tcp/4998".to_string()]);
     snapshot.save(&data_dir);
 
     let peers = run_bin(&["peers", "--json", "--limit", "10"], &data_dir);
@@ -61,7 +64,8 @@ fn peers_json_surfaces_known_peer_book() {
     assert_eq!(peers["command"], "peers");
     assert_eq!(peers["data"]["summary"]["connected_peers"], 1);
     assert_eq!(peers["data"]["summary"]["known_peers"], 2);
-    assert_eq!(peers["data"]["summary"]["peer_seed_count"], 1);
+    assert_eq!(peers["data"]["summary"]["trusted_peer_seed_count"], 1);
+    assert_eq!(peers["data"]["summary"]["peer_seed_count"], 2);
     let list = peers["data"]["peers"].as_array().unwrap();
     let alice = list
         .iter()
@@ -91,7 +95,10 @@ fn net_check_json_flags_bootstrap_only_nodes() {
     assert_eq!(check["command"], "net-check");
     assert_eq!(check["data"]["summary"]["status"], "bootstrap-only");
     assert_eq!(check["data"]["summary"]["peer_first_ready"], false);
-    assert_eq!(check["data"]["summary"]["vps_dependency_level"], "bootstrap-only");
+    assert_eq!(
+        check["data"]["summary"]["vps_dependency_level"],
+        "bootstrap-only"
+    );
     let next_steps = check["data"]["next_steps"].as_array().unwrap();
     assert!(!next_steps.is_empty());
 }
@@ -105,13 +112,14 @@ fn net_check_json_accepts_peer_first_state() {
     let mut snapshot = NetworkSnapshot::begin(1);
     snapshot.mark_peer_connected("12D3KooWPeerFirst", 3);
     snapshot.observe_peer_address("12D3KooWPeerFirst", "/ip4/10.0.0.3/tcp/4001");
-    snapshot.merge_peer_seeds(["/ip4/10.0.0.9/tcp/4001".to_string()]);
+    snapshot.merge_trusted_peer_seeds(["/ip4/10.0.0.9/tcp/4001".to_string()]);
     snapshot.save(&data_dir);
 
     let check = run_bin(&["net-check", "--json"], &data_dir);
     assert_eq!(check["data"]["summary"]["status"], "peer-first");
     assert_eq!(check["data"]["summary"]["peer_first_ready"], true);
     assert_eq!(check["data"]["summary"]["transport_mode"], "direct");
+    assert_eq!(check["data"]["summary"]["trusted_peer_seed_count"], 1);
     assert_eq!(check["data"]["summary"]["peer_seed_count"], 1);
     assert!(check["data"]["next_steps"].as_array().unwrap().is_empty());
 }
