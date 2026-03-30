@@ -76,3 +76,42 @@ fn peers_json_surfaces_known_peer_book() {
     assert_eq!(alice["addresses"][0], "/ip4/127.0.0.1/tcp/4001");
     assert_eq!(bob["addresses"][0], "/ip4/127.0.0.1/tcp/4002");
 }
+
+#[test]
+fn net_check_json_flags_bootstrap_only_nodes() {
+    let temp = TempDir::new().unwrap();
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let snapshot = NetworkSnapshot::begin(1);
+    snapshot.save(&data_dir);
+
+    let check = run_bin(&["net-check", "--json"], &data_dir);
+    assert_eq!(check["schema_version"], "thronglets.network.v1");
+    assert_eq!(check["command"], "net-check");
+    assert_eq!(check["data"]["summary"]["status"], "bootstrap-only");
+    assert_eq!(check["data"]["summary"]["peer_first_ready"], false);
+    assert_eq!(check["data"]["summary"]["vps_dependency_level"], "bootstrap-only");
+    let next_steps = check["data"]["next_steps"].as_array().unwrap();
+    assert!(!next_steps.is_empty());
+}
+
+#[test]
+fn net_check_json_accepts_peer_first_state() {
+    let temp = TempDir::new().unwrap();
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let mut snapshot = NetworkSnapshot::begin(1);
+    snapshot.mark_peer_connected("12D3KooWPeerFirst", 3);
+    snapshot.observe_peer_address("12D3KooWPeerFirst", "/ip4/10.0.0.3/tcp/4001");
+    snapshot.merge_peer_seeds(["/ip4/10.0.0.9/tcp/4001".to_string()]);
+    snapshot.save(&data_dir);
+
+    let check = run_bin(&["net-check", "--json"], &data_dir);
+    assert_eq!(check["data"]["summary"]["status"], "peer-first");
+    assert_eq!(check["data"]["summary"]["peer_first_ready"], true);
+    assert_eq!(check["data"]["summary"]["transport_mode"], "direct");
+    assert_eq!(check["data"]["summary"]["peer_seed_count"], 1);
+    assert!(check["data"]["next_steps"].as_array().unwrap().is_empty());
+}

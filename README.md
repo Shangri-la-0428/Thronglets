@@ -98,6 +98,20 @@ thronglets status --json
 也就是说，AI 和操作者都不需要再猜“刚才那次绕路是不是 Thronglets 在起作用”。
 同时也能直接看到当前网络是不是还在实质依赖 VPS。
 
+如果你想把这个判断再压成一个更直接的结论，可以再跑：
+
+```bash
+thronglets net-check --json
+```
+
+它会直接告诉你这个节点当前是：
+- `peer-first`
+- `degraded`
+- `bootstrap-only`
+- `offline`
+
+并返回下一步建议，比如“先导入 connection file 带来的 peer seeds”，还是“当前仍然太依赖 bootstrap / VPS”。
+
 底层接入面只有一个统一 contract：
 - `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号
 - `thronglets hook`：任意 agent 在工具执行后喂入 JSON，记录 trace

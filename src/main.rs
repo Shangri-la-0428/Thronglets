@@ -267,6 +267,31 @@ struct PeersData {
 }
 
 #[derive(Serialize)]
+struct NetCheckItem {
+    name: &'static str,
+    ok: bool,
+    detail: String,
+}
+
+#[derive(Serialize)]
+struct NetCheckSummary {
+    status: &'static str,
+    peer_first_ready: bool,
+    transport_mode: &'static str,
+    vps_dependency_level: &'static str,
+    peer_count: usize,
+    peer_seed_count: usize,
+    bootstrap_targets: usize,
+}
+
+#[derive(Serialize)]
+struct NetCheckData {
+    summary: NetCheckSummary,
+    checks: Vec<NetCheckItem>,
+    next_steps: Vec<String>,
+}
+
+#[derive(Serialize)]
 struct VersionSummary {
     status: &'static str,
     version: String,
@@ -785,6 +810,13 @@ enum Commands {
         limit: usize,
     },
 
+    /// Diagnose whether this node is actually operating peer-first or still mostly depending on bootstrap/VPS.
+    NetCheck {
+        /// Emit machine-readable JSON instead of text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
     /// Show node status and statistics
     Status {
         /// Emit machine-readable JSON instead of text.
@@ -1238,6 +1270,126 @@ fn render_presence_feed_results(results: &[PresenceFeedResult]) {
             result.evidence_scope,
             presence_minutes_remaining(result.expires_at)
         );
+    }
+}
+
+fn summarize_net_check(status: &thronglets::network_state::NetworkStatus) -> NetCheckData {
+    let direct_connectivity = matches!(status.transport_mode, "direct" | "mixed");
+    let remembered_peers = status.known_peer_count > 0 || status.peer_seed_count > 0;
+    let low_vps_dependence = matches!(
+        status.vps_dependency_level,
+        "peer-native" | "low" | "medium"
+    );
+    let peer_first_ready = status.peer_count > 0 && direct_connectivity && low_vps_dependence;
+
+    let status_label = if peer_first_ready {
+        "peer-first"
+    } else if status.peer_count == 0 && status.bootstrap_targets > 0 {
+        "bootstrap-only"
+    } else if status.peer_count == 0 && !remembered_peers && status.bootstrap_targets == 0 {
+        "offline"
+    } else {
+        "degraded"
+    };
+
+    let checks = vec![
+        NetCheckItem {
+            name: "direct-connectivity",
+            ok: direct_connectivity && status.peer_count > 0,
+            detail: if status.peer_count == 0 {
+                "No active peer connections yet.".into()
+            } else {
+                format!(
+                    "Current transport mode is {} with {} connected peers.",
+                    status.transport_mode, status.peer_count
+                )
+            },
+        },
+        NetCheckItem {
+            name: "remembered-peers",
+            ok: remembered_peers,
+            detail: format!(
+                "{} known peers, {} reusable peer seeds.",
+                status.known_peer_count, status.peer_seed_count
+            ),
+        },
+        NetCheckItem {
+            name: "vps-dependence",
+            ok: low_vps_dependence,
+            detail: format!(
+                "Current VPS dependency level is {}.",
+                status.vps_dependency_level
+            ),
+        },
+    ];
+
+    let mut next_steps = Vec::new();
+    if !remembered_peers {
+        next_steps.push(
+            "Export or import a connection file from an already connected device so this node inherits direct peer seeds.".into(),
+        );
+    }
+    if status.peer_count == 0 && status.bootstrap_targets == 0 {
+        next_steps.push(
+            "Add at least one bootstrap target or join an existing owner/device network before expecting peer discovery.".into(),
+        );
+    } else if status.peer_count == 0 {
+        next_steps.push(
+            "This node is still bootstrap-only; keep it online long enough to learn direct peers and seed them locally.".into(),
+        );
+    }
+    if status.transport_mode == "relayed" {
+        next_steps.push(
+            "Current traffic is relayed; prefer same-owner connection files or local peers to establish direct links.".into(),
+        );
+    }
+    if matches!(status.vps_dependency_level, "high" | "bootstrap-only") {
+        next_steps.push(
+            "The network is still VPS-heavy; grow remembered peers so startup can reconnect directly before using bootstrap.".into(),
+        );
+    }
+    next_steps.sort();
+    next_steps.dedup();
+
+    NetCheckData {
+        summary: NetCheckSummary {
+            status: status_label,
+            peer_first_ready,
+            transport_mode: status.transport_mode,
+            vps_dependency_level: status.vps_dependency_level,
+            peer_count: status.peer_count,
+            peer_seed_count: status.peer_seed_count,
+            bootstrap_targets: status.bootstrap_targets,
+        },
+        checks,
+        next_steps,
+    }
+}
+
+fn render_net_check(data: &NetCheckData) {
+    println!("Network check: {}", data.summary.status);
+    println!(
+        "Peer-first ready: {}",
+        if data.summary.peer_first_ready { "yes" } else { "no" }
+    );
+    println!(
+        "Transport: {} | dependency: {}",
+        data.summary.transport_mode, data.summary.vps_dependency_level
+    );
+    println!(
+        "Peers: {} connected, {} remembered seeds, {} bootstrap targets",
+        data.summary.peer_count, data.summary.peer_seed_count, data.summary.bootstrap_targets
+    );
+    for check in &data.checks {
+        println!(
+            "  [{}] {} — {}",
+            if check.ok { "ok" } else { "missing" },
+            check.name,
+            check.detail
+        );
+    }
+    for step in &data.next_steps {
+        println!("Next: {step}");
     }
 }
 
@@ -3309,6 +3461,16 @@ async fn main() {
                         println!("    addrs: {}", peer.addresses.join(", "));
                     }
                 }
+            }
+        }
+
+        Commands::NetCheck { json } => {
+            let status = thronglets::network_state::NetworkSnapshot::load(&dir).to_status();
+            let data = summarize_net_check(&status);
+            if json {
+                print_machine_json_with_schema(NETWORK_SCHEMA_VERSION, "net-check", &data);
+            } else {
+                render_net_check(&data);
             }
         }
 

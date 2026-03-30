@@ -98,6 +98,20 @@ The response now includes:
 That gives both operators and other agents a minimal way to tell whether the substrate has been actively shaping recent decisions.
 It also makes current VPS dependence visible instead of implicit.
 
+If you want that judgment collapsed into one direct answer, run:
+
+```bash
+thronglets net-check --json
+```
+
+It classifies the node as:
+- `peer-first`
+- `degraded`
+- `bootstrap-only`
+- `offline`
+
+and returns concrete next steps, such as importing peer seeds from a connection file or reducing over-reliance on bootstrap / VPS.
+
 Underneath, there is only one agent contract:
 - `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back
 - `thronglets hook`: any agent can send tool-result JSON and record a trace
