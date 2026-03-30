@@ -90,8 +90,12 @@ The response now includes:
 - `recent_interventions_15m`
 - `last_intervention_tool`
 - `last_intervention_kinds`
+- `network.activity = offline | bootstrapping | connected`
+- `network.transport_mode = offline | direct | relayed | mixed`
+- `network.vps_dependency_level = offline | bootstrap-only | high | medium | low | peer-native`
 
 That gives both operators and other agents a minimal way to tell whether the substrate has been actively shaping recent decisions.
+It also makes current VPS dependence visible instead of implicit.
 
 Underneath, there is only one agent contract:
 - `thronglets prehook`: any agent can send tool-intent JSON and get sparse signals back

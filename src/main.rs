@@ -243,6 +243,7 @@ struct StatusData {
     capabilities: usize,
     database_size_bytes: u64,
     substrate: workspace::SubstrateActivity,
+    network: thronglets::network_state::NetworkStatus,
 }
 
 #[derive(Serialize)]
@@ -2363,6 +2364,9 @@ async fn main() {
 
         Commands::Run { port, bootstrap } => {
             let store = open_store(&dir);
+            let mut network_snapshot =
+                thronglets::network_state::NetworkSnapshot::begin(bootstrap.len());
+            network_snapshot.save(&dir);
 
             let libp2p_keypair =
                 libp2p::identity::Keypair::ed25519_from_bytes(&mut identity.secret_key_bytes())
@@ -2402,11 +2406,21 @@ async fn main() {
                         match event {
                             NetworkEvent::PeerConnected(peer) => {
                                 info!(%peer, "Peer connected");
+                                network_snapshot.mark_peer_connected(
+                                    network_snapshot.peer_count.saturating_add(1),
+                                );
+                                network_snapshot.save(&dir);
                             }
                             NetworkEvent::PeerDisconnected(peer) => {
                                 info!(%peer, "Peer disconnected");
+                                network_snapshot.mark_peer_disconnected(
+                                    network_snapshot.peer_count.saturating_sub(1),
+                                );
+                                network_snapshot.save(&dir);
                             }
                             NetworkEvent::TraceReceived(trace) => {
+                                network_snapshot.mark_trace_received();
+                                network_snapshot.save(&dir);
                                 let tid = trace.id;
                                 match store.insert(&trace) {
                                     Ok(true) => {
@@ -2477,6 +2491,9 @@ async fn main() {
             let store = Arc::new(store);
 
             let network_tx = if let Some(p) = port {
+                let mut network_snapshot =
+                    thronglets::network_state::NetworkSnapshot::begin(bootstrap.len());
+                network_snapshot.save(&dir);
                 let libp2p_keypair =
                     libp2p::identity::Keypair::ed25519_from_bytes(&mut identity.secret_key_bytes())
                         .expect("failed to create libp2p keypair");
@@ -2494,6 +2511,7 @@ async fn main() {
                     .expect("failed to start network");
 
                 let store_bg = Arc::clone(&store);
+                let data_dir = dir.clone();
                 tokio::spawn(async move {
                     let mut evaporation_interval =
                         tokio::time::interval(std::time::Duration::from_secs(3600));
@@ -2505,11 +2523,21 @@ async fn main() {
                                 match event {
                                     Some(NetworkEvent::PeerConnected(peer)) => {
                                         info!(%peer, "Peer connected");
+                                        network_snapshot.mark_peer_connected(
+                                            network_snapshot.peer_count.saturating_add(1),
+                                        );
+                                        network_snapshot.save(&data_dir);
                                     }
                                     Some(NetworkEvent::PeerDisconnected(peer)) => {
                                         info!(%peer, "Peer disconnected");
+                                        network_snapshot.mark_peer_disconnected(
+                                            network_snapshot.peer_count.saturating_sub(1),
+                                        );
+                                        network_snapshot.save(&data_dir);
                                     }
                                     Some(NetworkEvent::TraceReceived(trace)) => {
+                                        network_snapshot.mark_trace_received();
+                                        network_snapshot.save(&data_dir);
                                         match store_bg.insert(&trace) {
                                             Ok(true) => {
                                                 info!(capability = %trace.capability, "Stored trace from network");
@@ -3167,6 +3195,7 @@ async fn main() {
         Commands::Status { json } => {
             let store = open_store(&dir);
             let workspace = WorkspaceState::load(&dir);
+            let network = thronglets::network_state::NetworkSnapshot::load(&dir).to_status();
             let trace_count = store.count().unwrap_or(0);
             let cap_count = store
                 .distinct_capabilities(1000)
@@ -3197,6 +3226,7 @@ async fn main() {
                 capabilities: cap_count,
                 database_size_bytes: db_size,
                 substrate: workspace.substrate_activity(),
+                network,
             };
             if json {
                 print_machine_json_with_schema(IDENTITY_SCHEMA_VERSION, "status", &data);
@@ -3230,6 +3260,27 @@ async fn main() {
                 println!(
                     "  Interventions:   {} in last 15m",
                     data.substrate.recent_interventions_15m
+                );
+                println!();
+                println!(
+                    "  Network:         {} ({})",
+                    data.network.activity, data.network.transport_mode
+                );
+                println!(
+                    "  Peers:           {} direct / {} relayed",
+                    data.network.direct_peer_count, data.network.relay_peer_count
+                );
+                println!(
+                    "  Bootstrap:       {} targets, dependency {}",
+                    data.network.bootstrap_targets, data.network.vps_dependency_level
+                );
+                println!(
+                    "  Bootstrap seen:  {}",
+                    if data.network.bootstrap_contacted_recently {
+                        "recently"
+                    } else {
+                        "not recently"
+                    }
                 );
                 println!();
                 println!("  Trace count:      {}", data.trace_count);

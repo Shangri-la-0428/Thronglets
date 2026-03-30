@@ -90,8 +90,12 @@ thronglets status --json
 - `recent_interventions_15m`
 - `last_intervention_tool`
 - `last_intervention_kinds`
+- `network.activity = offline | bootstrapping | connected`
+- `network.transport_mode = offline | direct | relayed | mixed`
+- `network.vps_dependency_level = offline | bootstrap-only | high | medium | low | peer-native`
 
 也就是说，AI 和操作者都不需要再猜“刚才那次绕路是不是 Thronglets 在起作用”。
+同时也能直接看到当前网络是不是还在实质依赖 VPS。
 
 底层接入面只有一个统一 contract：
 - `thronglets prehook`：任意 agent 在工具执行前喂入 JSON，拿回稀疏信号

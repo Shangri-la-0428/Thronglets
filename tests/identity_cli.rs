@@ -57,6 +57,9 @@ fn status_json_surfaces_quiet_substrate_activity() {
     assert_eq!(status["command"], "status");
     assert_eq!(status["data"]["substrate"]["activity"], "quiet");
     assert_eq!(status["data"]["substrate"]["recent_interventions_15m"], 0);
+    assert_eq!(status["data"]["network"]["activity"], "offline");
+    assert_eq!(status["data"]["network"]["transport_mode"], "offline");
+    assert_eq!(status["data"]["network"]["vps_dependency_level"], "offline");
 }
 
 #[test]

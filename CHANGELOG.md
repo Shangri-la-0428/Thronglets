@@ -5,6 +5,7 @@
 ## v0.4.2 — 2026-03-30
 
 - **Visible substrate activity** — `status --json` and HTTP `/v1/status` now expose `substrate.activity` (`active / learning / quiet`) plus recent intervention metadata, so agents can distinguish Thronglets intervention from ordinary runtime failure instead of guessing
+- **Network dependency snapshot** — running nodes now persist a lightweight `network-status.v1.json` snapshot, and `status --json` / HTTP `/v1/status` now expose `network.activity`, `transport_mode`, `peer_count`, `bootstrap_targets`, `bootstrap_contacted_recently`, and a coarse `vps_dependency_level`, so operators can see whether the system is actually peer-first or still mostly bootstrapping through VPS
 - **OpenClaw legacy path cleanup** — `setup / bootstrap / apply-plan` now prune the legacy `openclaw-plugin` load path, stale entry, and stale install record so gateway restarts stop spamming manifest/id mismatch warnings
 - **Ambient presence primitive** — Thronglets now exposes `presence-ping / presence-feed` across CLI, HTTP, and MCP, so pure dialog / planning sessions can leave lightweight space-local activity heartbeats with optional mode labels even when no tool call happened
 - **Space-aware hot path** — generic `prehook / hook` payloads now accept optional `space` and `mode`; tool activity automatically refreshes ambient presence in that space, promoted explicit `avoid` signals now respect `space` boundaries, and prehook can surface other active sessions in the same `space` as a thin context signal without overriding stronger action guidance

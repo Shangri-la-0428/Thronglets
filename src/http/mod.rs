@@ -554,6 +554,7 @@ fn handle_get_capabilities(ctx: &HttpContext) -> String {
 fn handle_get_status(ctx: &HttpContext) -> String {
     let trace_count = ctx.store.count().unwrap_or(0);
     let workspace = crate::workspace::WorkspaceState::load(&ctx.data_dir);
+    let network = crate::network_state::NetworkSnapshot::load(&ctx.data_dir).to_status();
     let cap_count = ctx
         .store
         .distinct_capabilities(1000)
@@ -574,6 +575,7 @@ fn handle_get_status(ctx: &HttpContext) -> String {
         "binding_source": ctx.binding.binding_source_or_local(),
         "joined_from_device": ctx.binding.joined_from_device.clone(),
         "substrate": workspace.substrate_activity(),
+        "network": network,
         "trace_count": trace_count,
         "capabilities": cap_count,
     })

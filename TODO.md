@@ -65,6 +65,18 @@ Thronglets 现在的主线已经明确（当前 release: `v0.4.2`）：
 - agent / session 继续先做审计标签
 - 高频行为链下，低频结果上链
 
+### Phase F — Peer-First Network
+
+目标：
+- 把 VPS 从“中心”降成“基础设施”
+- 让每个用户节点先为自己活，再彼此相连
+
+完成标准：
+- VPS 下线时，本地 substrate 仍可工作
+- 已认识 peer 之间仍能继续同步
+- 同 owner 的多设备可优先直连
+- VPS 恢复后只补发现和中继，不恢复“真相”
+
 ## Now
 
 ### 1. Shared space continuity
@@ -244,9 +256,28 @@ Thronglets 现在的主线已经明确（当前 release: `v0.4.2`）：
   - 动作前 `prehook`
   - 动作后 `hook`
 
+### 13. Network dependency audit
+
+目标：先把“我们是不是还在偷偷依赖 VPS”照亮。
+
+当前状态：
+- 已新增本地 `network-status.v1.json` 快照
+- `status --json` 和 `/v1/status` 现在会返回：
+  - `activity`
+  - `transport_mode`
+  - `peer_count`
+  - `bootstrap_targets`
+  - `bootstrap_contacted_recently`
+  - `vps_dependency_level`
+
+剩余完成标准：
+- 区分 direct / relay / bootstrap-only
+- 增加 `peers` / `net-check` 的更细观察面
+- 给多设备 connection file 带 peer seed 信息
+
 ## Later
 
-### 13. Network-side corroboration quality
+### 14. Network-side corroboration quality
 
 目标：让 collective intelligence 不只是结构上成立，而是结果上成立。
 
@@ -255,7 +286,7 @@ Thronglets 现在的主线已经明确（当前 release: `v0.4.2`）：
 - 评估跨节点 corroboration 对 precision 的真实提升
 - 如果没有提升，就不要继续抬高网络叙事
 
-### 14. Packaging and distribution cleanup
+### 15. Packaging and distribution cleanup
 
 目标：让发布面更像产品。
 
