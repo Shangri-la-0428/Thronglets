@@ -114,6 +114,7 @@ fn net_check_json_flags_bootstrap_only_nodes() {
     assert_eq!(check["command"], "net-check");
     assert_eq!(check["data"]["summary"]["status"], "bootstrap-only");
     assert_eq!(check["data"]["summary"]["peer_first_ready"], false);
+    assert_eq!(check["data"]["summary"]["same_owner_direct_ready"], false);
     assert_eq!(check["data"]["summary"]["bootstrap_offline_ready"], false);
     assert_eq!(
         check["data"]["summary"]["vps_dependency_level"],
@@ -142,6 +143,7 @@ fn net_check_json_accepts_peer_first_state() {
     let check = run_bin(&["net-check", "--json"], &data_dir);
     assert_eq!(check["data"]["summary"]["status"], "peer-first");
     assert_eq!(check["data"]["summary"]["peer_first_ready"], true);
+    assert_eq!(check["data"]["summary"]["same_owner_direct_ready"], true);
     assert_eq!(check["data"]["summary"]["bootstrap_offline_ready"], true);
     assert_eq!(check["data"]["summary"]["transport_mode"], "direct");
     assert_eq!(
@@ -170,6 +172,7 @@ fn net_check_json_can_simulate_bootstrap_offline() {
         check["data"]["summary"]["bootstrap_fallback_mode"],
         "disabled"
     );
+    assert_eq!(check["data"]["summary"]["same_owner_direct_ready"], false);
     assert_eq!(check["data"]["summary"]["bootstrap_offline_ready"], true);
     assert_eq!(check["data"]["summary"]["vps_dependency_level"], "offline");
 }

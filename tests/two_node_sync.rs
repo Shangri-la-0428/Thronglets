@@ -244,3 +244,55 @@ async fn node_reconnects_via_known_peer_without_bootstrap() {
 
     drop(cmd_tx_a);
 }
+
+#[tokio::test]
+async fn node_connects_via_trusted_peer_without_bootstrap() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("thronglets=debug")
+        .with_test_writer()
+        .try_init();
+
+    let port_a = free_loopback_port();
+    let port_b = free_loopback_port();
+
+    let id_a = NodeIdentity::generate();
+    let mut secret_a = id_a.secret_key_bytes();
+    let keypair_a =
+        libp2p::identity::Keypair::ed25519_from_bytes(&mut secret_a).expect("keypair A");
+    let peer_id_a = libp2p::PeerId::from(keypair_a.public());
+    let config_a = NetworkConfig {
+        listen_port: port_a,
+        ..Default::default()
+    };
+    let (cmd_tx_a, mut event_rx_a) = thronglets::network::start(keypair_a, config_a)
+        .await
+        .expect("start node A");
+
+    let id_b = NodeIdentity::generate();
+    let mut secret_b = id_b.secret_key_bytes();
+    let keypair_b =
+        libp2p::identity::Keypair::ed25519_from_bytes(&mut secret_b).expect("keypair B");
+    let trusted_a: libp2p::Multiaddr = format!("/ip4/127.0.0.1/tcp/{port_a}/p2p/{peer_id_a}")
+        .parse()
+        .expect("trusted addr");
+    let config_b = NetworkConfig {
+        listen_port: port_b,
+        bootstrap_peers: Vec::new(),
+        trusted_peers: vec![trusted_a],
+        known_peers: Vec::new(),
+    };
+    let (_cmd_tx_b, mut event_rx_b) = thronglets::network::start(keypair_b, config_b)
+        .await
+        .expect("start node B");
+
+    assert!(
+        wait_for_peer_connection(&mut event_rx_a, Duration::from_secs(10)).await,
+        "Node A should observe the trusted direct connection from Node B"
+    );
+    assert!(
+        wait_for_peer_connection(&mut event_rx_b, Duration::from_secs(10)).await,
+        "Node B should connect to Node A via trusted peer seeds without bootstrap"
+    );
+
+    drop(cmd_tx_a);
+}

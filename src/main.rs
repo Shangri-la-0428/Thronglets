@@ -282,6 +282,7 @@ struct NetCheckSummary {
     scenario: &'static str,
     status: &'static str,
     peer_first_ready: bool,
+    same_owner_direct_ready: bool,
     bootstrap_offline_ready: bool,
     transport_mode: &'static str,
     vps_dependency_level: &'static str,
@@ -1320,6 +1321,7 @@ fn summarize_net_check_for_scenario(
         || (remembered_peers && matches!(bootstrap_fallback_mode, "delayed" | "disabled"));
     let low_vps_dependence = matches!(vps_dependency_level, "peer-native" | "low" | "medium");
     let peer_first_ready = status.peer_count > 0 && direct_connectivity && low_vps_dependence;
+    let same_owner_direct_ready = status.peer_count > 0 && direct_connectivity && trusted_path;
 
     let status_label = if peer_first_ready {
         "peer-first"
@@ -1354,10 +1356,15 @@ fn summarize_net_check_for_scenario(
         },
         NetCheckItem {
             name: "trusted-owner-path",
-            ok: trusted_path,
-            detail: if trusted_path {
+            ok: same_owner_direct_ready,
+            detail: if same_owner_direct_ready {
                 format!(
-                    "{} trusted peer seeds came from owner-bound connection files.",
+                    "This node already has direct connectivity with {} trusted same-owner seed(s) available for reconnect.",
+                    status.trusted_peer_seed_count
+                )
+            } else if trusted_path {
+                format!(
+                    "{} trusted peer seeds came from owner-bound connection files, but the node has not yet proven a direct same-owner path in this scenario.",
                     status.trusted_peer_seed_count
                 )
             } else {
@@ -1399,6 +1406,11 @@ fn summarize_net_check_for_scenario(
             "For same-owner devices, refresh a connection file so this node learns trusted peer seeds before falling back to generic discovery.".into(),
         );
     }
+    if trusted_path && !same_owner_direct_ready {
+        next_steps.push(
+            "Trusted peer seeds exist, but this node has not yet demonstrated a direct same-owner path; keep the peer online or retry from the joined device before relying on VPS.".into(),
+        );
+    }
     if status.peer_count == 0 && bootstrap_targets == 0 {
         next_steps.push(
             "Add at least one bootstrap target or join an existing owner/device network before expecting peer discovery.".into(),
@@ -1426,6 +1438,7 @@ fn summarize_net_check_for_scenario(
             scenario,
             status: status_label,
             peer_first_ready,
+            same_owner_direct_ready,
             bootstrap_offline_ready,
             transport_mode: status.transport_mode,
             vps_dependency_level,
@@ -1448,6 +1461,14 @@ fn render_net_check(data: &NetCheckData) {
     println!(
         "Peer-first ready: {}",
         if data.summary.peer_first_ready {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!(
+        "Same-owner direct ready: {}",
+        if data.summary.same_owner_direct_ready {
             "yes"
         } else {
             "no"
