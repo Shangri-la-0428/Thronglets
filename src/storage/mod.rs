@@ -482,6 +482,28 @@ impl TraceStore {
         Ok(sessions.len() as u32)
     }
 
+    /// Count distinct recent sessions that hit a similar failed context.
+    /// This is the contradiction side of a success prior: wrong paths should
+    /// remain visible long enough to resist premature recommend promotion.
+    pub fn count_contradicting_failed_sessions(
+        &self,
+        context_hash: &[u8; 16],
+        max_distance: u32,
+        hours: u64,
+        space: Option<&str>,
+    ) -> rusqlite::Result<u32> {
+        let traces = self.query_similar_failed_traces(context_hash, max_distance, hours, 200, space)?;
+        let mut sessions = std::collections::HashSet::new();
+        for trace in traces {
+            let key = trace
+                .session_id
+                .or(trace.device_identity)
+                .unwrap_or_else(|| format!("trace-{}", trace.timestamp));
+            sessions.insert(key);
+        }
+        Ok(sessions.len() as u32)
+    }
+
     /// Count distinct sessions where a failure on `error_context` was followed
     /// (within 10 min) by a success on `repair_context`. This detects cross-file
     /// repair associations directly from traces — the high-value signal that
@@ -1813,5 +1835,25 @@ mod tests {
             .query_similar_failed_traces(&hash, 48, 168, 10, None)
             .unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn count_contradicting_failed_sessions_counts_distinct_sessions() {
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+        let ctx = "bash: cargo test --workspace";
+        for session_id in ["failed-a", "failed-b"] {
+            let mut trace = make_trace(&id, "claude-code/Bash", Outcome::Failed, ctx);
+            trace.session_id = Some(session_id.into());
+            store.insert(&trace).unwrap();
+        }
+        let mut duplicate = make_trace(&id, "claude-code/Bash", Outcome::Failed, ctx);
+        duplicate.session_id = Some("failed-a".into());
+        store.insert(&duplicate).unwrap();
+
+        let count = store
+            .count_contradicting_failed_sessions(&crate::context::simhash(ctx), 48, 168, None)
+            .unwrap();
+        assert_eq!(count, 2);
     }
 }

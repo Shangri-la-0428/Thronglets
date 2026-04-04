@@ -3798,7 +3798,16 @@ async fn main() {
             // Auto-recommend: convergent behavior across 3+ sessions
             if !is_error && matches!(tool_name, "Edit" | "Write" | "Bash") {
                 let rec_hash = simhash(&context_text);
-                let convergence_threshold = reinforced_success_threshold(&feedback_events);
+                let contradictory_failures = store
+                    .count_contradicting_failed_sessions(
+                        &rec_hash,
+                        48,
+                        48,
+                        current_space.as_deref(),
+                    )
+                    .unwrap_or(0);
+                let convergence_threshold =
+                    reinforced_success_threshold(&feedback_events, contradictory_failures);
                 if let Ok(convergent) =
                     store.count_convergent_sessions(&rec_hash, 48, current_space.as_deref())
                     && convergent >= convergence_threshold
@@ -5179,7 +5188,11 @@ fn convergent_success_prior(
     let convergent = store
         .count_convergent_sessions(context_hash, 48, space)
         .ok()?;
-    if convergent < 3 {
+    let contradictory_failures = store
+        .count_contradicting_failed_sessions(context_hash, 48, 48, space)
+        .ok()?;
+    let convergence_threshold = reinforced_success_threshold(&[], contradictory_failures);
+    if convergent < convergence_threshold {
         return None;
     }
 
@@ -5193,19 +5206,39 @@ fn convergent_success_prior(
     })
 }
 
-fn reinforced_success_threshold(feedback_events: &[workspace::RecommendationFeedbackEvent]) -> u32 {
-    let reinforced = feedback_events.iter().any(|event| {
-        event.positive
-            && matches!(
-                event.recommendation_kind.as_str(),
-                "do_next" | "maybe_also"
-            )
-            && matches!(
-                event.source_kind.as_str(),
-                "repair" | "preparation" | "adjacency"
-            )
-    });
-    if reinforced { 2 } else { 3 }
+fn reinforced_success_threshold(
+    feedback_events: &[workspace::RecommendationFeedbackEvent],
+    contradictory_failures: u32,
+) -> u32 {
+    let mut reinforced = false;
+    let mut contradicted = false;
+    for event in feedback_events {
+        let relevant_recommendation = matches!(
+            event.recommendation_kind.as_str(),
+            "do_next" | "maybe_also"
+        );
+        let relevant_source = matches!(
+            event.source_kind.as_str(),
+            "repair" | "preparation" | "adjacency"
+        );
+        if !(relevant_recommendation && relevant_source) {
+            continue;
+        }
+        if event.positive {
+            reinforced = true;
+        } else {
+            contradicted = true;
+        }
+    }
+
+    let base_threshold = if reinforced && !contradicted { 2 } else { 3 };
+    let contradiction_floor = contradictory_failures.saturating_add(2);
+    let feedback_floor = if contradicted {
+        base_threshold.max(4)
+    } else {
+        base_threshold
+    };
+    feedback_floor.max(contradiction_floor)
 }
 
 fn presence_context_signal(
@@ -5994,6 +6027,53 @@ mod tests {
     }
 
     #[test]
+    fn convergent_success_prior_waits_for_clear_margin_over_multiple_recent_failures() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "bash: cargo test --workspace";
+        for idx in 0..3 {
+            let trace = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("success-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&trace).unwrap();
+        }
+        for idx in 0..2 {
+            let failed = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Failed,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("failed-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&failed).unwrap();
+        }
+
+        assert!(convergent_success_prior(&store, &simhash(ctx), None).is_none());
+    }
+
+    #[test]
     fn reinforced_success_threshold_lowers_when_guidance_proved_useful() {
         let events = vec![workspace::RecommendationFeedbackEvent {
             recommendation_kind: "do_next".into(),
@@ -6003,7 +6083,7 @@ mod tests {
             timestamp_ms: 1,
         }];
 
-        assert_eq!(reinforced_success_threshold(&events), 2);
+        assert_eq!(reinforced_success_threshold(&events, 0), 2);
     }
 
     #[test]
@@ -6017,6 +6097,28 @@ mod tests {
                 timestamp_ms: 1,
             },
             workspace::RecommendationFeedbackEvent {
+                recommendation_kind: "context".into(),
+                source_kind: "history".into(),
+                space: None,
+                positive: false,
+                timestamp_ms: 2,
+            },
+        ];
+
+        assert_eq!(reinforced_success_threshold(&events, 0), 3);
+    }
+
+    #[test]
+    fn reinforced_success_threshold_rises_when_feedback_or_failures_contradict() {
+        let events = vec![
+            workspace::RecommendationFeedbackEvent {
+                recommendation_kind: "do_next".into(),
+                source_kind: "repair".into(),
+                space: None,
+                positive: true,
+                timestamp_ms: 1,
+            },
+            workspace::RecommendationFeedbackEvent {
                 recommendation_kind: "do_next".into(),
                 source_kind: "repair".into(),
                 space: None,
@@ -6025,6 +6127,6 @@ mod tests {
             },
         ];
 
-        assert_eq!(reinforced_success_threshold(&events), 3);
+        assert_eq!(reinforced_success_threshold(&events, 1), 4);
     }
 }
