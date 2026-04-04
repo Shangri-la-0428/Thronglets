@@ -431,10 +431,10 @@ impl McpSession {
     }
 
     fn update_model(&self, model: &str) {
-        if model != "unknown" {
-            if let Ok(mut hint) = self.model_hint.lock() {
-                *hint = model.to_string();
-            }
+        if model != "unknown"
+            && let Ok(mut hint) = self.model_hint.lock()
+        {
+            *hint = model.to_string();
         }
     }
 
@@ -456,7 +456,10 @@ pub async fn serve_stdio(ctx: Arc<McpContext>) {
 
     let session = McpSession::new();
 
-    debug!("MCP server started on stdio (session: {})", session.session_id);
+    debug!(
+        "MCP server started on stdio (session: {})",
+        session.session_id
+    );
 
     while let Ok(Some(line)) = lines.next_line().await {
         let line = line.trim().to_string();
@@ -1008,7 +1011,9 @@ fn handle_substrate_query(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRe
                 return JsonRpcResponse::error(
                     id,
                     -32602,
-                    format!("Unknown taxonomy: {taxonomy}. Use coordination, continuity, or calibration."),
+                    format!(
+                        "Unknown taxonomy: {taxonomy}. Use coordination, continuity, or calibration."
+                    ),
                 );
             }
             handle_continuity_query(
@@ -1343,8 +1348,8 @@ fn handle_signals(
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
-                agent_id: None,
-                sigil_id: None,
+            agent_id: None,
+            sigil_id: None,
             space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
@@ -1455,8 +1460,8 @@ fn handle_signal_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespon
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
-                agent_id: None,
-                sigil_id: None,
+            agent_id: None,
+            sigil_id: None,
             space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
@@ -1836,7 +1841,10 @@ mod tests {
         assert_eq!(parsed["stats"]["total_traces"], 1);
         // Pheromone field uses EMA with neutral prior (0.5), so 1 success → 0.55
         let sr = parsed["stats"]["success_rate"].as_f64().unwrap();
-        assert!(sr > 0.5 && sr <= 1.0, "success_rate should be > 0.5, got {sr}");
+        assert!(
+            sr > 0.5 && sr <= 1.0,
+            "success_rate should be > 0.5, got {sr}"
+        );
 
         // Should have by_model breakdown
         let by_model = &parsed["by_model"];

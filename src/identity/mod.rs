@@ -175,8 +175,7 @@ impl IdentityBinding {
             binding.verify_for_node(node_identity)?;
             binding
         } else {
-            let binding = Self::new(node_identity.device_identity());
-            binding
+            Self::new(node_identity.device_identity())
         };
 
         if binding.owner_account.is_none()

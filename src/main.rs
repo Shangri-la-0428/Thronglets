@@ -40,7 +40,7 @@ use thronglets::identity_surface::{
 };
 use thronglets::mcp::McpContext;
 use thronglets::network_runtime::{
-    NetworkRuntimeOptions, attempt_first_connection, start_network_runtime,
+    NetworkRuntimeOptions, NetworkRuntimeRequest, attempt_first_connection, start_network_runtime,
 };
 use thronglets::pheromone::PheromoneField;
 use thronglets::posts::{
@@ -1106,7 +1106,12 @@ fn selected_known_adapters(target: AdapterArg) -> Vec<AdapterKind> {
 fn selected_restart_adapters(target: AdapterArg) -> Vec<AdapterKind> {
     selected_known_adapters(target)
         .into_iter()
-        .filter(|adapter| matches!(adapter, AdapterKind::Codex | AdapterKind::Cursor | AdapterKind::OpenClaw))
+        .filter(|adapter| {
+            matches!(
+                adapter,
+                AdapterKind::Codex | AdapterKind::Cursor | AdapterKind::OpenClaw
+            )
+        })
         .collect()
 }
 
@@ -3011,7 +3016,13 @@ async fn main() {
             let store = open_store(&dir);
             let query_hash = simhash(&context);
             let traces = store
-                .query_signal_traces(&query_hash, kind.map(Into::into), 48, limit, space.as_deref())
+                .query_signal_traces(
+                    &query_hash,
+                    kind.map(Into::into),
+                    48,
+                    limit,
+                    space.as_deref(),
+                )
                 .expect("failed to query signal traces");
             let results = summarize_signal_traces(
                 &traces,
@@ -3246,16 +3257,16 @@ async fn main() {
             let store = Arc::new(open_store(&dir));
             let field = Arc::new(PheromoneField::new());
             field.hydrate_from_store(&store);
-            let command_tx = start_network_runtime(
-                &dir,
-                &identity,
-                &identity_binding,
-                Arc::clone(&store),
-                Some(Arc::clone(&field)),
-                port,
-                &bootstrap,
-                NetworkRuntimeOptions::node(),
-            )
+            let command_tx = start_network_runtime(NetworkRuntimeRequest {
+                data_dir: &dir,
+                identity: &identity,
+                binding: &identity_binding,
+                store: Arc::clone(&store),
+                field: Some(Arc::clone(&field)),
+                listen_port: port,
+                bootstrap: &bootstrap,
+                options: NetworkRuntimeOptions::node(),
+            })
             .await
             .expect("failed to start network");
 
@@ -3284,16 +3295,12 @@ async fn main() {
 
             // Restore pheromone field from disk if available
             let field_path = dir.join("pheromone-field.v1.json");
-            if field_path.exists() {
-                if let Ok(data) = std::fs::read_to_string(&field_path) {
-                    if let Ok(snapshot) = serde_json::from_str(&data) {
-                        field.restore(&snapshot);
-                        tracing::info!(
-                            points = field.len(),
-                            "Restored pheromone field from disk"
-                        );
-                    }
-                }
+            if field_path.exists()
+                && let Ok(data) = std::fs::read_to_string(&field_path)
+                && let Ok(snapshot) = serde_json::from_str(&data)
+            {
+                field.restore(&snapshot);
+                tracing::info!(points = field.len(), "Restored pheromone field from disk");
             }
 
             // Hydrate field from existing traces
@@ -3308,16 +3315,16 @@ async fn main() {
             let network_tx = if !local {
                 let p2p_port = port.unwrap_or(0);
                 Some(
-                    start_network_runtime(
-                        &dir,
-                        &identity,
-                        &identity_binding,
-                        Arc::clone(&store),
-                        Some(Arc::clone(&field)),
-                        p2p_port,
-                        &bootstrap,
-                        NetworkRuntimeOptions::participant(),
-                    )
+                    start_network_runtime(NetworkRuntimeRequest {
+                        data_dir: &dir,
+                        identity: &identity,
+                        binding: &identity_binding,
+                        store: Arc::clone(&store),
+                        field: Some(Arc::clone(&field)),
+                        listen_port: p2p_port,
+                        bootstrap: &bootstrap,
+                        options: NetworkRuntimeOptions::participant(),
+                    })
                     .await
                     .expect("failed to start network"),
                 )
@@ -3337,10 +3344,10 @@ async fn main() {
 
             // Persist pheromone field on shutdown
             let snapshot = field.snapshot();
-            if !snapshot.points.is_empty() {
-                if let Ok(data) = serde_json::to_string(&snapshot) {
-                    let _ = std::fs::write(&field_path, data);
-                }
+            if !snapshot.points.is_empty()
+                && let Ok(data) = serde_json::to_string(&snapshot)
+            {
+                let _ = std::fs::write(&field_path, data);
             }
         }
 
@@ -3413,18 +3420,26 @@ async fn main() {
 
             let mut input = String::new();
             if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
-                if hook_debug { eprintln!("[thronglets:hook] stdin read failed"); }
+                if hook_debug {
+                    eprintln!("[thronglets:hook] stdin read failed");
+                }
                 std::process::exit(0);
             }
 
             if hook_debug {
-                eprintln!("[thronglets:hook] stdin ({} bytes): {}", input.len(), &input[..input.len().min(200)]);
+                eprintln!(
+                    "[thronglets:hook] stdin ({} bytes): {}",
+                    input.len(),
+                    &input[..input.len().min(200)]
+                );
             }
 
             let payload: serde_json::Value = match serde_json::from_str(&input) {
                 Ok(v) => v,
                 Err(e) => {
-                    if hook_debug { eprintln!("[thronglets:hook] JSON parse error: {e}"); }
+                    if hook_debug {
+                        eprintln!("[thronglets:hook] JSON parse error: {e}");
+                    }
                     std::process::exit(0);
                 }
             };
@@ -3518,10 +3533,14 @@ async fn main() {
             );
             match store.insert(&trace) {
                 Ok(_) => {
-                    if hook_debug { eprintln!("[thronglets:hook] recorded {capability}"); }
+                    if hook_debug {
+                        eprintln!("[thronglets:hook] recorded {capability}");
+                    }
                 }
                 Err(e) => {
-                    if hook_debug { eprintln!("[thronglets:hook] store insert failed: {e}"); }
+                    if hook_debug {
+                        eprintln!("[thronglets:hook] store insert failed: {e}");
+                    }
                 }
             }
             if current_space.is_some() || current_mode.is_some() {
@@ -3567,15 +3586,24 @@ async fn main() {
 
             // Feedback → trace: make signal evaluation visible to the substrate
             for event in &feedback_events {
-                let polarity = if event.positive { "positive" } else { "negative" };
+                let polarity = if event.positive {
+                    "positive"
+                } else {
+                    "negative"
+                };
                 let feedback_context = format!(
                     "feedback:{} {} {}",
                     polarity, event.recommendation_kind, event.source_kind,
                 );
                 let feedback_trace = Trace::new_with_identity(
                     "urn:thronglets:signal:feedback".into(),
-                    if event.positive { Outcome::Succeeded } else { Outcome::Failed },
-                    0, 0,
+                    if event.positive {
+                        Outcome::Succeeded
+                    } else {
+                        Outcome::Failed
+                    },
+                    0,
+                    0,
                     simhash(&feedback_context),
                     Some(feedback_context),
                     session_id.clone(),
@@ -3599,9 +3627,7 @@ async fn main() {
             ws.resolve_feedback();
 
             // Track errors — auto-post avoid signal on repeated failures
-            if is_error
-                && let Some(err) = workspace::extract_error(&payload["tool_response"])
-            {
+            if is_error && let Some(err) = workspace::extract_error(&payload["tool_response"]) {
                 let repeated = ws
                     .recent_errors
                     .iter()
@@ -3635,12 +3661,8 @@ async fn main() {
             // "editing A failed → editing B fixed it" across 2+ sessions = domain knowledge
             if !is_error {
                 let watch_error = ws.recent_errors.front().and_then(|prev| {
-                    let age_ms =
-                        chrono::Utc::now().timestamp_millis() - prev.timestamp_ms;
-                    if age_ms < 600_000
-                        && prev.tool != tool_name
-                        && prev.context != context_text
-                    {
+                    let age_ms = chrono::Utc::now().timestamp_millis() - prev.timestamp_ms;
+                    if age_ms < 600_000 && prev.tool != tool_name && prev.context != context_text {
                         Some(prev.context.clone())
                     } else {
                         None
@@ -3657,8 +3679,7 @@ async fn main() {
                     ) && assoc_count >= 2
                         && !ws.has_recent_auto_signal("watch", &error_ctx, 86_400_000)
                     {
-                        let repair_short: String =
-                            context_text.chars().take(80).collect();
+                        let repair_short: String = context_text.chars().take(80).collect();
                         let msg = format!(
                             "{} often follows errors here ({} sessions)",
                             repair_short, assoc_count
@@ -3671,9 +3692,7 @@ async fn main() {
                                 model_id: "thronglets-auto".into(),
                                 session_id: session_id.clone(),
                                 owner_account: identity_binding.owner_account.clone(),
-                                device_identity: Some(
-                                    identity_binding.device_identity.clone(),
-                                ),
+                                device_identity: Some(identity_binding.device_identity.clone()),
                                 agent_id: None,
                                 sigil_id: None,
                                 space: current_space.clone(),
@@ -3697,14 +3716,10 @@ async fn main() {
                 let now_corr = chrono::Utc::now().timestamp_millis();
                 if let Some(corrected_error) = ws.recent_errors.iter().take(5).find(|e| {
                     let age_ms = now_corr - e.timestamp_ms;
-                    age_ms < 600_000
-                        && e.context != context_text
-                        && {
-                            let e_hash = e
-                                .context_hash
-                                .unwrap_or_else(|| simhash(&e.context));
-                            context_similarity(&success_hash, &e_hash) >= 0.65
-                        }
+                    age_ms < 600_000 && e.context != context_text && {
+                        let e_hash = e.context_hash.unwrap_or_else(|| simhash(&e.context));
+                        context_similarity(&success_hash, &e_hash) >= 0.65
+                    }
                 }) {
                     let error_ctx = corrected_error.context.clone();
                     if !ws.has_recent_auto_signal("recommend", &error_ctx, 86_400_000) {
@@ -3742,8 +3757,7 @@ async fn main() {
                     && convergent >= 3
                     && !ws.has_recent_auto_signal("recommend", &context_text, 86_400_000)
                 {
-                    let msg =
-                        format!("convergent: {} sessions did this successfully", convergent);
+                    let msg = format!("convergent: {} sessions did this successfully", convergent);
                     let auto_signal = create_signal_trace(
                         SignalPostKind::Recommend,
                         &context_text,
@@ -3773,86 +3787,76 @@ async fn main() {
                     .as_str()
                     .or_else(|| payload["tool_input"]["path"].as_str())
             {
-                    // Find other files edited in the same session
-                    let mut co_files: Vec<String> = Vec::new();
-                    let mut seen = std::collections::HashSet::new();
-                    for action in ws.recent_actions.iter() {
-                        if action.session_id.as_deref() == session_id.as_deref()
-                            && session_id.is_some()
-                            && matches!(action.tool.as_str(), "Edit" | "Write")
-                            && action.outcome == "succeeded"
-                            && let Some(fp) = &action.file_path
-                            && fp != current_file
-                            && seen.insert(fp.clone())
+                // Find other files edited in the same session
+                let mut co_files: Vec<String> = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for action in ws.recent_actions.iter() {
+                    if action.session_id.as_deref() == session_id.as_deref()
+                        && session_id.is_some()
+                        && matches!(action.tool.as_str(), "Edit" | "Write")
+                        && action.outcome == "succeeded"
+                        && let Some(fp) = &action.file_path
+                        && fp != current_file
+                        && seen.insert(fp.clone())
+                    {
+                        co_files.push(fp.clone());
+                        if co_files.len() >= 5 {
+                            break;
+                        }
+                    }
+                }
+
+                for other_file in &co_files {
+                    let ctx_a = format!("edit file: {}", current_file);
+                    let ctx_b = format!("edit file: {}", other_file);
+                    let hash_a = simhash(&ctx_a);
+                    let hash_b = simhash(&ctx_b);
+
+                    if let Ok(co_count) = store.count_co_occurring_sessions(
+                        &hash_a,
+                        &hash_b,
+                        168,
+                        current_space.as_deref(),
+                    ) {
+                        // Normalize dedup key so (A,B) == (B,A)
+                        let dedup_key = if current_file < other_file.as_str() {
+                            format!("co:{}+{}", current_file, other_file)
+                        } else {
+                            format!("co:{}+{}", other_file, current_file)
+                        };
+
+                        if co_count >= 2
+                            && !ws.has_recent_auto_signal("recommend", &dedup_key, 86_400_000)
                         {
-                            co_files.push(fp.clone());
-                            if co_files.len() >= 5 {
-                                break;
-                            }
+                            // Short filename for readable message
+                            let short_name = std::path::Path::new(other_file.as_str())
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(other_file.as_str());
+                            let msg =
+                                format!("{} usually co-edited ({} sessions)", short_name, co_count);
+                            let auto_signal = create_signal_trace(
+                                SignalPostKind::Recommend,
+                                &ctx_a,
+                                &msg,
+                                SignalTraceConfig {
+                                    model_id: "thronglets-auto".into(),
+                                    session_id: session_id.clone(),
+                                    owner_account: identity_binding.owner_account.clone(),
+                                    device_identity: Some(identity_binding.device_identity.clone()),
+                                    agent_id: None,
+                                    sigil_id: None,
+                                    space: current_space.clone(),
+                                    ttl_hours: 168,
+                                },
+                                identity.public_key_bytes(),
+                                |msg| identity.sign(msg),
+                            );
+                            let _ = store.insert(&auto_signal);
+                            ws.record_auto_signal("recommend", &dedup_key);
                         }
                     }
-
-                    for other_file in &co_files {
-                        let ctx_a = format!("edit file: {}", current_file);
-                        let ctx_b = format!("edit file: {}", other_file);
-                        let hash_a = simhash(&ctx_a);
-                        let hash_b = simhash(&ctx_b);
-
-                        if let Ok(co_count) = store.count_co_occurring_sessions(
-                            &hash_a,
-                            &hash_b,
-                            168,
-                            current_space.as_deref(),
-                        ) {
-                            // Normalize dedup key so (A,B) == (B,A)
-                            let dedup_key = if current_file < other_file.as_str() {
-                                format!("co:{}+{}", current_file, other_file)
-                            } else {
-                                format!("co:{}+{}", other_file, current_file)
-                            };
-
-                            if co_count >= 2
-                                && !ws.has_recent_auto_signal(
-                                    "recommend",
-                                    &dedup_key,
-                                    86_400_000,
-                                )
-                            {
-                                // Short filename for readable message
-                                let short_name = std::path::Path::new(other_file.as_str())
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or(other_file.as_str());
-                                let msg = format!(
-                                    "{} usually co-edited ({} sessions)",
-                                    short_name, co_count
-                                );
-                                let auto_signal = create_signal_trace(
-                                    SignalPostKind::Recommend,
-                                    &ctx_a,
-                                    &msg,
-                                    SignalTraceConfig {
-                                        model_id: "thronglets-auto".into(),
-                                        session_id: session_id.clone(),
-                                        owner_account: identity_binding
-                                            .owner_account
-                                            .clone(),
-                                        device_identity: Some(
-                                            identity_binding.device_identity.clone(),
-                                        ),
-                                        agent_id: None,
-                                        sigil_id: None,
-                                        space: current_space.clone(),
-                                        ttl_hours: 168,
-                                    },
-                                    identity.public_key_bytes(),
-                                    |msg| identity.sign(msg),
-                                );
-                                let _ = store.insert(&auto_signal);
-                                ws.record_auto_signal("recommend", &dedup_key);
-                            }
-                        }
-                    }
+                }
             }
 
             // Track session
@@ -3870,14 +3874,18 @@ async fn main() {
             // Read a generic pre-tool hook payload from stdin.
             let mut input = String::new();
             if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
-                if hook_debug { eprintln!("[thronglets:prehook] stdin read failed"); }
+                if hook_debug {
+                    eprintln!("[thronglets:prehook] stdin read failed");
+                }
                 std::process::exit(0);
             }
 
             let payload: serde_json::Value = match serde_json::from_str(&input) {
                 Ok(v) => v,
                 Err(e) => {
-                    if hook_debug { eprintln!("[thronglets:prehook] JSON parse error: {e}"); }
+                    if hook_debug {
+                        eprintln!("[thronglets:prehook] JSON parse error: {e}");
+                    }
                     std::process::exit(0);
                 }
             };
@@ -3944,9 +3952,7 @@ async fn main() {
                 }
                 // Context-similar error within 7 days — experiential recall
                 if age_ms < 604_800_000 && !hook_context.is_empty() {
-                    let e_hash = e
-                        .context_hash
-                        .unwrap_or_else(|| simhash(&e.context));
+                    let e_hash = e.context_hash.unwrap_or_else(|| simhash(&e.context));
                     return context_similarity(&ctx_hash, &e_hash) >= 0.75;
                 }
                 false
@@ -3984,8 +3990,8 @@ async fn main() {
                     &identity_binding.device_identity,
                     identity.public_key_bytes(),
                 ) {
-                    sig.score += ws
-                        .recommendation_score_adjustment(sig.kind, current_space.as_deref());
+                    sig.score +=
+                        ws.recommendation_score_adjustment(sig.kind, current_space.as_deref());
                     signals.push(sig);
                 }
             }
@@ -4000,32 +4006,32 @@ async fn main() {
             let experience_checked = explicit_signals_checked && !has_danger;
             if experience_checked
                 && let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                && let Ok(failures) = store.query_similar_failed_traces(
+                    &ctx_hash,
+                    48,
+                    168,
+                    5,
+                    current_space.as_deref(),
+                )
+                && !failures.is_empty()
             {
-                if let Ok(failures) =
-                    store.query_similar_failed_traces(&ctx_hash, 48, 168, 5, current_space.as_deref())
-                {
-                    if !failures.is_empty() {
-                        let count = failures.len();
-                        let snippet: String = failures[0]
-                            .context_text
-                            .as_deref()
-                            .unwrap_or("unknown")
-                            .chars()
-                            .take(80)
-                            .collect();
-                        let mut score = 280 + (count as i32).min(5) * 20;
-                        score += ws.recommendation_score_adjustment(
-                            SignalKind::History,
-                            current_space.as_deref(),
-                        );
-                        signals.push(Signal {
-                            kind: SignalKind::History,
-                            score,
-                            body: format!("  ⚠ {count} past failure(s): {snippet}"),
-                            candidate: None,
-                        });
-                    }
-                }
+                let count = failures.len();
+                let snippet: String = failures[0]
+                    .context_text
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .chars()
+                    .take(80)
+                    .collect();
+                let mut score = 280 + (count as i32).min(5) * 20;
+                score += ws
+                    .recommendation_score_adjustment(SignalKind::History, current_space.as_deref());
+                signals.push(Signal {
+                    kind: SignalKind::History,
+                    score,
+                    body: format!("  ⚠ {count} past failure(s): {snippet}"),
+                    candidate: None,
+                });
             }
             profiler.stage_or_skip("experience", experience_checked);
 
@@ -4258,8 +4264,7 @@ async fn main() {
                     notes.truncate(5);
 
                     if !notes.is_empty() {
-                        let briefing =
-                            format!("Environment notes:\n{}", notes.join("\n"));
+                        let briefing = format!("Environment notes:\n{}", notes.join("\n"));
                         let output = serde_json::json!({ "additionalContext": briefing });
                         println!("{}", output);
                     }
@@ -4292,8 +4297,8 @@ async fn main() {
 
                 "subagent-start" => {
                     let agent_type = payload["agent_type"].as_str().unwrap_or("unknown");
-                    let agent_id = payload_string(&payload, "agent_id")
-                        .unwrap_or_else(|| "anon".into());
+                    let agent_id =
+                        payload_string(&payload, "agent_id").unwrap_or_else(|| "anon".into());
                     let ctx = format!("subagent-start type:{} id:{}", agent_type, agent_id);
                     let trace = Trace::new_with_identity(
                         "urn:thronglets:lifecycle:subagent-start".into(),
@@ -4314,8 +4319,8 @@ async fn main() {
 
                 "subagent-stop" => {
                     let agent_type = payload["agent_type"].as_str().unwrap_or("unknown");
-                    let agent_id = payload_string(&payload, "agent_id")
-                        .unwrap_or_else(|| "anon".into());
+                    let agent_id =
+                        payload_string(&payload, "agent_id").unwrap_or_else(|| "anon".into());
                     // Extract a summary fingerprint from last_assistant_message if present
                     let summary: String = payload["last_assistant_message"]
                         .as_str()
@@ -4470,32 +4475,28 @@ async fn main() {
 
             // Restore pheromone field from disk if available
             let field_path = dir.join("pheromone-field.v1.json");
-            if field_path.exists() {
-                if let Ok(data) = std::fs::read_to_string(&field_path) {
-                    if let Ok(snapshot) = serde_json::from_str(&data) {
-                        field.restore(&snapshot);
-                        tracing::info!(
-                            points = field.len(),
-                            "Restored pheromone field from disk"
-                        );
-                    }
-                }
+            if field_path.exists()
+                && let Ok(data) = std::fs::read_to_string(&field_path)
+                && let Ok(snapshot) = serde_json::from_str(&data)
+            {
+                field.restore(&snapshot);
+                tracing::info!(points = field.len(), "Restored pheromone field from disk");
             }
             field.hydrate_from_store(&store);
 
             // Auto-join P2P network unless --local is specified.
             let _network_tx = if !local {
                 Some(
-                    start_network_runtime(
-                        &dir,
-                        &identity,
-                        &identity_binding,
-                        Arc::clone(&store),
-                        Some(Arc::clone(&field)),
-                        p2p_port,
-                        &bootstrap,
-                        NetworkRuntimeOptions::participant(),
-                    )
+                    start_network_runtime(NetworkRuntimeRequest {
+                        data_dir: &dir,
+                        identity: &identity,
+                        binding: &identity_binding,
+                        store: Arc::clone(&store),
+                        field: Some(Arc::clone(&field)),
+                        listen_port: p2p_port,
+                        bootstrap: &bootstrap,
+                        options: NetworkRuntimeOptions::participant(),
+                    })
                     .await
                     .expect("failed to start network"),
                 )
@@ -4528,10 +4529,10 @@ async fn main() {
 
             // Persist pheromone field on shutdown
             let snapshot = field.snapshot();
-            if !snapshot.points.is_empty() {
-                if let Ok(data) = serde_json::to_string(&snapshot) {
-                    let _ = std::fs::write(&field_path, data);
-                }
+            if !snapshot.points.is_empty()
+                && let Ok(data) = serde_json::to_string(&snapshot)
+            {
+                let _ = std::fs::write(&field_path, data);
             }
         }
 
@@ -5062,7 +5063,11 @@ fn explicit_signals(
         if result.density_score < 1 || result.context_similarity < 0.85 {
             continue;
         }
-        let collective_bonus = if result.promotion_state == "collective" { 30 } else { 0 };
+        let collective_bonus = if result.promotion_state == "collective" {
+            30
+        } else {
+            0
+        };
         let density_bonus = i32::from(result.density_score) * 20;
 
         match result.kind.as_str() {
@@ -5306,11 +5311,7 @@ fn profile_evidence_scope(recommendations: &[Recommendation]) -> &'static str {
 }
 
 fn profile_file_guidance_gate(supports_file_guidance: bool) -> &'static str {
-    if supports_file_guidance {
-        "open"
-    } else {
-        "na"
-    }
+    if supports_file_guidance { "open" } else { "na" }
 }
 
 fn strip_check_header(rendered: &str) -> String {

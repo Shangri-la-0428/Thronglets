@@ -59,29 +59,44 @@ impl NetworkRuntimeOptions {
     }
 }
 
-pub async fn start_network_runtime(
-    data_dir: &Path,
-    identity: &NodeIdentity,
-    binding: &IdentityBinding,
+pub struct NetworkRuntimeRequest<'a> {
+    pub data_dir: &'a Path,
+    pub identity: &'a NodeIdentity,
+    pub binding: &'a IdentityBinding,
+    pub store: Arc<TraceStore>,
+    pub field: Option<Arc<PheromoneField>>,
+    pub listen_port: u16,
+    pub bootstrap: &'a [String],
+    pub options: NetworkRuntimeOptions,
+}
+
+struct NetworkRuntimeLoop {
+    data_dir: PathBuf,
+    binding: IdentityBinding,
     store: Arc<TraceStore>,
     field: Option<Arc<PheromoneField>>,
-    listen_port: u16,
-    bootstrap: &[String],
+    network_snapshot: NetworkSnapshot,
+    event_rx: mpsc::Receiver<NetworkEvent>,
+    command_tx: mpsc::Sender<NetworkCommand>,
     options: NetworkRuntimeOptions,
+}
+
+pub async fn start_network_runtime(
+    request: NetworkRuntimeRequest<'_>,
 ) -> Result<mpsc::Sender<NetworkCommand>, Box<dyn Error>> {
-    let mut network_snapshot = NetworkSnapshot::load(data_dir);
-    if !bootstrap.is_empty() {
-        network_snapshot.remember_bootstrap_seeds(bootstrap.iter().cloned());
+    let mut network_snapshot = NetworkSnapshot::load(request.data_dir);
+    if !request.bootstrap.is_empty() {
+        network_snapshot.remember_bootstrap_seeds(request.bootstrap.iter().cloned());
     }
-    let effective_bootstrap = effective_bootstrap_seeds(bootstrap, &network_snapshot);
+    let effective_bootstrap = effective_bootstrap_seeds(request.bootstrap, &network_snapshot);
     if !effective_bootstrap.is_empty() {
         network_snapshot.remember_bootstrap_seeds(effective_bootstrap.iter().cloned());
     }
     network_snapshot.configure_bootstrap(effective_bootstrap.len());
-    network_snapshot.save(data_dir);
+    network_snapshot.save(request.data_dir);
 
     let libp2p_keypair =
-        libp2p::identity::Keypair::ed25519_from_bytes(&mut identity.secret_key_bytes())
+        libp2p::identity::Keypair::ed25519_from_bytes(&mut request.identity.secret_key_bytes())
             .map_err(|error| format!("failed to create libp2p keypair: {error}"))?;
 
     let bootstrap_addrs: Vec<Multiaddr> = effective_bootstrap
@@ -100,7 +115,7 @@ pub async fn start_network_runtime(
         .collect();
 
     let config = NetworkConfig {
-        listen_port,
+        listen_port: request.listen_port,
         bootstrap_peers: bootstrap_addrs,
         trusted_peers: trusted_peer_addrs,
         known_peers: known_peer_addrs,
@@ -108,21 +123,19 @@ pub async fn start_network_runtime(
 
     let (command_tx, event_rx) = crate::network::start(libp2p_keypair, config).await?;
     let task_command_tx = command_tx.clone();
-    let task_data_dir = data_dir.to_path_buf();
-    let task_binding = binding.clone();
+    let runtime = NetworkRuntimeLoop {
+        data_dir: request.data_dir.to_path_buf(),
+        binding: request.binding.clone(),
+        store: request.store,
+        field: request.field,
+        network_snapshot,
+        event_rx,
+        command_tx: task_command_tx,
+        options: request.options,
+    };
 
     tokio::spawn(async move {
-        run_network_runtime_loop(
-            task_data_dir,
-            task_binding,
-            store,
-            field,
-            network_snapshot,
-            event_rx,
-            task_command_tx,
-            options,
-        )
-        .await;
+        runtime.run().await;
     });
 
     Ok(command_tx)
@@ -160,16 +173,16 @@ pub async fn attempt_first_connection(
     let baseline_last_peer_connected_at_ms = before.last_peer_connected_at_ms;
     let baseline_trusted_peer_seed_count = before.trusted_peer_seeds.len();
 
-    let command_tx = start_network_runtime(
+    let command_tx = start_network_runtime(NetworkRuntimeRequest {
         data_dir,
         identity,
         binding,
         store,
-        None, // no pheromone field for connection attempts
-        0,
-        &[],
-        NetworkRuntimeOptions::embedded(),
-    )
+        field: None, // no pheromone field for connection attempts
+        listen_port: 0,
+        bootstrap: &[],
+        options: NetworkRuntimeOptions::embedded(),
+    })
     .await?;
 
     let started_at = Instant::now();
@@ -214,72 +227,65 @@ pub async fn attempt_first_connection(
     })
 }
 
-async fn run_network_runtime_loop(
-    data_dir: PathBuf,
-    binding: IdentityBinding,
-    store: Arc<TraceStore>,
-    field: Option<Arc<PheromoneField>>,
-    mut network_snapshot: NetworkSnapshot,
-    mut event_rx: mpsc::Receiver<NetworkEvent>,
-    command_tx: mpsc::Sender<NetworkCommand>,
-    options: NetworkRuntimeOptions,
-) {
-    let mut evaporation_interval = tokio::time::interval(Duration::from_secs(3600));
-    evaporation_interval.tick().await;
-    let mut dht_publish_interval = tokio::time::interval(Duration::from_secs(300));
-    dht_publish_interval.tick().await;
-    let mut publish_scan_interval = tokio::time::interval(Duration::from_secs(30));
-    publish_scan_interval.tick().await;
-    // Field self-evolution: diffusion + coupling decay every 5 minutes
-    let mut field_tick_interval = tokio::time::interval(Duration::from_secs(300));
-    field_tick_interval.tick().await;
+impl NetworkRuntimeLoop {
+    async fn run(mut self) {
+        let mut evaporation_interval = tokio::time::interval(Duration::from_secs(3600));
+        evaporation_interval.tick().await;
+        let mut dht_publish_interval = tokio::time::interval(Duration::from_secs(300));
+        dht_publish_interval.tick().await;
+        let mut publish_scan_interval = tokio::time::interval(Duration::from_secs(30));
+        publish_scan_interval.tick().await;
+        // Field self-evolution: diffusion + coupling decay every 5 minutes
+        let mut field_tick_interval = tokio::time::interval(Duration::from_secs(300));
+        field_tick_interval.tick().await;
 
-    loop {
-        tokio::select! {
-            event = event_rx.recv() => {
-                match event {
-                    Some(event) => {
-                        handle_network_event(
-                            &data_dir,
-                            &binding,
-                            &store,
-                            field.as_deref(),
-                            &mut network_snapshot,
-                            event,
-                        );
-                    }
-                    None => break,
-                }
-            }
-            _ = evaporation_interval.tick() => {
-                match store.evaporate(None) {
-                    Ok(n) if n > 0 => info!(deleted = n, "Evaporated expired traces"),
-                    Ok(_) => {}
-                    Err(e) => warn!(%e, "Evaporation failed"),
-                }
-                if let Some(ref f) = field {
-                    let pruned = f.prune();
-                    if pruned > 0 {
-                        info!(pruned, "Pruned dead pheromone field points");
+        loop {
+            tokio::select! {
+                event = self.event_rx.recv() => {
+                    match event {
+                        Some(event) => {
+                            handle_network_event(
+                                &self.data_dir,
+                                &self.binding,
+                                &self.store,
+                                self.field.as_deref(),
+                                &mut self.network_snapshot,
+                                event,
+                            );
+                        }
+                        None => break,
                     }
                 }
-            }
-            _ = wait_on_interval(options.publish_summaries, &mut dht_publish_interval) => {
-                publish_capability_summaries(&store, &command_tx).await;
-            }
-            _ = wait_on_interval(options.publish_local_traces, &mut publish_scan_interval) => {
-                publish_local_traces(&store, &command_tx).await;
-            }
-            _ = field_tick_interval.tick() => {
-                if let Some(ref f) = field {
-                    let result = f.tick();
-                    if result.diffused > 0 || result.points_pruned > 0 || result.couplings_pruned > 0 {
-                        info!(
-                            diffused = result.diffused,
-                            points_pruned = result.points_pruned,
-                            couplings_pruned = result.couplings_pruned,
-                            "Pheromone field tick"
-                        );
+                _ = evaporation_interval.tick() => {
+                    match self.store.evaporate(None) {
+                        Ok(n) if n > 0 => info!(deleted = n, "Evaporated expired traces"),
+                        Ok(_) => {}
+                        Err(e) => warn!(%e, "Evaporation failed"),
+                    }
+                    if let Some(ref f) = self.field {
+                        let pruned = f.prune();
+                        if pruned > 0 {
+                            info!(pruned, "Pruned dead pheromone field points");
+                        }
+                    }
+                }
+                _ = wait_on_interval(self.options.publish_summaries, &mut dht_publish_interval) => {
+                    publish_capability_summaries(&self.store, &self.command_tx).await;
+                }
+                _ = wait_on_interval(self.options.publish_local_traces, &mut publish_scan_interval) => {
+                    publish_local_traces(&self.store, &self.command_tx).await;
+                }
+                _ = field_tick_interval.tick() => {
+                    if let Some(ref f) = self.field {
+                        let result = f.tick();
+                        if result.diffused > 0 || result.points_pruned > 0 || result.couplings_pruned > 0 {
+                            info!(
+                                diffused = result.diffused,
+                                points_pruned = result.points_pruned,
+                                couplings_pruned = result.couplings_pruned,
+                                "Pheromone field tick"
+                            );
+                        }
                     }
                 }
             }

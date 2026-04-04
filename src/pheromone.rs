@@ -133,7 +133,14 @@ impl FieldPoint {
     }
 
     /// Excite this field point with a new observation.
-    fn excite(&mut self, outcome: Outcome, latency_ms: u64, now_ms: u64, source_id: [u8; 8], deposit: f64) {
+    fn excite(
+        &mut self,
+        outcome: Outcome,
+        latency_ms: u64,
+        now_ms: u64,
+        source_id: [u8; 8],
+        deposit: f64,
+    ) {
         // First, decay existing intensity to current time
         self.decay(now_ms);
 
@@ -143,7 +150,11 @@ impl FieldPoint {
         self.total_excitations += 1;
 
         // Update valence (success rate) via EMA
-        let outcome_val = if outcome == Outcome::Succeeded { 1.0 } else { 0.0 };
+        let outcome_val = if outcome == Outcome::Succeeded {
+            1.0
+        } else {
+            0.0
+        };
         let old_valence = self.valence;
         self.valence = self.valence * (1.0 - EMA_ALPHA) + outcome_val * EMA_ALPHA;
 
@@ -206,9 +217,15 @@ struct EdgeKey {
 impl EdgeKey {
     fn new(a: &str, b: &str) -> Self {
         if a <= b {
-            Self { cap_a: a.to_string(), cap_b: b.to_string() }
+            Self {
+                cap_a: a.to_string(),
+                cap_b: b.to_string(),
+            }
         } else {
-            Self { cap_a: b.to_string(), cap_b: a.to_string() }
+            Self {
+                cap_a: b.to_string(),
+                cap_b: a.to_string(),
+            }
         }
     }
 
@@ -393,7 +410,10 @@ impl FieldInner {
         }
 
         for (key, amount, valence, latency) in ops {
-            let point = self.nodes.entry(key).or_insert_with(|| FieldPoint::new(now_ms));
+            let point = self
+                .nodes
+                .entry(key)
+                .or_insert_with(|| FieldPoint::new(now_ms));
             point.decay(now_ms);
             let total = point.intensity + amount;
             if total > 0.0 {
@@ -415,15 +435,28 @@ impl FieldInner {
             capability: trace.capability.clone(),
             bucket,
         };
-        let now_ms = trace.timestamp as u64;
+        let now_ms = trace.timestamp;
         let source_id = source_fingerprint(trace);
 
         // Attributed traces (with sigil_id) deposit slightly more pheromone.
         // This creates an emergent incentive for identity without mandating it.
-        let intensity = if trace.is_attributed() { ATTRIBUTION_BOOST } else { 1.0 };
+        let intensity = if trace.is_attributed() {
+            ATTRIBUTION_BOOST
+        } else {
+            1.0
+        };
 
-        let point = self.nodes.entry(key).or_insert_with(|| FieldPoint::new(now_ms));
-        point.excite(trace.outcome, trace.latency_ms as u64, now_ms, source_id, intensity);
+        let point = self
+            .nodes
+            .entry(key)
+            .or_insert_with(|| FieldPoint::new(now_ms));
+        point.excite(
+            trace.outcome,
+            trace.latency_ms as u64,
+            now_ms,
+            source_id,
+            intensity,
+        );
 
         FieldDelta {
             capability: trace.capability.clone(),
@@ -473,7 +506,7 @@ impl PheromoneField {
 
         // Hebbian: detect co-excitations from field state.
         // For each OTHER capability, find max(last_excited) across its nodes.
-        let now_ms = trace.timestamp as u64;
+        let now_ms = trace.timestamp;
         let co_excited: Vec<String> = {
             let mut max_ts: HashMap<String, u64> = HashMap::new();
             for (k, p) in &inner.nodes {
@@ -712,6 +745,10 @@ impl PheromoneField {
         self.inner.lock().unwrap().nodes.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Snapshot the entire field for P2P sync or persistence.
     pub fn snapshot(&self) -> FieldSnapshot {
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
@@ -799,7 +836,13 @@ impl PheromoneField {
             .nodes
             .entry(key)
             .or_insert_with(|| FieldPoint::new(delta.timestamp));
-        point.excite(delta.outcome, delta.latency_ms, delta.timestamp, delta.source_id, delta.intensity_add);
+        point.excite(
+            delta.outcome,
+            delta.latency_ms,
+            delta.timestamp,
+            delta.source_id,
+            delta.intensity_add,
+        );
     }
 
     /// List all capabilities with their total intensity (for explore intent).
@@ -829,16 +872,8 @@ impl PheromoneField {
             .map(|(cap, (intensity, wv, wl, exc, sc))| FieldScan {
                 capability: cap.to_string(),
                 intensity,
-                valence: if intensity > 0.0 {
-                    wv / intensity
-                } else {
-                    0.5
-                },
-                latency: if intensity > 0.0 {
-                    wl / intensity
-                } else {
-                    0.0
-                },
+                valence: if intensity > 0.0 { wv / intensity } else { 0.5 },
+                latency: if intensity > 0.0 { wl / intensity } else { 0.0 },
                 variance: 0.0,
                 total_excitations: exc,
                 source_count: sc,
@@ -883,8 +918,7 @@ impl PheromoneField {
 
                 // Momentum: linear from +1 (just excited) to -1 (2× half-life ago).
                 // Crosses zero at exactly one half-life.
-                let age_hours =
-                    (now_ms.saturating_sub(point.last_excited)) as f64 / 3_600_000.0;
+                let age_hours = (now_ms.saturating_sub(point.last_excited)) as f64 / 3_600_000.0;
                 let mom = (1.0 - age_hours / HALF_LIFE_HOURS).clamp(-1.0, 1.0);
 
                 (fam, con, mom)
@@ -956,7 +990,11 @@ impl PheromoneField {
             }
         }
         if count > 0 {
-            tracing::info!(traces = count, points = self.len(), "Hydrated pheromone field from store");
+            tracing::info!(
+                traces = count,
+                points = self.len(),
+                "Hydrated pheromone field from store"
+            );
         }
     }
 }
@@ -990,7 +1028,7 @@ mod tests {
     use super::*;
     use crate::context::simhash;
     use crate::trace::Trace;
-    use ed25519_dalek::{SigningKey, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
 
     fn make_trace(capability: &str, context: &str, outcome: Outcome, latency_ms: u32) -> Trace {
         let key = SigningKey::from_bytes(&[1u8; 32]);
@@ -1008,7 +1046,12 @@ mod tests {
         )
     }
 
-    fn make_attributed_trace(capability: &str, context: &str, outcome: Outcome, latency_ms: u32) -> Trace {
+    fn make_attributed_trace(
+        capability: &str,
+        context: &str,
+        outcome: Outcome,
+        latency_ms: u32,
+    ) -> Trace {
         use crate::trace::TraceConfig;
         let key = SigningKey::from_bytes(&[1u8; 32]);
         TraceConfig::for_sigil("SIG_test", capability, outcome, "test-model")
@@ -1067,7 +1110,8 @@ mod tests {
         assert!(
             attr_agg.intensity > anon_agg.intensity,
             "attributed ({}) should have higher intensity than anonymous ({})",
-            attr_agg.intensity, anon_agg.intensity
+            attr_agg.intensity,
+            anon_agg.intensity
         );
     }
 
@@ -1154,7 +1198,12 @@ mod tests {
     #[test]
     fn diffusion_conserves_total_intensity() {
         let field = PheromoneField::new();
-        let t = make_trace("cap/conserve", "some mid-range context", Outcome::Succeeded, 100);
+        let t = make_trace(
+            "cap/conserve",
+            "some mid-range context",
+            Outcome::Succeeded,
+            100,
+        );
         field.excite(&t);
 
         let total_before: f64 = {
@@ -1225,17 +1274,17 @@ mod tests {
         let t_primary = make_trace("cap/primary", "search context", Outcome::Succeeded, 100);
         field.excite(&t_primary);
 
-        assert!(
-            field.coupling_count() >= 1,
-            "coupling should have formed"
-        );
+        assert!(field.coupling_count() >= 1, "coupling should have formed");
 
         // Scan for primary's context — associated should surface via coupling
         let hash = simhash("search context");
         let results = field.scan(&hash, 1, 10);
 
         let caps: Vec<&str> = results.iter().map(|r| r.capability.as_str()).collect();
-        assert!(caps.contains(&"cap/primary"), "primary should be in results");
+        assert!(
+            caps.contains(&"cap/primary"),
+            "primary should be in results"
+        );
         assert!(
             caps.contains(&"cap/associated"),
             "coupled capability should surface in scan results, got: {:?}",
@@ -1400,8 +1449,14 @@ mod tests {
         }
 
         let mom_aged = field.overlay(&hash, "cap/mom").momentum;
-        assert!(mom_fresh > mom_aged, "momentum should decay: {mom_fresh} > {mom_aged}");
-        assert!(mom_aged.abs() < 0.05, "at half-life, momentum ≈ 0: {mom_aged}");
+        assert!(
+            mom_fresh > mom_aged,
+            "momentum should decay: {mom_fresh} > {mom_aged}"
+        );
+        assert!(
+            mom_aged.abs() < 0.05,
+            "at half-life, momentum ≈ 0: {mom_aged}"
+        );
     }
 
     #[test]
@@ -1415,6 +1470,10 @@ mod tests {
         field.excite(&t2);
 
         let o = field.overlay(&hash, "cap/co1");
-        assert!(o.coupling > 0.0, "coupling should be positive after co-excitation: {}", o.coupling);
+        assert!(
+            o.coupling > 0.0,
+            "coupling should be positive after co-excitation: {}",
+            o.coupling
+        );
     }
 }
