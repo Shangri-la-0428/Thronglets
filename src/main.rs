@@ -3798,12 +3798,20 @@ async fn main() {
             // Auto-recommend: convergent behavior across 3+ sessions
             if !is_error && matches!(tool_name, "Edit" | "Write" | "Bash") {
                 let rec_hash = simhash(&context_text);
+                let convergence_threshold = reinforced_success_threshold(&feedback_events);
                 if let Ok(convergent) =
                     store.count_convergent_sessions(&rec_hash, 48, current_space.as_deref())
-                    && convergent >= 3
+                    && convergent >= convergence_threshold
                     && !ws.has_recent_auto_signal("recommend", &context_text, 86_400_000)
                 {
-                    let msg = format!("convergent: {} sessions did this successfully", convergent);
+                    let msg = if convergence_threshold <= 2 {
+                        format!(
+                            "reinforced prior: {} sessions followed this successfully",
+                            convergent
+                        )
+                    } else {
+                        format!("convergent: {} sessions did this successfully", convergent)
+                    };
                     let auto_signal = create_signal_trace(
                         SignalPostKind::Recommend,
                         &context_text,
@@ -5185,6 +5193,21 @@ fn convergent_success_prior(
     })
 }
 
+fn reinforced_success_threshold(feedback_events: &[workspace::RecommendationFeedbackEvent]) -> u32 {
+    let reinforced = feedback_events.iter().any(|event| {
+        event.positive
+            && matches!(
+                event.recommendation_kind.as_str(),
+                "do_next" | "maybe_also"
+            )
+            && matches!(
+                event.source_kind.as_str(),
+                "repair" | "preparation" | "adjacency"
+            )
+    });
+    if reinforced { 2 } else { 3 }
+}
+
 fn presence_context_signal(
     store: &TraceStore,
     space: &str,
@@ -5968,5 +5991,40 @@ mod tests {
         }
 
         assert!(convergent_success_prior(&store, &simhash(ctx), None).is_none());
+    }
+
+    #[test]
+    fn reinforced_success_threshold_lowers_when_guidance_proved_useful() {
+        let events = vec![workspace::RecommendationFeedbackEvent {
+            recommendation_kind: "do_next".into(),
+            source_kind: "repair".into(),
+            space: Some("psyche".into()),
+            positive: true,
+            timestamp_ms: 1,
+        }];
+
+        assert_eq!(reinforced_success_threshold(&events), 2);
+    }
+
+    #[test]
+    fn reinforced_success_threshold_stays_default_for_non_reinforcing_feedback() {
+        let events = vec![
+            workspace::RecommendationFeedbackEvent {
+                recommendation_kind: "context".into(),
+                source_kind: "history".into(),
+                space: None,
+                positive: true,
+                timestamp_ms: 1,
+            },
+            workspace::RecommendationFeedbackEvent {
+                recommendation_kind: "do_next".into(),
+                source_kind: "repair".into(),
+                space: None,
+                positive: false,
+                timestamp_ms: 2,
+            },
+        ];
+
+        assert_eq!(reinforced_success_threshold(&events), 3);
     }
 }

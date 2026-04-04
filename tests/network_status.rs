@@ -3,10 +3,21 @@ use tempfile::TempDir;
 
 use thronglets::network_state::NetworkSnapshot;
 
+fn isolated_home(data_dir: &std::path::Path) -> std::path::PathBuf {
+    let root = data_dir.parent().unwrap_or(data_dir);
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).expect("home dir should be creatable");
+    home
+}
+
 fn run_bin(args: &[&str], data_dir: &std::path::Path) -> Value {
+    let home = isolated_home(data_dir);
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_thronglets"))
         .args(["--data-dir", data_dir.to_str().unwrap()])
         .args(args)
+        .env("HOME", &home)
+        .env("OASYCE_DIR", home.join(".oasyce"))
+        .env("PATH", "")
         .output()
         .expect("failed to run thronglets");
     assert!(

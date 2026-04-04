@@ -4,9 +4,25 @@ use std::process::Command;
 use tempfile::TempDir;
 use thronglets::network_state::NetworkSnapshot;
 
+fn isolated_home(data_dir: &Path) -> std::path::PathBuf {
+    let root = data_dir.parent().unwrap_or(data_dir);
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).expect("home dir should be creatable");
+    home
+}
+
+fn build_command(data_dir: &Path) -> Command {
+    let home = isolated_home(data_dir);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_thronglets"));
+    cmd.args(["--data-dir", data_dir.to_str().unwrap()])
+        .env("HOME", &home)
+        .env("OASYCE_DIR", home.join(".oasyce"))
+        .env("PATH", "");
+    cmd
+}
+
 fn run_bin(args: &[&str], data_dir: &Path) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_thronglets"))
-        .args(["--data-dir", data_dir.to_str().unwrap()])
+    let output = build_command(data_dir)
         .args(args)
         .output()
         .expect("failed to run thronglets");
@@ -24,6 +40,7 @@ fn run_bin_in_home(args: &[&str], home: &Path, data_dir: &Path) -> Value {
         .args(["--data-dir", data_dir.to_str().unwrap()])
         .args(args)
         .env("HOME", home)
+        .env("OASYCE_DIR", home.join(".oasyce"))
         .env("PATH", "")
         .output()
         .expect("failed to run thronglets");
@@ -37,8 +54,7 @@ fn run_bin_in_home(args: &[&str], home: &Path, data_dir: &Path) -> Value {
 }
 
 fn run_bin_raw(args: &[&str], data_dir: &Path) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_thronglets"))
-        .args(["--data-dir", data_dir.to_str().unwrap()])
+    build_command(data_dir)
         .args(args)
         .output()
         .expect("failed to run thronglets")
@@ -49,6 +65,7 @@ fn run_bin_text_in_home(args: &[&str], home: &Path, data_dir: &Path) -> String {
         .args(["--data-dir", data_dir.to_str().unwrap()])
         .args(args)
         .env("HOME", home)
+        .env("OASYCE_DIR", home.join(".oasyce"))
         .env("PATH", "")
         .output()
         .expect("failed to run thronglets");
@@ -62,8 +79,7 @@ fn run_bin_text_in_home(args: &[&str], home: &Path, data_dir: &Path) -> String {
 }
 
 fn run_bin_text(args: &[&str], data_dir: &Path) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_thronglets"))
-        .args(["--data-dir", data_dir.to_str().unwrap()])
+    let output = build_command(data_dir)
         .args(args)
         .output()
         .expect("failed to run thronglets");
