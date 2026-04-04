@@ -227,23 +227,10 @@ impl IdentityBinding {
             Self::new(node_identity.device_identity())
         };
 
-        if binding.owner_account.is_none()
-            && let Some(owner_account) = load_oasyce_owner_account_hint()?
-        {
-            binding.owner_account = Some(owner_account);
-            if binding.binding_source.is_none() {
-                binding.binding_source = Some("oasyce_sdk".into());
-            }
-            binding.updated_at = now_ms();
-        }
-
-        if binding.oasyce_delegate_policy.is_none()
-            && let Some(policy) = load_oasyce_delegate_policy_hint()?
-        {
-            binding.ensure_policy_compatible(Some(&policy))?;
-            binding.oasyce_delegate_policy = Some(policy);
-            binding.updated_at = now_ms();
-        }
+        binding.import_oasyce_hints(
+            load_oasyce_owner_account_hint()?,
+            load_oasyce_delegate_policy_hint()?,
+        )?;
 
         binding.save(path)?;
         Ok(binding)
@@ -386,6 +373,66 @@ impl IdentityBinding {
                 ),
             ));
         }
+        Ok(())
+    }
+
+    fn import_oasyce_hints(
+        &mut self,
+        owner_hint: Option<String>,
+        policy_hint: Option<OasyceDelegatePolicy>,
+    ) -> std::io::Result<()> {
+        self.import_oasyce_owner_hint(owner_hint);
+        self.import_oasyce_delegate_policy_hint(policy_hint)
+    }
+
+    fn import_oasyce_owner_hint(&mut self, owner_hint: Option<String>) {
+        let Some(owner_hint) = owner_hint else {
+            return;
+        };
+        if owner_hint.trim().is_empty() {
+            return;
+        }
+        if self.owner_account.as_deref() == Some(owner_hint.as_str()) {
+            return;
+        }
+        if self.owner_account.is_none() {
+            self.owner_account = Some(owner_hint);
+            if self.binding_source.is_none() {
+                self.binding_source = Some("oasyce_sdk".into());
+            }
+            self.updated_at = now_ms();
+        }
+    }
+
+    fn import_oasyce_delegate_policy_hint(
+        &mut self,
+        policy_hint: Option<OasyceDelegatePolicy>,
+    ) -> std::io::Result<()> {
+        let Some(policy) = policy_hint else {
+            return Ok(());
+        };
+        policy.validate()?;
+
+        match self.owner_account.as_deref() {
+            None => {
+                self.owner_account = Some(policy.principal.clone());
+                if self.binding_source.is_none() {
+                    self.binding_source = Some("oasyce_sdk".into());
+                }
+            }
+            Some(current) if current == policy.principal => {}
+            Some(_) if self.binding_source.as_deref() == Some("connection_file") => {
+                return Ok(());
+            }
+            Some(_) => {
+                self.owner_account = Some(policy.principal.clone());
+                self.binding_source = Some("oasyce_sdk".into());
+                self.joined_from_device = None;
+            }
+        }
+
+        self.oasyce_delegate_policy = Some(policy);
+        self.updated_at = now_ms();
         Ok(())
     }
 }
@@ -709,7 +756,14 @@ mod tests {
 
     #[test]
     fn identity_binding_round_trip() {
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let original_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
         let node = NodeIdentity::generate();
         let path = identity_binding_path(dir.path());
 
@@ -723,6 +777,12 @@ mod tests {
             .unwrap();
         rebound.save(&path).unwrap();
         let loaded = IdentityBinding::load_or_create(&path, &node).unwrap();
+
+        match original_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
         assert_eq!(loaded.owner_account.as_deref(), Some("oasyce1owner"));
         assert_eq!(loaded.device_identity, node.device_identity());
     }
@@ -974,6 +1034,125 @@ mod tests {
         assert_eq!(policy.principal, "oasyce1owner");
         assert_eq!(policy.enrollment_token, "shared-secret");
         assert_eq!(policy.allowed_msgs, vec!["/cosmos.bank.v1beta1.MsgSend"]);
+    }
+
+    #[test]
+    fn load_or_create_reconciles_stale_local_owner_with_oasyce_policy() {
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let oasyce_dir = home.join(".oasyce");
+        fs::create_dir_all(&oasyce_dir).unwrap();
+        fs::write(
+            oasyce_dir.join("delegate_policy.v1.json"),
+            serde_json::to_vec_pretty(&OasyceDelegatePolicy {
+                schema_version: OASYCE_DELEGATE_POLICY_SCHEMA_VERSION.into(),
+                principal: "oasyce1chainowner".into(),
+                allowed_msgs: vec!["/cosmos.bank.v1beta1.MsgSend".into()],
+                enrollment_token: "shared-secret".into(),
+                per_tx_limit_uoas: 1_000_000,
+                window_limit_uoas: 10_000_000,
+                window_seconds: 86_400,
+                expiration_seconds: 0,
+                updated_at: Some("2026-04-04T00:00:00Z".into()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let original_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+
+        let data_dir = temp.path().join("data");
+        let node = NodeIdentity::generate();
+        let path = identity_binding_path(&data_dir);
+        IdentityBinding {
+            schema_version: IDENTITY_BINDING_SCHEMA_VERSION.into(),
+            owner_account: Some("oasyce1staleowner".into()),
+            oasyce_delegate_policy: None,
+            device_identity: node.device_identity(),
+            binding_source: Some("manual".into()),
+            joined_from_device: None,
+            updated_at: now_ms(),
+        }
+        .save(&path)
+        .unwrap();
+
+        let binding = IdentityBinding::load_or_create(&path, &node).unwrap();
+
+        match original_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert_eq!(binding.owner_account.as_deref(), Some("oasyce1chainowner"));
+        assert_eq!(binding.binding_source.as_deref(), Some("oasyce_sdk"));
+        assert_eq!(
+            binding
+                .oasyce_delegate_policy
+                .as_ref()
+                .map(|policy| policy.principal.as_str()),
+            Some("oasyce1chainowner")
+        );
+    }
+
+    #[test]
+    fn load_or_create_preserves_connection_file_binding_when_oasyce_policy_conflicts() {
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let oasyce_dir = home.join(".oasyce");
+        fs::create_dir_all(&oasyce_dir).unwrap();
+        fs::write(
+            oasyce_dir.join("delegate_policy.v1.json"),
+            serde_json::to_vec_pretty(&OasyceDelegatePolicy {
+                schema_version: OASYCE_DELEGATE_POLICY_SCHEMA_VERSION.into(),
+                principal: "oasyce1chainowner".into(),
+                allowed_msgs: vec!["/cosmos.bank.v1beta1.MsgSend".into()],
+                enrollment_token: "shared-secret".into(),
+                per_tx_limit_uoas: 1_000_000,
+                window_limit_uoas: 10_000_000,
+                window_seconds: 86_400,
+                expiration_seconds: 0,
+                updated_at: Some("2026-04-04T00:00:00Z".into()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let original_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+
+        let data_dir = temp.path().join("data");
+        let node = NodeIdentity::generate();
+        let path = identity_binding_path(&data_dir);
+        IdentityBinding {
+            schema_version: IDENTITY_BINDING_SCHEMA_VERSION.into(),
+            owner_account: Some("oasyce1joinedowner".into()),
+            oasyce_delegate_policy: None,
+            device_identity: node.device_identity(),
+            binding_source: Some("connection_file".into()),
+            joined_from_device: Some("oasyce1primarydevice".into()),
+            updated_at: now_ms(),
+        }
+        .save(&path)
+        .unwrap();
+
+        let binding = IdentityBinding::load_or_create(&path, &node).unwrap();
+
+        match original_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert_eq!(binding.owner_account.as_deref(), Some("oasyce1joinedowner"));
+        assert_eq!(binding.binding_source.as_deref(), Some("connection_file"));
+        assert_eq!(binding.joined_from_device.as_deref(), Some("oasyce1primarydevice"));
+        assert!(binding.oasyce_delegate_policy.is_none());
     }
 
     #[test]

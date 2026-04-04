@@ -2527,31 +2527,35 @@ async fn main() {
 
     let cli = Cli::parse();
     let dir = data_dir(&cli.data_dir);
+
+    if let Commands::Version { json } = cli.command {
+        let binary_path = std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::from("thronglets"))
+            .display()
+            .to_string();
+        let data = VersionData {
+            summary: VersionSummary {
+                status: "ready",
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                bootstrap_schema_version: BOOTSTRAP_SCHEMA_VERSION,
+                identity_schema_version: IDENTITY_SCHEMA_VERSION,
+            },
+            binary_path,
+            source_hint: "If you are operating inside the Thronglets repo, prefer `cargo run --quiet -- <command>` so the binary matches the checked-out docs and source.",
+        };
+        if json {
+            print_machine_json_with_schema(VERSION_SCHEMA_VERSION, "version", &data);
+        } else {
+            render_version_report(&data);
+        }
+        return;
+    }
+
     let identity = load_identity(&dir);
     let identity_binding = load_identity_binding(&dir, &identity);
 
     match cli.command {
-        Commands::Version { json } => {
-            let binary_path = std::env::current_exe()
-                .unwrap_or_else(|_| PathBuf::from("thronglets"))
-                .display()
-                .to_string();
-            let data = VersionData {
-                summary: VersionSummary {
-                    status: "ready",
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    bootstrap_schema_version: BOOTSTRAP_SCHEMA_VERSION,
-                    identity_schema_version: IDENTITY_SCHEMA_VERSION,
-                },
-                binary_path,
-                source_hint: "If you are operating inside the Thronglets repo, prefer `cargo run --quiet -- <command>` so the binary matches the checked-out docs and source.",
-            };
-            if json {
-                print_machine_json_with_schema(VERSION_SCHEMA_VERSION, "version", &data);
-            } else {
-                render_version_report(&data);
-            }
-        }
+        Commands::Version { .. } => unreachable!("version handled before identity bootstrap"),
 
         Commands::Start { json } => {
             let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));

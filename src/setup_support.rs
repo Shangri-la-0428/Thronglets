@@ -840,7 +840,7 @@ fn managed_launcher_path(data_dir: &Path) -> PathBuf {
 
 fn ensure_managed_launcher(data_dir: &Path, bin_path: &Path) -> io::Result<PathBuf> {
     let launcher_path = managed_launcher_path(data_dir);
-    let repo_root = detect_repo_root();
+    let repo_root = detect_repo_root().or_else(|| existing_managed_repo_root(&launcher_path));
 
     if let Some(parent) = launcher_path.parent() {
         fs::create_dir_all(parent)?;
@@ -863,6 +863,12 @@ fn detect_repo_root() -> Option<PathBuf> {
     looks_like_repo_root(&cwd).then_some(cwd)
 }
 
+fn existing_managed_repo_root(launcher_path: &Path) -> Option<PathBuf> {
+    let content = fs::read_to_string(launcher_path).ok()?;
+    let repo_root = parse_managed_launcher_path_var(&content, "MANAGED_REPO")?;
+    looks_like_repo_root(&repo_root).then_some(repo_root)
+}
+
 fn looks_like_repo_root(path: &Path) -> bool {
     let cargo_toml = path.join("Cargo.toml");
     if !cargo_toml.exists() || !path.join("src").join("main.rs").exists() {
@@ -872,6 +878,23 @@ fn looks_like_repo_root(path: &Path) -> bool {
     fs::read_to_string(cargo_toml)
         .ok()
         .is_some_and(|content| content.contains("name = \"thronglets\""))
+}
+
+fn parse_managed_launcher_path_var(content: &str, key: &str) -> Option<PathBuf> {
+    let prefix = format!("{key}=");
+    let encoded = content
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))?
+        .trim();
+    parse_shell_quoted_path(encoded)
+}
+
+fn parse_shell_quoted_path(value: &str) -> Option<PathBuf> {
+    if value == "''" {
+        return None;
+    }
+    let inner = value.strip_prefix('\'')?.strip_suffix('\'')?;
+    Some(PathBuf::from(inner.replace(r#"'\''"#, "'")))
 }
 
 fn render_managed_launcher(bin_path: &Path, repo_root: Option<&Path>) -> String {
@@ -1716,5 +1739,39 @@ mod tests {
             "PreToolUse",
             launcher.to_string_lossy().as_ref()
         ));
+    }
+
+    #[test]
+    fn ensure_managed_launcher_preserves_existing_repo_root_when_called_outside_repo() {
+        let temp = TempDir::new().unwrap();
+        let data_dir = temp.path().join("data");
+        let launcher = managed_launcher_path(&data_dir);
+
+        let repo_root = temp.path().join("Thronglets");
+        fs::create_dir_all(repo_root.join("src")).unwrap();
+        fs::write(
+            repo_root.join("Cargo.toml"),
+            "[package]\nname = \"thronglets\"\nversion = \"0.0.0\"\n",
+        )
+        .unwrap();
+        fs::write(repo_root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+
+        fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        fs::write(
+            &launcher,
+            render_managed_launcher(Path::new("/tmp/thronglets"), Some(&repo_root)),
+        )
+        .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        std::env::set_current_dir(&outside).unwrap();
+        let updated = ensure_managed_launcher(&data_dir, Path::new("/tmp/thronglets")).unwrap();
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        let content = fs::read_to_string(updated).unwrap();
+        assert!(content.contains(repo_root.to_string_lossy().as_ref()));
+        assert!(content.contains(&repo_root.join("target/debug/thronglets").display().to_string()));
     }
 }
