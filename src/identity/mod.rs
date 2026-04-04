@@ -17,6 +17,7 @@ use std::path::Path;
 const IDENTITY_BINDING_SCHEMA_VERSION: &str = "thronglets.identity.v1";
 const CONNECTION_FILE_SCHEMA_VERSION: &str = "thronglets.connection.v1";
 const CONNECTION_FILE_SIGNING_DOMAIN: &[u8] = b"thronglets.connection.v1";
+const OASYCE_LOCAL_BINDING_SCHEMA_VERSION: &str = "oasyce.identity.v1";
 pub const DEFAULT_CONNECTION_FILE_TTL_HOURS: u32 = 24;
 
 /// A node's identity: ed25519 keypair + derived addresses.
@@ -59,6 +60,21 @@ pub struct ConnectionFile {
     pub exported_at: u64,
     pub expires_at: u64,
     pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct OasyceLocalBinding {
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 impl NodeIdentity {
@@ -153,16 +169,40 @@ impl NodeIdentity {
 
 impl IdentityBinding {
     pub fn load_or_create(path: &Path, node_identity: &NodeIdentity) -> std::io::Result<Self> {
-        if path.exists() {
+        let mut binding = if path.exists() {
             let bytes = fs::read(path)?;
             let binding: Self = serde_json::from_slice(&bytes).map_err(invalid_data)?;
             binding.verify_for_node(node_identity)?;
-            Ok(binding)
+            binding
         } else {
             let binding = Self::new(node_identity.device_identity());
-            binding.save(path)?;
-            Ok(binding)
+            binding
+        };
+
+        if binding.owner_account.is_none()
+            && let Some(owner_account) = load_oasyce_owner_account_hint()?
+        {
+            binding.owner_account = Some(owner_account);
+            if binding.binding_source.is_none() {
+                binding.binding_source = Some("oasyce_sdk".into());
+            }
+            binding.updated_at = now_ms();
         }
+
+        binding.save(path)?;
+        Ok(binding)
+    }
+
+    pub fn import_owner_account_hint(mut self, owner_account: String) -> std::io::Result<Self> {
+        self.ensure_owner_compatible(Some(owner_account.as_str()))?;
+        if self.owner_account.is_none() {
+            self.owner_account = Some(owner_account);
+            if self.binding_source.is_none() {
+                self.binding_source = Some("oasyce_sdk".into());
+            }
+            self.updated_at = now_ms();
+        }
+        Ok(self)
     }
 
     pub fn new(device_identity: String) -> Self {
@@ -408,6 +448,37 @@ impl ConnectionFile {
 
 pub fn identity_binding_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join("identity.v1.json")
+}
+
+fn oasyce_identity_binding_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(Path::new(&home).join(".oasyce").join("identity.v1.json"))
+}
+
+fn load_oasyce_owner_account_hint() -> std::io::Result<Option<String>> {
+    let Some(path) = oasyce_identity_binding_path() else {
+        return Ok(None);
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    let binding: OasyceLocalBinding = match serde_json::from_slice(&bytes).map_err(invalid_data) {
+        Ok(binding) => binding,
+        Err(_) => return Ok(None),
+    };
+    if binding.schema_version != OASYCE_LOCAL_BINDING_SCHEMA_VERSION {
+        return Ok(None);
+    }
+
+    match binding.account {
+        Some(account) if !account.trim().is_empty() => Ok(Some(account)),
+        _ => Ok(None),
+    }
 }
 
 fn now_ms() -> u64 {
@@ -670,6 +741,59 @@ mod tests {
             .unwrap();
         assert_eq!(binding.owner_account.as_deref(), Some("oasyce1owner"));
         assert_eq!(binding.binding_source.as_deref(), Some("connection_file"));
-        assert_eq!(binding.joined_from_device.as_deref(), Some("oasyce1primary"));
+        assert_eq!(
+            binding.joined_from_device.as_deref(),
+            Some("oasyce1primary")
+        );
+    }
+
+    #[test]
+    fn import_owner_account_hint_sets_owner_and_source() {
+        let node = NodeIdentity::generate();
+        let binding = IdentityBinding::new(node.device_identity())
+            .import_owner_account_hint("oasyce1owner".into())
+            .unwrap();
+        assert_eq!(binding.owner_account.as_deref(), Some("oasyce1owner"));
+        assert_eq!(binding.binding_source.as_deref(), Some("oasyce_sdk"));
+    }
+
+    #[test]
+    fn load_or_create_imports_oasyce_owner_hint_when_local_binding_is_unbound() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let oasyce_dir = home.join(".oasyce");
+        fs::create_dir_all(&oasyce_dir).unwrap();
+        fs::write(
+            oasyce_dir.join("identity.v1.json"),
+            serde_json::to_vec_pretty(&OasyceLocalBinding {
+                schema_version: OASYCE_LOCAL_BINDING_SCHEMA_VERSION.into(),
+                principal: None,
+                account: Some("oasyce1owner".into()),
+                delegate: Some("oasyce1sdkdelegate".into()),
+                signer_address: Some("oasyce1sdkdelegate".into()),
+                updated_at: Some("2026-04-04T00:00:00Z".into()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let original_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+
+        let data_dir = temp.path().join("data");
+        let node = NodeIdentity::generate();
+        let path = identity_binding_path(&data_dir);
+        let binding = IdentityBinding::load_or_create(&path, &node).unwrap();
+
+        match original_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert_eq!(binding.owner_account.as_deref(), Some("oasyce1owner"));
+        assert_eq!(binding.binding_source.as_deref(), Some("oasyce_sdk"));
+        assert_eq!(binding.device_identity, node.device_identity());
     }
 }

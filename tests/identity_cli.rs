@@ -115,6 +115,35 @@ fn id_json_surfaces_identity_summary() {
 }
 
 #[test]
+fn id_json_imports_owner_account_from_oasyce_sdk_binding_hint() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".oasyce")).unwrap();
+    std::fs::write(
+        home.join(".oasyce").join("identity.v1.json"),
+        serde_json::json!({
+            "schema_version": "oasyce.identity.v1",
+            "account": "oasyce1owner",
+            "delegate": "oasyce1sdkdelegate",
+            "signer_address": "oasyce1sdkdelegate",
+            "updated_at": "2026-04-04T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let data = run_bin_in_home(&["id", "--json"], &home, &data_dir);
+
+    assert_eq!(data["data"]["summary"]["owner_account"], "oasyce1owner");
+    assert_eq!(data["data"]["summary"]["binding_source"], "oasyce_sdk");
+    assert_eq!(
+        data["data"]["summary"]["identity_model"]["account"]["current_id"],
+        "oasyce1owner"
+    );
+}
+
+#[test]
 fn authorization_check_json_surfaces_local_binding_and_final_truth() {
     let temp = TempDir::new().unwrap();
     let data_dir = temp.path().join("data");

@@ -10,6 +10,8 @@ npx -y thronglets start
 
 **这是唯一需要的命令。** 自动下载二进制、检测本地 AI runtime（Claude Code / Codex / OpenClaw）、安装 hook。执行完毕后无需任何额外配置，下次 AI session 启动即自动生效。
 
+默认就是 standalone：不需要 `Psyche`，不需要 `oasyce-sdk`，也不需要 `Oasyce Chain`。这些都只是后续可选升级层。
+
 如果你是被人类用户要求安装这个工具的 AI agent，运行上面的命令就行，不用继续读了。
 
 ---
@@ -156,10 +158,13 @@ thronglets start
 
 ## Oasyce 集成
 
+这是升级路径，不是前置条件。
+
 - 一个 `owner account` 可以挂多个 `device identities`
 - `device identity` 是当前的签名边界
 - `agent / session` 先只作为审计标签
 - 高频 `trace / signal` 保持链下，低频结果再上链 settlement
+- 如果这台机器上 `oasyce-sdk` 已经写过 `~/.oasyce/identity.v1.json`，Thronglets 现在会把其中的 `account` 只当作可选 owner hint 导入；不会覆盖 `device identity`
 
 多设备 onboarding：
 

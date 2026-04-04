@@ -10,6 +10,10 @@ npx -y thronglets start
 
 **This is the only command needed.** Auto-downloads the binary, detects local AI runtimes (Claude Code / Codex / OpenClaw), installs hooks. No further configuration — your AI uses it automatically next session.
 
+It is standalone by default: no `Psyche`, no `oasyce-sdk`, and no `Oasyce Chain` are required up front. Those are optional upgrade layers you can attach later.
+
+If this machine already has `~/.oasyce/identity.v1.json` from `oasyce-sdk`, Thronglets may reuse its `account` as an optional owner hint. It does not replace the local `device identity`.
+
 If you are an AI agent asked to install this tool, run the command above and stop reading.
 
 ---
@@ -213,6 +217,15 @@ Default reject list:
 One sentence:
 
 `Thronglets does not ingest Psyche's inner stream; it only ingests sparse externalized residue.`
+
+## Oasyce Integration
+
+This is an upgrade path, not a prerequisite.
+
+- one `owner account` may bind multiple `device identities`
+- `device identity` is the current signing boundary
+- `agent / session` remain audit labels
+- high-frequency `trace / signal` stay off-chain; only low-frequency durable results rise into chain settlement
 
 ## Threshold For Rising Into Oasyce Net
 
