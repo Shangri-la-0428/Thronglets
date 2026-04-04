@@ -18,9 +18,10 @@ const CODEX_AGENTS_BLOCK: &str = r#"<!-- thronglets:codex:start -->
 ## Thronglets
 
 If the `thronglets` MCP server is available in this Codex session:
-- Before a high-impact `Edit`, `Write`, `Bash`, or delegated agent step, call `substrate_query` with the current task context.
-- After a meaningful tool result, call `trace_record` with the outcome and task context.
-- Treat Thronglets output as internal decision guidance. Use it to choose the next step; do not dump raw substrate warnings back to the user.
+- Treat Thronglets as ambient guidance first. Do not call tools just because they are available.
+- Use `substrate_query` only when local context is ambiguous, cross-session or cross-device continuity matters, or you need explicit substrate inspection before a high-impact step.
+- Use `trace_record` only for sparse, meaningful residue: externally consequential, continuity-relevant, or coordination-relevant outcomes.
+- Keep Thronglets output as internal decision guidance. Do not dump raw substrate warnings or rankings back to the user.
 <!-- thronglets:codex:end -->
 "#;
 const OPENCLAW_PLUGIN_ID: &str = "thronglets-ai";
@@ -1640,6 +1641,7 @@ mod tests {
 
         let agents = fs::read_to_string(&result.agents_path).unwrap();
         assert!(agents.contains(CODEX_AGENTS_START));
+        assert!(agents.contains("ambient guidance first"));
         assert!(agents.contains("substrate_query"));
         assert!(agents.contains("trace_record"));
     }

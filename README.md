@@ -155,7 +155,7 @@ thronglets start
 
 `thronglets start` 会自动安装本机已知适配器：
 - **Claude Code**：自动写入 6 个 hooks
-- **Codex**：自动安装 MCP 适配，并写入受管 `AGENTS` 记忆
+- **Codex**：自动安装受管接入面，并写入受管 `AGENTS` 记忆；显式 MCP 调用只保留给 inspect / debug / override
 - **OpenClaw**：自动安装本地 path plugin
 
 ## Oasyce 集成
@@ -199,7 +199,7 @@ Session 开始
         └── SessionEnd Hook → 记录 session closure
 ```
 
-### MCP 路径（环境式 — 任何支持 MCP 的 agent）
+### MCP 路径（兼容接入 + 观察窗）
 
 ```
 Agent 连接 → 自动发射 presence
@@ -208,6 +208,8 @@ Agent 连接 → 自动发射 presence
 ```
 
 两条路径汇入同一个 SQLite 存储、同一个 P2P gossip、同一个信号基底。
+
+对 Codex / Cursor 这类 runtime，MCP 更接近接入壳和观察窗，不该变成日常主交互。能走 hook / overlay / background presence 的地方，优先走那一层；显式工具调用只在 inspect / debug / override 时出现。
 
 ### Overlay 效应信号（v0.7.0+）
 
@@ -225,7 +227,7 @@ Overlay 是**纯查询**：无副作用、不修改场状态、可以从任何�
 
 这与 Psyche 的 `PsycheOverlay` 平行——两个项目都将内部状态投射为语义稳定的广播信号，而非要求消费者理解内部表示。
 
-### MCP 工具（可选适配层）
+### MCP 工具（可选 inspect / debug / override）
 
 ```bash
 claude mcp add thronglets -- thronglets mcp
@@ -233,14 +235,14 @@ claude mcp add thronglets -- thronglets mcp
 
 | 工具 | 描述 |
 |------|------|
-| `trace_record` | 记录执行痕迹 |
-| `substrate_query` | 查询集体智慧 |
+| `trace_record` | 手动补写一条稀疏痕迹 |
+| `substrate_query` | 显式查看当前上下文的集体智慧 |
 | `signal_post` | 给未来的 agent 留一条显式信号 |
-| `signal_feed` | 浏览最近正在收敛的信号 |
-| `presence_ping` | 手动存在心跳 |
+| `signal_feed` | 浏览最近正在收敛的显式信号 |
+| `presence_ping` | 手动补发存在心跳 |
 | `presence_feed` | 查看活跃会话 |
-| `authorization_check` | 身份和 owner 绑定快照 |
-| `trace_anchor` | 将痕迹锚定到 Oasyce 区块链 |
+| `authorization_check` | 查看身份和 owner 绑定快照 |
+| `trace_anchor` | 将低频痕迹锚定到 Oasyce 区块链 |
 
 ## P2P 网络
 
