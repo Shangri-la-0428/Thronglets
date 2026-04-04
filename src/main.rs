@@ -4081,6 +4081,22 @@ async fn main() {
             }
             profiler.stage_or_skip("experience", experience_checked);
 
+            // ── Success prior: convergent success leaves a reusable prior ──
+            // This is not a command and not a fact claim. It is a lightweight
+            // hint that similar contexts have already been traversed
+            // successfully across multiple sessions.
+            let success_prior_checked = explicit_signals_checked && !has_danger;
+            if success_prior_checked
+                && let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                && let Some(mut prior) =
+                    convergent_success_prior(store, &ctx_hash, current_space.as_deref())
+            {
+                prior.score += ws
+                    .recommendation_score_adjustment(SignalKind::History, current_space.as_deref());
+                signals.push(prior);
+            }
+            profiler.stage_or_skip("success_prior", success_prior_checked);
+
             if has_recent_tool_error
                 && let Some(repair_hint) = ws
                     .repair_trajectory_hint(tool_name)
@@ -5147,6 +5163,28 @@ fn explicit_signals(
     signals
 }
 
+fn convergent_success_prior(
+    store: &TraceStore,
+    context_hash: &[u8; 16],
+    space: Option<&str>,
+) -> Option<Signal> {
+    let convergent = store
+        .count_convergent_sessions(context_hash, 48, space)
+        .ok()?;
+    if convergent < 3 {
+        return None;
+    }
+
+    let scope = if convergent >= 5 { "shared prior" } else { "prior success" };
+    let score = 140 + (convergent.min(6) as i32) * 10;
+    Some(Signal {
+        kind: SignalKind::History,
+        score,
+        body: format!("  ✓ {scope}: {convergent} sessions crossed similar context"),
+        candidate: None,
+    })
+}
+
 fn presence_context_signal(
     store: &TraceStore,
     space: &str,
@@ -5872,5 +5910,63 @@ mod tests {
         );
         assert!(!right_space.is_empty());
         assert!(right_space[0].body.contains("skip the generated lockfile"));
+    }
+
+    #[test]
+    fn convergent_success_prior_surfaces_after_three_sessions() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "bash: cargo test --workspace";
+        for idx in 0..3 {
+            let trace = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("session-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&trace).unwrap();
+        }
+
+        let prior = convergent_success_prior(&store, &simhash(ctx), None).unwrap();
+        assert_eq!(prior.kind, SignalKind::History);
+        assert!(prior.body.contains("3 sessions crossed similar context"));
+    }
+
+    #[test]
+    fn convergent_success_prior_stays_quiet_below_threshold() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "bash: cargo test --workspace";
+        for idx in 0..2 {
+            let trace = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("session-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&trace).unwrap();
+        }
+
+        assert!(convergent_success_prior(&store, &simhash(ctx), None).is_none());
     }
 }
