@@ -1,11 +1,12 @@
-//! MCP (Model Context Protocol) server for AI agent integration.
+//! MCP adapter and observation surface for AI runtime integration.
 //!
-//! Exposes Thronglets capabilities as MCP tools over stdio (JSON-RPC 2.0).
-//! AI agents connect to this to read/write traces on the substrate.
+//! Exposes a small Thronglets tool surface over stdio (JSON-RPC 2.0).
+//! Ambient hooks and overlays stay primary; MCP is the explicit
+//! inspect/debug/override path when a runtime needs one.
 //!
 //! v0.2 tools:
-//! - trace_record: Record a trace on the substrate (write)
-//! - substrate_query: Query the substrate by intent (read)
+//! - trace_record: manually write sparse residue
+//! - substrate_query: explicitly inspect substrate guidance
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -91,7 +92,7 @@ fn tool_definitions() -> Value {
         "tools": [
             {
                 "name": "trace_record",
-                "description": "Record a trace on the Thronglets substrate. Logs that you used a capability and the outcome.",
+                "description": "Manually record sparse residue on the Thronglets substrate. Use for explicit inspect/debug/override paths, not as the default interaction loop.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -322,7 +323,7 @@ fn tool_definitions() -> Value {
             },
             {
                 "name": "substrate_query",
-                "description": "Query the Thronglets substrate. Use intent 'resolve' to find capabilities for a task, 'evaluate' to get stats for a specific capability, 'explore' to discover what's available, 'signals' to find explicit short messages left by other agents, or 'continuity' to query external continuity traces by taxonomy.",
+                "description": "Explicitly inspect the Thronglets substrate. Use intent 'resolve' to find capabilities for a task, 'evaluate' to get stats for a specific capability, 'explore' to discover what's available, 'signals' to find explicit short messages left by other agents, or 'continuity' to query external continuity traces by taxonomy.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

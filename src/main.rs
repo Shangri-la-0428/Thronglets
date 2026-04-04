@@ -787,8 +787,9 @@ enum Commands {
     },
 
     #[command(hide = true)]
-    /// Start MCP server for AI agent integration (JSON-RPC over stdio).
-    /// Automatically joins the P2P network so traces propagate to the collective.
+    /// Start the MCP adapter and observation surface for AI runtimes (JSON-RPC over stdio).
+    /// Ambient hooks stay primary; explicit MCP tools are for inspect / debug / override.
+    /// Automatically joins the P2P network so sparse residue can propagate to the collective.
     Mcp {
         /// P2P listen port (0 = random). Defaults to 0 (auto-join on random port).
         #[arg(long)]
@@ -938,8 +939,9 @@ enum Commands {
     },
 
     #[command(hide = true)]
-    /// Start HTTP API server for non-MCP agents (Python, LangChain, etc.).
-    /// Automatically joins the P2P network so traces propagate to the collective.
+    /// Start the HTTP adapter for non-MCP runtimes (Python, LangChain, etc.).
+    /// This is an integration surface, not the primary product mental model.
+    /// Automatically joins the P2P network so sparse residue can propagate to the collective.
     Serve {
         /// HTTP port to listen on
         #[arg(long, default_value_t = 7777)]
