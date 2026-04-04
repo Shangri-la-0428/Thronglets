@@ -22,7 +22,7 @@ use crate::continuity::{
 use crate::identity::{IdentityBinding, NodeIdentity};
 use crate::identity_surface::{authorization_check_data, identity_summary};
 use crate::posts::{
-    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind,
+    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind,
     SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
     create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
     is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
@@ -256,10 +256,10 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
     let session_id = args["session_id"].as_str().map(str::to_string);
     let agent_id = args["agent_id"].as_str().map(str::to_string);
     let sigil_id = args["sigil_id"].as_str().map(str::to_string);
-    let ttl_hours = args["ttl_hours"]
+    let explicit_ttl_hours = args["ttl_hours"]
         .as_u64()
-        .map(|value| value.min(u32::MAX as u64) as u32)
-        .unwrap_or(DEFAULT_SIGNAL_TTL_HOURS);
+        .map(|value| value.min(u32::MAX as u64) as u32);
+    let ttl_hours = explicit_ttl_hours.unwrap_or_else(|| kind.default_ttl_hours());
 
     let trace = create_signal_trace(
         kind,
@@ -287,6 +287,7 @@ fn handle_post_signal(ctx: &HttpContext, body: &str) -> String {
             "message": message,
             "space": space,
             "ttl_hours": ttl_hours,
+            "ttl_source": if explicit_ttl_hours.is_some() { "explicit" } else { "kind_default" },
             "trace_id": trace_id_hex,
         })
         .to_string(),
@@ -742,7 +743,11 @@ mod tests {
         );
         let post_response = parse_body(&handle_http_request(&ctx, post_request));
         assert_eq!(post_response["posted"], true);
-        assert_eq!(post_response["ttl_hours"], DEFAULT_SIGNAL_TTL_HOURS);
+        assert_eq!(
+            post_response["ttl_hours"],
+            SignalPostKind::Avoid.default_ttl_hours()
+        );
+        assert_eq!(post_response["ttl_source"], "kind_default");
 
         let get_response = parse_body(&handle_http_request(
             &ctx,
@@ -764,6 +769,36 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert_eq!(signals[0]["kind"], "avoid");
         assert_eq!(signals[0]["evidence_scope"], "local");
+    }
+
+    #[test]
+    fn signal_post_uses_kind_specific_default_ttl_and_explicit_override() {
+        let ctx = make_ctx();
+
+        let recommend_request = concat!(
+            "POST /v1/signals HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"kind\":\"recommend\",\"context\":\"repair release flow\",\"message\":\"run release-check before push\"}",
+        );
+        let recommend_response = parse_body(&handle_http_request(&ctx, recommend_request));
+        assert_eq!(
+            recommend_response["ttl_hours"],
+            SignalPostKind::Recommend.default_ttl_hours()
+        );
+        assert_eq!(recommend_response["ttl_source"], "kind_default");
+
+        let override_request = concat!(
+            "POST /v1/signals HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"kind\":\"watch\",\"context\":\"monitor noisy benchmark\",\"message\":\"compare against yesterday\",\"ttl_hours\":5}",
+        );
+        let override_response = parse_body(&handle_http_request(&ctx, override_request));
+        assert_eq!(override_response["ttl_hours"], 5);
+        assert_eq!(override_response["ttl_source"], "explicit");
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::identity_surface::authorization_check_data;
 use crate::network::NetworkCommand;
 use crate::pheromone::PheromoneField;
 use crate::posts::{
-    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind,
+    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind,
     SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
     create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
     is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
@@ -210,7 +210,7 @@ fn tool_definitions() -> Value {
                         },
                         "ttl_hours": {
                             "type": "integer",
-                            "description": "How long the signal should remain fresh before it decays away (default: 72)"
+                            "description": "How long the signal should remain fresh before it decays away. If omitted, Thronglets uses a kind-specific default decay window."
                         },
                         "agent_id": {
                             "type": "string",
@@ -775,11 +775,11 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
         .get("sigil_id")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    let ttl_hours = args
+    let explicit_ttl_hours = args
         .get("ttl_hours")
         .and_then(|v| v.as_u64())
-        .map(|value| value.min(u32::MAX as u64) as u32)
-        .unwrap_or(DEFAULT_SIGNAL_TTL_HOURS);
+        .map(|value| value.min(u32::MAX as u64) as u32);
+    let ttl_hours = explicit_ttl_hours.unwrap_or_else(|| kind.default_ttl_hours());
 
     let trace = create_signal_trace(
         kind,
@@ -812,6 +812,7 @@ async fn handle_signal_post(ctx: &McpContext, id: Value, args: Value) -> JsonRpc
                         "message": message,
                         "space": space,
                         "ttl_hours": ttl_hours,
+                        "ttl_source": if explicit_ttl_hours.is_some() { "explicit" } else { "kind_default" },
                         "trace_id": trace_id_hex,
                     })).unwrap()
                 }]
@@ -1947,7 +1948,8 @@ mod tests {
             .to_string();
         let post_json: Value =
             serde_json::from_str(&post_text).expect("signal post response should be valid JSON");
-        assert_eq!(post_json["ttl_hours"], DEFAULT_SIGNAL_TTL_HOURS);
+        assert_eq!(post_json["ttl_hours"], SignalPostKind::Avoid.default_ttl_hours());
+        assert_eq!(post_json["ttl_source"], "kind_default");
 
         let query_req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -2002,6 +2004,17 @@ mod tests {
         };
         let resp = handle_request(&ctx, &session, post_req).await.unwrap();
         assert!(resp.error.is_none(), "signal_post should succeed");
+        let post_text = resp.result.as_ref().unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let post_json: Value =
+            serde_json::from_str(&post_text).expect("signal post response should be valid JSON");
+        assert_eq!(
+            post_json["ttl_hours"],
+            SignalPostKind::Recommend.default_ttl_hours()
+        );
+        assert_eq!(post_json["ttl_source"], "kind_default");
 
         let feed_req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -2091,6 +2104,37 @@ mod tests {
         assert_eq!(signals[0]["corroboration_tier"], "single_source");
         assert_eq!(signals[0]["focus_tier"], "background");
         assert_eq!(signals[0]["evidence_scope"], "local");
+    }
+
+    #[tokio::test]
+    async fn signal_post_respects_explicit_ttl_override() {
+        let ctx = make_ctx();
+        let session = McpSession::new();
+
+        let post_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(12)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "signal_post",
+                "arguments": {
+                    "kind": "watch",
+                    "context": "monitor noisy benchmark",
+                    "message": "compare against yesterday before acting",
+                    "ttl_hours": 5
+                }
+            }),
+        };
+        let resp = handle_request(&ctx, &session, post_req).await.unwrap();
+        assert!(resp.error.is_none(), "signal_post should succeed");
+        let post_text = resp.result.as_ref().unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let post_json: Value =
+            serde_json::from_str(&post_text).expect("signal post response should be valid JSON");
+        assert_eq!(post_json["ttl_hours"], 5);
+        assert_eq!(post_json["ttl_source"], "explicit");
     }
 
     #[tokio::test]

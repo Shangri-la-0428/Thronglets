@@ -9,6 +9,11 @@ pub const SIGNAL_CAPABILITY_PREFIX: &str = "urn:thronglets:signal:";
 pub const SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX: &str = "urn:thronglets:signal-read:";
 pub const DEFAULT_SIGNAL_TTL_HOURS: u32 = 72;
 pub const DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS: u32 = 24;
+pub const DEFAULT_RECOMMEND_SIGNAL_TTL_HOURS: u32 = 12;
+pub const DEFAULT_AVOID_SIGNAL_TTL_HOURS: u32 = 72;
+pub const DEFAULT_WATCH_SIGNAL_TTL_HOURS: u32 = 48;
+pub const DEFAULT_INFO_SIGNAL_TTL_HOURS: u32 = 24;
+pub const DEFAULT_PSYCHE_STATE_SIGNAL_TTL_HOURS: u32 = 6;
 
 #[derive(Debug, Clone)]
 pub struct SignalTraceConfig {
@@ -100,6 +105,16 @@ impl SignalPostKind {
             .strip_prefix(SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX)
             .and_then(Self::parse)
             .map(|kind| (kind, true))
+    }
+
+    pub fn default_ttl_hours(self) -> u32 {
+        match self {
+            Self::Recommend => DEFAULT_RECOMMEND_SIGNAL_TTL_HOURS,
+            Self::Avoid => DEFAULT_AVOID_SIGNAL_TTL_HOURS,
+            Self::Watch => DEFAULT_WATCH_SIGNAL_TTL_HOURS,
+            Self::Info => DEFAULT_INFO_SIGNAL_TTL_HOURS,
+            Self::PsycheState => DEFAULT_PSYCHE_STATE_SIGNAL_TTL_HOURS,
+        }
     }
 }
 
