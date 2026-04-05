@@ -3,3 +3,4 @@ python/dist/
 dist/
 .mcpregistry_*
 baseline-*.json
+.DS_Store

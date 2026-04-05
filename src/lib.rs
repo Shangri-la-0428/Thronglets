@@ -1,4 +1,5 @@
 pub mod anchor;
+pub mod ambient;
 pub mod context;
 pub mod continuity;
 pub mod contracts;
@@ -8,9 +9,9 @@ pub mod identity;
 pub mod identity_surface;
 pub mod mcp;
 pub mod network;
-pub mod pheromone;
 pub mod network_runtime;
 pub mod network_state;
+pub mod pheromone;
 pub mod posts;
 pub mod presence;
 pub mod profile;

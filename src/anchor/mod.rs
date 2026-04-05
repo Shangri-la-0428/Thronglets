@@ -201,9 +201,7 @@ impl AnchorClient {
                 .pointer("/tx_response/raw_log")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(AnchorError::Chain(format!(
-                "code={code}, log={raw_log}"
-            )));
+            return Err(AnchorError::Chain(format!("code={code}, log={raw_log}")));
         }
 
         let final_hash = if chain_tx_hash.is_empty() {

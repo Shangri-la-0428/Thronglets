@@ -92,12 +92,16 @@ pub fn create_presence_trace(
     );
     let payload_json = serde_json::to_string(&payload).expect("presence payload should serialize");
 
-    let mut trace = TraceConfig::new(PRESENCE_HEARTBEAT_CAPABILITY, Outcome::Succeeded, config.model_id)
-        .context_raw(simhash(&context_key), Some(payload_json))
-        .session_id(config.session_id)
-        .identity(config.owner_account, config.device_identity)
-        .sigil_id(config.sigil_id)
-        .sign(node_pubkey, sign_fn);
+    let mut trace = TraceConfig::new(
+        PRESENCE_HEARTBEAT_CAPABILITY,
+        Outcome::Succeeded,
+        config.model_id,
+    )
+    .context_raw(simhash(&context_key), Some(payload_json))
+    .session_id(config.session_id)
+    .identity(config.owner_account, config.device_identity)
+    .sigil_id(config.sigil_id)
+    .sign(node_pubkey, sign_fn);
     trace.timestamp = now_ms;
     trace
 }
@@ -271,10 +275,10 @@ mod tests {
     #[test]
     fn summarize_recent_presence_keeps_latest_mode_per_session() {
         let first = local_trace(Some("psyche"), Some("focus"), "codex", Some("s1"), "dev1");
-        let mut second =
-            local_trace(Some("psyche"), Some("review"), "codex", Some("s1"), "dev1");
+        let mut second = local_trace(Some("psyche"), Some("review"), "codex", Some("s1"), "dev1");
         second.timestamp = first.timestamp + 10;
-        let results = summarize_recent_presence(&[first, second], Some("psyche"), "dev1", [7u8; 32], 10);
+        let results =
+            summarize_recent_presence(&[first, second], Some("psyche"), "dev1", [7u8; 32], 10);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].mode.as_deref(), Some("review"));
         assert_eq!(results[0].evidence_scope, "local");

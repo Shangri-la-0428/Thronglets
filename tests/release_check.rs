@@ -363,7 +363,11 @@ fn release_check_can_fail_on_baseline_outcome_regression() {
     let mut timestamp = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
     for session in ["s1", "s2", "s3", "s4", "s5", "s6"] {
         for (capability, outcome, context) in [
-            ("claude-code/Bash", Outcome::Failed, "bash: cargo test".to_string()),
+            (
+                "claude-code/Bash",
+                Outcome::Failed,
+                "bash: cargo test".to_string(),
+            ),
             (
                 "claude-code/Edit",
                 Outcome::Succeeded,

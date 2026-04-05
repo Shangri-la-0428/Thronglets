@@ -85,8 +85,8 @@ pub struct RecentAction {
 /// An auto-emitted signal record for rate limiting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoSignalEmission {
-    pub kind: String,  // "watch" or "recommend"
-    pub key: String,   // unique identifier for dedup
+    pub kind: String, // "watch" or "recommend"
+    pub key: String,  // unique identifier for dedup
     pub timestamp_ms: i64,
 }
 
@@ -690,12 +690,20 @@ impl WorkspaceState {
             .iter()
             .filter(|p| p.source_ids.len() >= 2 && (now - p.last_seen_ms) < 86_400_000)
             .filter_map(|p| {
-                let key = format!("{}:{}:{}", p.error_tool, p.repair_tool,
-                    p.repair_target.as_deref().unwrap_or(""));
+                let key = format!(
+                    "{}:{}:{}",
+                    p.error_tool,
+                    p.repair_tool,
+                    p.repair_target.as_deref().unwrap_or("")
+                );
                 let recently_emitted = self.auto_signal_emissions.iter().any(|e| {
                     e.kind == "watch" && e.key == key && (now - e.timestamp_ms) < 86_400_000
                 });
-                if recently_emitted { None } else { Some((p, key)) }
+                if recently_emitted {
+                    None
+                } else {
+                    Some((p, key))
+                }
             })
             .collect()
     }
@@ -703,22 +711,24 @@ impl WorkspaceState {
     /// Check whether an auto-signal of given kind+key was emitted within the window.
     pub fn has_recent_auto_signal(&self, kind: &str, key: &str, window_ms: i64) -> bool {
         let now = chrono::Utc::now().timestamp_millis();
-        self.auto_signal_emissions.iter().any(|e| {
-            e.kind == kind && e.key == key && (now - e.timestamp_ms) < window_ms
-        })
+        self.auto_signal_emissions
+            .iter()
+            .any(|e| e.kind == kind && e.key == key && (now - e.timestamp_ms) < window_ms)
     }
 
     /// Record that an auto-signal was emitted.
     pub fn record_auto_signal(&mut self, kind: &str, key: &str) {
         let now = chrono::Utc::now().timestamp_millis();
-        self.auto_signal_emissions.retain(|e| (now - e.timestamp_ms) < 86_400_000);
+        self.auto_signal_emissions
+            .retain(|e| (now - e.timestamp_ms) < 86_400_000);
         self.auto_signal_emissions.push(AutoSignalEmission {
             kind: kind.to_string(),
             key: key.to_string(),
             timestamp_ms: now,
         });
         if self.auto_signal_emissions.len() > 50 {
-            self.auto_signal_emissions.drain(..self.auto_signal_emissions.len() - 50);
+            self.auto_signal_emissions
+                .drain(..self.auto_signal_emissions.len() - 50);
         }
     }
 

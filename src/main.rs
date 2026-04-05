@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use thronglets::anchor::AnchorClient;
+use thronglets::ambient::{
+    AMBIENT_PRIOR_SCHEMA_VERSION, AmbientPriorRequest, ambient_prior_data,
+};
 use thronglets::context::{simhash, similarity as context_similarity};
 use thronglets::continuity::{
     ContinuitySnapshotSummary, ContinuitySpaceData, summarize_recent_continuity,
@@ -835,6 +838,16 @@ enum Commands {
     /// Reads a Claude-compatible hook JSON contract from stdin.
     /// Silent when no relevant data. Designed to be fast (<50ms).
     Prehook,
+
+    #[command(hide = true)]
+    /// Project lightweight ambient priors for a runtime turn.
+    /// Reads JSON from stdin: { "text": "...", "space"?: "...", "limit"?: N }.
+    /// Emits machine-readable JSON only; does not bootstrap identity.
+    AmbientPriors {
+        /// Emit machine-readable JSON instead of text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 
     #[command(hide = true)]
     /// Handle agent lifecycle events (SessionStart, SessionEnd, SubagentStart, SubagentStop).
@@ -2852,6 +2865,143 @@ async fn main() {
             }
             return;
         }
+        Commands::AmbientPriors { json } => {
+            let mut input = String::new();
+            if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
+                std::process::exit(0);
+            }
+
+            let request: AmbientPriorRequest = match serde_json::from_str(&input) {
+                Ok(request) => request,
+                Err(error) => {
+                    eprintln!("ambient-priors JSON parse error: {error}");
+                    std::process::exit(1);
+                }
+            };
+
+            let data = ambient_prior_data(&open_store(&dir), &request);
+            if *json {
+                print_machine_json_with_schema(
+                    AMBIENT_PRIOR_SCHEMA_VERSION,
+                    "ambient-priors",
+                    &data,
+                );
+            } else {
+                for prior in &data.priors {
+                    println!("{} ({:.2})", prior.summary, prior.confidence);
+                }
+            }
+            return;
+        }
+        Commands::Setup => {
+            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
+            let home_dir = home_dir();
+            let report = bootstrap_selected_adapters(AdapterArg::All, &home_dir, &dir, &bin)
+                .expect("failed to bootstrap adapter plan");
+            render_setup_report(&report);
+            if !report.summary.healthy {
+                std::process::exit(1);
+            }
+            return;
+        }
+        Commands::Detect { agent, json } => {
+            let home_dir = home_dir();
+            let detections: Vec<_> = selected_adapters(*agent)
+                .into_iter()
+                .map(|adapter| detect_adapter(&home_dir, &dir, adapter))
+                .collect();
+            let summary = summarize_detections(detections);
+            if *json {
+                print_machine_json("detect", &summary);
+            } else {
+                render_detect_report(&summary);
+            }
+            return;
+        }
+        Commands::InstallPlan {
+            agent,
+            runtime,
+            json,
+        } => {
+            let home_dir = home_dir();
+            let mut plans: Vec<_> = selected_adapters(*agent)
+                .into_iter()
+                .map(|adapter| install_plan(&home_dir, &dir, adapter))
+                .collect();
+            filter_generic_runtime_snippets(&mut plans, *runtime);
+            let summary = summarize_install_plans(plans);
+            if *json {
+                print_machine_json("install-plan", &summary);
+            } else {
+                render_install_plan_report(&summary);
+            }
+            return;
+        }
+        Commands::ApplyPlan { agent, json } => {
+            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
+            let home_dir = home_dir();
+            let results = apply_selected_adapters(*agent, &home_dir, &dir, &bin)
+                .expect("failed to apply adapter plan");
+            let summary = summarize_apply_results(results);
+            if *json {
+                print_machine_json("apply-plan", &summary);
+            } else {
+                render_apply_plan_report(&summary);
+            }
+            return;
+        }
+        Commands::Doctor { agent, json } => {
+            let home_dir = home_dir();
+            let reports: Vec<_> = selected_adapters(*agent)
+                .into_iter()
+                .map(|adapter| doctor_adapter(&home_dir, &dir, adapter))
+                .collect();
+            let summary = summarize_doctor_reports(*agent, reports);
+            if *json {
+                print_machine_json("doctor", &summary);
+            } else {
+                render_doctor_report(&summary);
+            }
+            if !summary.summary.healthy {
+                std::process::exit(1);
+            }
+            return;
+        }
+        Commands::Bootstrap { agent, json } => {
+            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
+            let home_dir = home_dir();
+            let report = bootstrap_selected_adapters(*agent, &home_dir, &dir, &bin)
+                .expect("failed to bootstrap adapter plan");
+            if *json {
+                print_machine_json("bootstrap", &report);
+            } else {
+                render_bootstrap_report(&report);
+            }
+            if !report.summary.healthy {
+                std::process::exit(1);
+            }
+            return;
+        }
+        Commands::ClearRestart { agent, json } => {
+            let report =
+                clear_selected_restart_state(*agent, &dir).expect("failed to clear restart state");
+            if *json {
+                print_machine_json("clear-restart", &report);
+            } else {
+                render_clear_restart_report(&report);
+            }
+            return;
+        }
+        Commands::RuntimeReady { agent, json } => {
+            let report =
+                mark_selected_runtime_ready(*agent, &dir).expect("failed to mark runtime ready");
+            if *json {
+                print_machine_json("runtime-ready", &report);
+            } else {
+                render_runtime_ready_report(&report);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -2860,6 +3010,9 @@ async fn main() {
 
     match cli.command {
         Commands::Version { .. } => unreachable!("version handled before identity bootstrap"),
+        Commands::AmbientPriors { .. } => {
+            unreachable!("ambient-priors handled before identity bootstrap")
+        }
 
         Commands::Start { json } => {
             let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
@@ -4396,7 +4549,7 @@ async fn main() {
                 signals.push(Signal {
                     kind: SignalKind::History,
                     score,
-                    body: format!("  ⚠ {count} past failure(s): {snippet}"),
+                    body: format!("  ⚠ risk residue: {count} similar failure session(s) ({snippet})"),
                     candidate: None,
                 });
             }
@@ -4753,114 +4906,14 @@ async fn main() {
             }
         }
 
-        Commands::Setup => {
-            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
-            let home_dir = home_dir();
-            let report = bootstrap_selected_adapters(AdapterArg::All, &home_dir, &dir, &bin)
-                .expect("failed to bootstrap adapter plan");
-            render_setup_report(&report);
-            if !report.summary.healthy {
-                std::process::exit(1);
-            }
-        }
-
-        Commands::Detect { agent, json } => {
-            let home_dir = home_dir();
-            let detections: Vec<_> = selected_adapters(agent)
-                .into_iter()
-                .map(|adapter| detect_adapter(&home_dir, &dir, adapter))
-                .collect();
-            let summary = summarize_detections(detections);
-            if json {
-                print_machine_json("detect", &summary);
-            } else {
-                render_detect_report(&summary);
-            }
-        }
-
-        Commands::InstallPlan {
-            agent,
-            runtime,
-            json,
-        } => {
-            let home_dir = home_dir();
-            let mut plans: Vec<_> = selected_adapters(agent)
-                .into_iter()
-                .map(|adapter| install_plan(&home_dir, &dir, adapter))
-                .collect();
-            filter_generic_runtime_snippets(&mut plans, runtime);
-            let summary = summarize_install_plans(plans);
-            if json {
-                print_machine_json("install-plan", &summary);
-            } else {
-                render_install_plan_report(&summary);
-            }
-        }
-
-        Commands::ApplyPlan { agent, json } => {
-            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
-            let home_dir = home_dir();
-            let results = apply_selected_adapters(agent, &home_dir, &dir, &bin)
-                .expect("failed to apply adapter plan");
-            let summary = summarize_apply_results(results);
-            if json {
-                print_machine_json("apply-plan", &summary);
-            } else {
-                render_apply_plan_report(&summary);
-            }
-        }
-
-        Commands::Doctor { agent, json } => {
-            let home_dir = home_dir();
-            let reports: Vec<_> = selected_adapters(agent)
-                .into_iter()
-                .map(|adapter| doctor_adapter(&home_dir, &dir, adapter))
-                .collect();
-            let summary = summarize_doctor_reports(agent, reports);
-            if json {
-                print_machine_json("doctor", &summary);
-            } else {
-                render_doctor_report(&summary);
-            }
-            if !summary.summary.healthy {
-                std::process::exit(1);
-            }
-        }
-
-        Commands::Bootstrap { agent, json } => {
-            let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thronglets"));
-            let home_dir = home_dir();
-            let report = bootstrap_selected_adapters(agent, &home_dir, &dir, &bin)
-                .expect("failed to bootstrap adapter plan");
-            if json {
-                print_machine_json("bootstrap", &report);
-            } else {
-                render_bootstrap_report(&report);
-            }
-            if !report.summary.healthy {
-                std::process::exit(1);
-            }
-        }
-
-        Commands::ClearRestart { agent, json } => {
-            let report =
-                clear_selected_restart_state(agent, &dir).expect("failed to clear restart state");
-            if json {
-                print_machine_json("clear-restart", &report);
-            } else {
-                render_clear_restart_report(&report);
-            }
-        }
-
-        Commands::RuntimeReady { agent, json } => {
-            let report =
-                mark_selected_runtime_ready(agent, &dir).expect("failed to mark runtime ready");
-            if json {
-                print_machine_json("runtime-ready", &report);
-            } else {
-                render_runtime_ready_report(&report);
-            }
-        }
+        Commands::Setup
+        | Commands::Detect { .. }
+        | Commands::InstallPlan { .. }
+        | Commands::ApplyPlan { .. }
+        | Commands::Doctor { .. }
+        | Commands::Bootstrap { .. }
+        | Commands::ClearRestart { .. }
+        | Commands::RuntimeReady { .. } => unreachable!("adapter surfaces handled before identity bootstrap"),
 
         Commands::Serve {
             port,
@@ -5515,12 +5568,16 @@ fn convergent_success_prior(
         return None;
     }
 
-    let scope = if convergent >= 5 { "shared prior" } else { "prior success" };
+    let scope = if convergent >= 5 {
+        "shared prior"
+    } else {
+        "prior success"
+    };
     let score = 140 + (convergent.min(6) as i32) * 10;
     Some(Signal {
         kind: SignalKind::History,
         score,
-        body: format!("  ✓ {scope}: {convergent} sessions crossed similar context"),
+        body: format!("  ✓ stable path: {convergent} session(s) crossed similar context ({scope})"),
         candidate: None,
     })
 }
@@ -5548,7 +5605,7 @@ fn unresolved_conflict_prior(
         kind: SignalKind::History,
         score,
         body: format!(
-            "  ~ mixed residue: {convergent} success / {contradictory_failures} failure sessions in similar context"
+            "  ~ unsettled path: {convergent} success / {contradictory_failures} failure sessions in similar context"
         ),
         candidate: None,
     })
@@ -5561,10 +5618,8 @@ fn reinforced_success_threshold(
     let mut reinforced = false;
     let mut contradicted = false;
     for event in feedback_events {
-        let relevant_recommendation = matches!(
-            event.recommendation_kind.as_str(),
-            "do_next" | "maybe_also"
-        );
+        let relevant_recommendation =
+            matches!(event.recommendation_kind.as_str(), "do_next" | "maybe_also");
         let relevant_source = matches!(
             event.source_kind.as_str(),
             "repair" | "preparation" | "adjacency"
@@ -6059,6 +6114,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use thronglets::ambient::ambient_priors_for_context;
     use thronglets::identity::NodeIdentity;
     use thronglets::posts::{DEFAULT_SIGNAL_TTL_HOURS, SignalTraceConfig, create_signal_trace};
     use thronglets::storage::TraceStore;
@@ -6343,7 +6399,8 @@ mod tests {
 
         let prior = convergent_success_prior(&store, &simhash(ctx), None).unwrap();
         assert_eq!(prior.kind, SignalKind::History);
-        assert!(prior.body.contains("3 sessions crossed similar context"));
+        assert!(prior.body.contains("stable path"));
+        assert!(prior.body.contains("3 session(s) crossed similar context"));
     }
 
     #[test]
@@ -6466,7 +6523,7 @@ mod tests {
 
         let prior = unresolved_conflict_prior(&store, &simhash(ctx), None).unwrap();
         assert_eq!(prior.kind, SignalKind::History);
-        assert!(prior.body.contains("mixed residue"));
+        assert!(prior.body.contains("unsettled path"));
     }
 
     #[test]
@@ -6512,6 +6569,148 @@ mod tests {
         store.insert(&failed).unwrap();
 
         assert!(unresolved_conflict_prior(&store, &simhash(ctx), None).is_none());
+    }
+
+    #[test]
+    fn ambient_priors_surface_conflict_and_success_without_new_ontology() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let mixed_ctx = "deploy thronglets service after reviewing recent failures";
+        let stable_ctx = "rotate provider endpoint after stable repair path";
+        for idx in 0..3 {
+            let success = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(mixed_ctx),
+                Some(mixed_ctx.into()),
+                Some(format!("success-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&success).unwrap();
+        }
+        for idx in 0..2 {
+            let failed = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Failed,
+                0,
+                1,
+                simhash(mixed_ctx),
+                Some(mixed_ctx.into()),
+                Some(format!("failed-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&failed).unwrap();
+        }
+        for idx in 0..4 {
+            let success = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(stable_ctx),
+                Some(stable_ctx.into()),
+                Some(format!("stable-success-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&success).unwrap();
+        }
+
+        let mixed_priors = ambient_priors_for_context(&store, &simhash(mixed_ctx), None, 3);
+        assert!(!mixed_priors.is_empty());
+        assert!(
+            mixed_priors
+                .iter()
+                .any(|prior| prior.summary.contains("mixed residue"))
+        );
+        assert!(
+            mixed_priors
+                .iter()
+                .any(|prior| prior.kind == "mixed-residue")
+        );
+
+        let stable_priors = ambient_priors_for_context(&store, &simhash(stable_ctx), None, 3);
+        assert!(!stable_priors.is_empty());
+        assert!(
+            stable_priors
+                .iter()
+                .any(|prior| prior.summary.contains("prior success"))
+        );
+        assert!(
+            stable_priors
+                .iter()
+                .any(|prior| prior.kind == "success-prior")
+        );
+        assert!(mixed_priors.iter().all(|prior| prior.provider == "thronglets"));
+        assert!(stable_priors.iter().all(|prior| prior.provider == "thronglets"));
+    }
+
+    #[test]
+    fn ambient_priors_limit_results_and_sort_by_confidence() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "investigate repeated frontend regression path";
+        for idx in 0..4 {
+            let success = Trace::new_with_agent(
+                "tool:Edit".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("success-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&success).unwrap();
+        }
+        for idx in 0..3 {
+            let failed = Trace::new_with_agent(
+                "tool:Edit".into(),
+                Outcome::Failed,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("failed-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&failed).unwrap();
+        }
+
+        let priors = ambient_priors_for_context(&store, &simhash(ctx), None, 2);
+        assert_eq!(priors.len(), 2);
+        assert!(priors[0].confidence >= priors[1].confidence);
     }
 
     #[test]

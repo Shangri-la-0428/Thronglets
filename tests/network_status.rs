@@ -74,7 +74,10 @@ fn status_json_requires_actual_bootstrap_contact_for_bootstrapping() {
     assert_eq!(status["data"]["summary"]["status"], "local-only");
     assert_eq!(status["data"]["network"]["activity"], "offline");
     assert_eq!(status["data"]["network"]["bootstrap_targets"], 1);
-    assert_eq!(status["data"]["network"]["bootstrap_contacted_recently"], false);
+    assert_eq!(
+        status["data"]["network"]["bootstrap_contacted_recently"],
+        false
+    );
 }
 
 #[test]

@@ -43,7 +43,11 @@ fn profile_summary_aggregates_profile_lines() {
          [thronglets:prehook] tool=Edit emitted=1 stdout_bytes=42 output_mode=context-only decision_path=history evidence_scope=none file_guidance_gate=closed collective_queries_used=0 total_us=200\n",
     );
 
-    assert!(output.status.success(), "profile-summary failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "profile-summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("samples: 3"));
     assert!(stdout.contains("avg total_us: 200.0"));
@@ -65,8 +69,15 @@ fn profile_summary_aggregates_profile_lines() {
 fn profile_summary_reports_when_no_samples_exist() {
     let output = run_profile_summary("noise only\nstill noise\n");
 
-    assert!(output.status.success(), "profile-summary failed: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no prehook profile samples found");
+    assert!(
+        output.status.success(),
+        "profile-summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "no prehook profile samples found"
+    );
 }
 
 #[test]
@@ -84,7 +95,11 @@ fn profile_check_passes_for_sparse_logs() {
          [thronglets:prehook] tool=Bash emitted=0 stdout_bytes=0 output_mode=silent decision_path=none evidence_scope=none file_guidance_gate=na collective_queries_used=0 total_us=100\n",
     );
 
-    assert!(output.status.success(), "profile-check failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "profile-check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("PASS"));
 }
 
@@ -103,9 +118,14 @@ fn profile_check_fails_for_regression_logs() {
          [thronglets:prehook] tool=Edit emitted=3 stdout_bytes=160 output_mode=next-step decision_path=adjacency evidence_scope=collective file_guidance_gate=open collective_queries_used=1 total_us=300\n",
     );
 
-    assert!(!output.status.success(), "profile-check unexpectedly passed");
+    assert!(
+        !output.status.success(),
+        "profile-check unexpectedly passed"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.starts_with("FAIL"));
     assert!(stdout.contains("violations:"));
-    assert!(stdout.contains("top optimization candidate: reduce collective queries in adjacency path"));
+    assert!(
+        stdout.contains("top optimization candidate: reduce collective queries in adjacency path")
+    );
 }

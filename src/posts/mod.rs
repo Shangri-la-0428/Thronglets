@@ -674,7 +674,6 @@ fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
     })
 }
 
-
 pub fn expires_at_ms(now_ms: u64, ttl_hours: u32) -> u64 {
     now_ms.saturating_add((ttl_hours as u64).saturating_mul(60 * 60 * 1000))
 }
@@ -751,7 +750,10 @@ fn signal_freshness_rank(now_ms: u64, latest_timestamp: u64, expires_at: u64) ->
 }
 
 fn signal_decay_penalty(source_count: u32, model_count: u32, freshness_rank: u8) -> u8 {
-    match (signal_corroboration_rank(source_count, model_count), freshness_rank) {
+    match (
+        signal_corroboration_rank(source_count, model_count),
+        freshness_rank,
+    ) {
         (0, 0) => 2,
         (0, 1) | (1, 0) => 1,
         _ => 0,

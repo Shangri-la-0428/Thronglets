@@ -101,6 +101,43 @@ fn detect_json_reports_present_adapters_and_generic_contract() {
 }
 
 #[test]
+fn adapter_management_commands_do_not_generate_identity_artifacts() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let data_dir = temp.path().join("data");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let commands: &[&[&str]] = &[
+        &["detect", "--json"],
+        &["install-plan", "--agent", "generic", "--json"],
+        &["apply-plan", "--agent", "generic", "--json"],
+        &["doctor", "--agent", "generic", "--json"],
+        &["bootstrap", "--agent", "generic", "--json"],
+        &["clear-restart", "--agent", "generic", "--json"],
+        &["runtime-ready", "--agent", "generic", "--json"],
+    ];
+
+    for args in commands {
+        let output = run_bin(args, &home, &data_dir);
+        assert!(
+            output.status.success(),
+            "command {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert!(
+        !data_dir.join("node.key").exists(),
+        "adapter management commands should not generate node.key",
+    );
+    assert!(
+        !data_dir.join("identity.v1.json").exists(),
+        "adapter management commands should not generate identity binding",
+    );
+}
+
+#[test]
 fn install_plan_generic_json_includes_contract_examples() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
@@ -497,7 +534,13 @@ fn codex_mcp_contact_auto_clears_restart_pending() {
     );
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_thronglets"))
-        .args(["--data-dir", data_dir.to_str().unwrap(), "mcp", "--agent", "codex"])
+        .args([
+            "--data-dir",
+            data_dir.to_str().unwrap(),
+            "mcp",
+            "--agent",
+            "codex",
+        ])
         .env("HOME", &home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -554,7 +597,11 @@ fn openclaw_prehook_contact_auto_clears_restart_pending() {
         String::from_utf8_lossy(&prehook_output.stderr)
     );
 
-    let doctor_output = run_bin(&["doctor", "--agent", "openclaw", "--json"], &home, &data_dir);
+    let doctor_output = run_bin(
+        &["doctor", "--agent", "openclaw", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         doctor_output.status.success(),
         "doctor failed: {}",
@@ -591,7 +638,10 @@ fn detect_text_stays_summary_first_when_adapters_are_present() {
     // Summary always comes first — verbose details (if any) appear after
     let summary_pos = stdout.find("Detect status:").unwrap();
     if let Some(detail_pos) = stdout.find("Detected adapters:") {
-        assert!(summary_pos < detail_pos, "summary must precede adapter details");
+        assert!(
+            summary_pos < detail_pos,
+            "summary must precede adapter details"
+        );
     }
 }
 

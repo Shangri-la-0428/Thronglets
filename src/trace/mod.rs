@@ -190,9 +190,18 @@ impl TraceConfig {
         self
     }
 
-    pub fn latency_ms(mut self, ms: u32) -> Self { self.latency_ms = ms; self }
-    pub fn input_size(mut self, size: u32) -> Self { self.input_size = size; self }
-    pub fn session_id(mut self, id: Option<String>) -> Self { self.session_id = id; self }
+    pub fn latency_ms(mut self, ms: u32) -> Self {
+        self.latency_ms = ms;
+        self
+    }
+    pub fn input_size(mut self, size: u32) -> Self {
+        self.input_size = size;
+        self
+    }
+    pub fn session_id(mut self, id: Option<String>) -> Self {
+        self.session_id = id;
+        self
+    }
 
     /// Set owner_account + device_identity together (they always travel as a pair).
     pub fn identity(mut self, owner: Option<String>, device: Option<String>) -> Self {
@@ -201,15 +210,17 @@ impl TraceConfig {
         self
     }
 
-    pub fn agent_id(mut self, id: Option<String>) -> Self { self.agent_id = id; self }
-    pub fn sigil_id(mut self, id: Option<String>) -> Self { self.sigil_id = id; self }
+    pub fn agent_id(mut self, id: Option<String>) -> Self {
+        self.agent_id = id;
+        self
+    }
+    pub fn sigil_id(mut self, id: Option<String>) -> Self {
+        self.sigil_id = id;
+        self
+    }
 
     /// Terminal: sign and produce a Trace.
-    pub fn sign(
-        self,
-        node_pubkey: [u8; 32],
-        sign_fn: impl FnOnce(&[u8]) -> Signature,
-    ) -> Trace {
+    pub fn sign(self, node_pubkey: [u8; 32], sign_fn: impl FnOnce(&[u8]) -> Signature) -> Trace {
         Trace::new_with_agent(
             self.capability,
             self.outcome,
@@ -276,9 +287,20 @@ impl Trace {
         sign_fn: impl FnOnce(&[u8]) -> Signature,
     ) -> Self {
         Self::new_with_agent(
-            capability, outcome, latency_ms, input_size, context_hash,
-            context_text, session_id, owner_account, device_identity,
-            None, None, model_id, node_pubkey, sign_fn,
+            capability,
+            outcome,
+            latency_ms,
+            input_size,
+            context_hash,
+            context_text,
+            session_id,
+            owner_account,
+            device_identity,
+            None,
+            None,
+            model_id,
+            node_pubkey,
+            sign_fn,
         )
     }
 
@@ -305,11 +327,20 @@ impl Trace {
             .as_millis() as u64;
 
         let signable = Self::signable_bytes(
-            &capability, outcome, latency_ms, input_size,
-            &context_hash, context_text.as_deref(), session_id.as_deref(),
-            owner_account.as_deref(), device_identity.as_deref(),
-            agent_id.as_deref(), sigil_id.as_deref(),
-            &model_id, timestamp, &node_pubkey,
+            &capability,
+            outcome,
+            latency_ms,
+            input_size,
+            &context_hash,
+            context_text.as_deref(),
+            session_id.as_deref(),
+            owner_account.as_deref(),
+            device_identity.as_deref(),
+            agent_id.as_deref(),
+            sigil_id.as_deref(),
+            &model_id,
+            timestamp,
+            &node_pubkey,
         );
 
         let signature = sign_fn(&signable);
@@ -349,13 +380,20 @@ impl Trace {
     /// Verify this trace's signature is valid.
     pub fn verify(&self) -> bool {
         let signable = Self::signable_bytes(
-            &self.capability, self.outcome, self.latency_ms, self.input_size,
-            &self.context_hash, self.context_text.as_deref(), self.session_id.as_deref(),
+            &self.capability,
+            self.outcome,
+            self.latency_ms,
+            self.input_size,
+            &self.context_hash,
+            self.context_text.as_deref(),
+            self.session_id.as_deref(),
             self.owner_account.as_deref(),
             self.device_identity.as_deref(),
             self.agent_id.as_deref(),
             self.sigil_id.as_deref(),
-            &self.model_id, self.timestamp, &self.node_pubkey,
+            &self.model_id,
+            self.timestamp,
+            &self.node_pubkey,
         );
         crate::identity::NodeIdentity::verify(&self.node_pubkey, &signable, &self.signature)
     }
@@ -363,13 +401,20 @@ impl Trace {
     /// Verify the content-addressed ID matches.
     pub fn verify_id(&self) -> bool {
         let signable = Self::signable_bytes(
-            &self.capability, self.outcome, self.latency_ms, self.input_size,
-            &self.context_hash, self.context_text.as_deref(), self.session_id.as_deref(),
+            &self.capability,
+            self.outcome,
+            self.latency_ms,
+            self.input_size,
+            &self.context_hash,
+            self.context_text.as_deref(),
+            self.session_id.as_deref(),
             self.owner_account.as_deref(),
             self.device_identity.as_deref(),
             self.agent_id.as_deref(),
             self.sigil_id.as_deref(),
-            &self.model_id, self.timestamp, &self.node_pubkey,
+            &self.model_id,
+            self.timestamp,
+            &self.node_pubkey,
         );
         let mut hasher = Sha256::new();
         hasher.update(&signable);
@@ -502,7 +547,12 @@ mod tests {
     #[test]
     fn create_and_verify() {
         let id = NodeIdentity::generate();
-        let trace = make_trace(&id, "urn:mcp:anthropic:claude:code", Outcome::Succeeded, "refactoring async rust code");
+        let trace = make_trace(
+            &id,
+            "urn:mcp:anthropic:claude:code",
+            Outcome::Succeeded,
+            "refactoring async rust code",
+        );
 
         assert!(trace.verify(), "signature should be valid");
         assert!(trace.verify_id(), "content-addressed ID should match");
@@ -531,7 +581,10 @@ mod tests {
         assert!(trace.verify());
         assert!(trace.verify_id());
         assert_eq!(trace.owner_account.as_deref(), Some("oasyce1owner"));
-        assert_eq!(trace.device_identity.as_deref(), Some(id.device_identity().as_str()));
+        assert_eq!(
+            trace.device_identity.as_deref(),
+            Some(id.device_identity().as_str())
+        );
     }
 
     #[test]
@@ -573,7 +626,10 @@ mod tests {
             .sign(id.public_key_bytes(), |msg| id.sign(msg));
 
         assert!(trace.verify(), "builder trace must have valid signature");
-        assert!(trace.verify_id(), "builder trace must have valid content-addressed ID");
+        assert!(
+            trace.verify_id(),
+            "builder trace must have valid content-addressed ID"
+        );
         assert_eq!(trace.capability, "code-review");
         assert_eq!(trace.sigil_id.as_deref(), Some("SIG_abc123"));
         assert_eq!(trace.owner_account.as_deref(), Some("oasyce1owner"));

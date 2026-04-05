@@ -16,6 +16,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+use crate::ambient::{
+    AmbientPriorRequest, ambient_prior_data,
+};
 use crate::anchor::AnchorClient;
 use crate::context::{simhash, similarity};
 use crate::continuity::{
@@ -26,10 +29,10 @@ use crate::identity_surface::authorization_check_data;
 use crate::network::NetworkCommand;
 use crate::pheromone::PheromoneField;
 use crate::posts::{
-    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind,
-    SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
-    create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
-    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
+    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind, SignalScopeFilter, SignalTraceConfig,
+    create_feed_reinforcement_traces, create_query_reinforcement_traces, create_signal_trace,
+    filter_signal_feed_results, is_signal_capability, summarize_recent_signal_feed,
+    summarize_signal_traces,
 };
 use crate::presence::{
     DEFAULT_PRESENCE_TTL_MINUTES, PresenceTraceConfig, create_presence_trace,
@@ -363,6 +366,28 @@ fn tool_definitions() -> Value {
                 }
             },
             {
+                "name": "ambient_priors",
+                "description": "Project runtime-only ambient priors for a task turn. Use this when a host wants sparse environmental priors without turning them into persistent memory.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "Current user or task text to project priors for"
+                        },
+                        "space": {
+                            "type": "string",
+                            "description": "Optional substrate space filter"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum priors to emit (default: 3, max: 3)"
+                        }
+                    },
+                    "required": ["text"]
+                }
+            },
+            {
                 "name": "trace_anchor",
                 "description": "Anchor a trace to the Oasyce blockchain for on-chain verification proof.",
                 "inputSchema": {
@@ -551,6 +576,7 @@ async fn handle_tool_call(
         "presence_feed" => handle_presence_feed(ctx, id, arguments),
         "authorization_check" => handle_authorization_check(ctx, id),
         "substrate_query" => handle_substrate_query(ctx, id, arguments),
+        "ambient_priors" => handle_ambient_priors(ctx, id, arguments),
         "trace_anchor" => handle_trace_anchor(ctx, id, arguments),
         _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
     }
@@ -1484,6 +1510,36 @@ fn handle_signal_feed(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRespon
     )
 }
 
+fn handle_ambient_priors(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
+    let text = match args.get("text").and_then(|v| v.as_str()) {
+        Some(text) => text,
+        None => return JsonRpcResponse::error(id, -32602, "Missing required field: text".into()),
+    };
+    let space = args
+        .get("space")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+    let response_json = ambient_prior_data(
+        &ctx.store,
+        &AmbientPriorRequest {
+            text: text.to_string(),
+            space: space.map(str::to_string),
+            limit: Some(limit),
+        },
+    );
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&response_json).unwrap()
+            }]
+        }),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Tool 3: trace_anchor
 // ---------------------------------------------------------------------------
@@ -1740,7 +1796,7 @@ mod tests {
         };
         let resp = handle_request(&ctx, &session, req).await.unwrap();
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"trace_record"));
@@ -1750,6 +1806,7 @@ mod tests {
         assert!(names.contains(&"presence_feed"));
         assert!(names.contains(&"authorization_check"));
         assert!(names.contains(&"substrate_query"));
+        assert!(names.contains(&"ambient_priors"));
         assert!(names.contains(&"trace_anchor"));
     }
 
@@ -1948,7 +2005,10 @@ mod tests {
             .to_string();
         let post_json: Value =
             serde_json::from_str(&post_text).expect("signal post response should be valid JSON");
-        assert_eq!(post_json["ttl_hours"], SignalPostKind::Avoid.default_ttl_hours());
+        assert_eq!(
+            post_json["ttl_hours"],
+            SignalPostKind::Avoid.default_ttl_hours()
+        );
         assert_eq!(post_json["ttl_source"], "kind_default");
 
         let query_req = JsonRpcRequest {
@@ -1981,6 +2041,53 @@ mod tests {
         assert_eq!(signals[0]["local_source_count"], 1);
         assert_eq!(signals[0]["collective_source_count"], 0);
         assert_eq!(signals[0]["evidence_scope"], "local");
+    }
+
+    #[tokio::test]
+    async fn ambient_priors_surfaces_runtime_projection() {
+        let ctx = make_ctx();
+        let session = McpSession::new();
+
+        insert_trace(
+            &ctx,
+            "claude-code/Bash",
+            Outcome::Failed,
+            "codex",
+            "restart thronglets service after ssh timeout",
+            120,
+        );
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(71)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "ambient_priors",
+                "arguments": {
+                    "text": "restart thronglets service after ssh timeout",
+                    "limit": 3
+                }
+            }),
+        };
+        let resp = handle_request(&ctx, &session, req).await.unwrap();
+        assert!(resp.error.is_none(), "ambient_priors should succeed");
+
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("ambient prior response should be valid JSON");
+        assert_eq!(parsed["summary"]["status"], "ready");
+        let priors = parsed["priors"].as_array().unwrap();
+        assert!(!priors.is_empty());
+        assert_eq!(priors[0]["kind"], "failure-residue");
+        assert!(
+            priors[0]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("recent failure residue")
+        );
     }
 
     #[tokio::test]

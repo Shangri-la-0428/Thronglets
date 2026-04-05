@@ -131,7 +131,10 @@ mod tests {
         let b = simhash("translate a legal document from Chinese to English");
         let dist = hamming_distance(&a, &b);
         // Similar sentences should have low hamming distance
-        assert!(dist < 40, "similar contexts should be close, got distance {dist}");
+        assert!(
+            dist < 40,
+            "similar contexts should be close, got distance {dist}"
+        );
         assert!(similarity(&a, &b) > 0.6);
     }
 
@@ -141,7 +144,10 @@ mod tests {
         let b = simhash("deploy kubernetes cluster on AWS with terraform");
         let dist = hamming_distance(&a, &b);
         // Very different tasks should have higher distance
-        assert!(dist > 20, "different contexts should be far, got distance {dist}");
+        assert!(
+            dist > 20,
+            "different contexts should be far, got distance {dist}"
+        );
     }
 
     #[test]

@@ -7,8 +7,9 @@
 
 use libp2p::futures::StreamExt;
 use libp2p::{
-    Multiaddr, PeerId, SwarmBuilder, autonat, dcutr, gossipsub, identify, kad, mdns, noise,
-    relay, swarm::{NetworkBehaviour, SwarmEvent}, tcp, upnp, yamux,
+    Multiaddr, PeerId, SwarmBuilder, autonat, dcutr, gossipsub, identify, kad, mdns, noise, relay,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, upnp, yamux,
 };
 use std::collections::{HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};

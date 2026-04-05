@@ -413,13 +413,22 @@ pub(crate) fn render_start_report(data: &StartData) {
     }
 
     // Which tools were configured
-    let configured: Vec<&str> = data.setup.restart_commands.iter()
+    let configured: Vec<&str> = data
+        .setup
+        .restart_commands
+        .iter()
         .filter_map(|cmd| {
-            if cmd.contains("Claude") || cmd.contains("claude") { Some("Claude Code") }
-            else if cmd.contains("Cursor") || cmd.contains("cursor") { Some("Cursor") }
-            else if cmd.contains("Windsurf") || cmd.contains("windsurf") { Some("Windsurf") }
-            else if cmd.contains("Codex") || cmd.contains("codex") { Some("Codex") }
-            else { None }
+            if cmd.contains("Claude") || cmd.contains("claude") {
+                Some("Claude Code")
+            } else if cmd.contains("Cursor") || cmd.contains("cursor") {
+                Some("Cursor")
+            } else if cmd.contains("Windsurf") || cmd.contains("windsurf") {
+                Some("Windsurf")
+            } else if cmd.contains("Codex") || cmd.contains("codex") {
+                Some("Codex")
+            } else {
+                None
+            }
         })
         .collect();
     if !configured.is_empty() {
@@ -663,7 +672,8 @@ fn join_runtime_follow_up(setup: &BootstrapSummary) -> Option<String> {
 }
 
 fn runtime_follow_up_next_step(setup: &BootstrapSummary) -> Option<String> {
-    setup.restart_commands
+    setup
+        .restart_commands
         .first()
         .map(|command| format!("Restart your AI runtime once: {command}"))
 }
@@ -729,7 +739,9 @@ fn join_human_agents(agents: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BootstrapSummary, ReadinessSummary, status_readiness_summary, summarize_join_flow};
+    use super::{
+        BootstrapSummary, ReadinessSummary, status_readiness_summary, summarize_join_flow,
+    };
     use thronglets::identity::{IdentityBinding, NodeIdentity};
     use thronglets::network_state::NetworkStatus;
 

@@ -1151,7 +1151,10 @@ mod tests {
 
         assert_eq!(binding.owner_account.as_deref(), Some("oasyce1joinedowner"));
         assert_eq!(binding.binding_source.as_deref(), Some("connection_file"));
-        assert_eq!(binding.joined_from_device.as_deref(), Some("oasyce1primarydevice"));
+        assert_eq!(
+            binding.joined_from_device.as_deref(),
+            Some("oasyce1primarydevice")
+        );
         assert!(binding.oasyce_delegate_policy.is_none());
     }
 

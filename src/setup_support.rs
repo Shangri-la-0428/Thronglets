@@ -19,7 +19,8 @@ const CODEX_AGENTS_BLOCK: &str = r#"<!-- thronglets:codex:start -->
 
 If the `thronglets` MCP server is available in this Codex session:
 - Treat Thronglets as ambient guidance first. Do not call tools just because they are available.
-- Use `substrate_query` only when local context is ambiguous, cross-session or cross-device continuity matters, or you need explicit substrate inspection before a high-impact step.
+- Use `ambient_priors` when you need a lightweight feel for whether the current path looks risky, unsettled, or already stable before a high-impact step.
+- Use `substrate_query` only when local context is still ambiguous after that, cross-session or cross-device continuity matters, or you need explicit substrate inspection.
 - Use `trace_record` only for sparse, meaningful residue: externally consequential, continuity-relevant, or coordination-relevant outcomes.
 - Keep Thronglets output as internal decision guidance. Do not dump raw substrate warnings or rankings back to the user.
 <!-- thronglets:codex:end -->
@@ -260,7 +261,10 @@ pub fn auto_clear_restart_pending_on_runtime_contact(
 }
 
 fn runtime_contact_proves_reload(agent: AdapterKind) -> bool {
-    matches!(agent, AdapterKind::Codex | AdapterKind::OpenClaw | AdapterKind::Cursor)
+    matches!(
+        agent,
+        AdapterKind::Codex | AdapterKind::OpenClaw | AdapterKind::Cursor
+    )
 }
 
 pub fn install_claude(
@@ -287,21 +291,13 @@ pub fn install_claude(
         "matcher": "",
         "hooks": [{"type": "command", "command": format!("{launcher_cmd} hook")}]
     });
-    let added_post_hook = ensure_hook(
-        &mut settings["hooks"]["PostToolUse"],
-        &post_hook,
-        " hook",
-    );
+    let added_post_hook = ensure_hook(&mut settings["hooks"]["PostToolUse"], &post_hook, " hook");
 
     let pre_hook = json!({
         "matcher": PREHOOK_MATCHER,
         "hooks": [{"type": "command", "command": format!("{launcher_cmd} prehook")}]
     });
-    let added_pre_hook = ensure_hook(
-        &mut settings["hooks"]["PreToolUse"],
-        &pre_hook,
-        " prehook",
-    );
+    let added_pre_hook = ensure_hook(&mut settings["hooks"]["PreToolUse"], &pre_hook, " prehook");
 
     // Lifecycle hooks: SessionStart, SessionEnd, SubagentStart, SubagentStop
     let lifecycle_events = [
@@ -1665,6 +1661,7 @@ mod tests {
         let agents = fs::read_to_string(&result.agents_path).unwrap();
         assert!(agents.contains(CODEX_AGENTS_START));
         assert!(agents.contains("ambient guidance first"));
+        assert!(agents.contains("ambient_priors"));
         assert!(agents.contains("substrate_query"));
         assert!(agents.contains("trace_record"));
     }
@@ -1772,6 +1769,13 @@ mod tests {
 
         let content = fs::read_to_string(updated).unwrap();
         assert!(content.contains(repo_root.to_string_lossy().as_ref()));
-        assert!(content.contains(&repo_root.join("target/debug/thronglets").display().to_string()));
+        assert!(
+            content.contains(
+                &repo_root
+                    .join("target/debug/thronglets")
+                    .display()
+                    .to_string()
+            )
+        );
     }
 }

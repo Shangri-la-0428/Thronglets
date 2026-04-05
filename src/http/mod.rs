@@ -7,6 +7,7 @@
 //! - POST /v1/traces       — record a trace
 //! - POST /v1/signals      — leave an explicit short signal
 //! - POST /v1/presence     — leave a lightweight session presence heartbeat
+//! - POST /v1/ambient-priors — project runtime-only ambient priors
 //! - GET  /v1/signals      — query explicit short signals
 //! - GET  /v1/signals/feed — show recent converging explicit signals
 //! - GET  /v1/presence/feed — show recent active sessions in a space
@@ -15,6 +16,9 @@
 //! - GET  /v1/status       — node status
 //! - GET  /v1/authorization — local authorization snapshot
 
+use crate::ambient::{
+    AmbientPriorRequest, ambient_prior_data,
+};
 use crate::context::{simhash, similarity};
 use crate::continuity::{
     ExternalContinuityInput, ExternalContinuityRecordConfig, record_external_continuity,
@@ -22,10 +26,10 @@ use crate::continuity::{
 use crate::identity::{IdentityBinding, NodeIdentity};
 use crate::identity_surface::{authorization_check_data, identity_summary};
 use crate::posts::{
-    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind,
-    SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
-    create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
-    is_signal_capability, summarize_recent_signal_feed, summarize_signal_traces,
+    DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind, SignalScopeFilter, SignalTraceConfig,
+    create_feed_reinforcement_traces, create_query_reinforcement_traces, create_signal_trace,
+    filter_signal_feed_results, is_signal_capability, summarize_recent_signal_feed,
+    summarize_signal_traces,
 };
 use crate::presence::{
     DEFAULT_PRESENCE_TTL_MINUTES, PresenceTraceConfig, create_presence_trace,
@@ -101,6 +105,7 @@ fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
         ("POST", "/v1/traces") => handle_post_trace(ctx, body),
         ("POST", "/v1/signals") => handle_post_signal(ctx, body),
         ("POST", "/v1/presence") => handle_post_presence(ctx, body),
+        ("POST", "/v1/ambient-priors") => handle_post_ambient_priors(ctx, body),
         ("GET", "/v1/signals/feed") => handle_get_signal_feed(ctx, path),
         ("GET", "/v1/signals") => handle_get_signals(ctx, path),
         ("GET", "/v1/presence/feed") => handle_get_presence_feed(ctx, path),
@@ -112,6 +117,7 @@ fn handle_http_request(ctx: &HttpContext, raw: &str) -> String {
             "POST /v1/traces",
             "POST /v1/signals",
             "POST /v1/presence",
+            "POST /v1/ambient-priors",
             "GET /v1/signals?context=...&kind=avoid|recommend|watch|info&space=...&limit=5",
             "GET /v1/signals/feed?hours=24&kind=avoid|recommend|watch|info&scope=all|local|collective|mixed&space=...&limit=10",
             "GET /v1/presence/feed?hours=1&space=...&limit=10",
@@ -342,6 +348,15 @@ fn handle_post_presence(ctx: &HttpContext, body: &str) -> String {
     }
 }
 
+fn handle_post_ambient_priors(ctx: &HttpContext, body: &str) -> String {
+    let request: AmbientPriorRequest = match serde_json::from_str(body) {
+        Ok(request) => request,
+        Err(error) => return json!({"error": format!("invalid JSON: {error}")}).to_string(),
+    };
+
+    json!(ambient_prior_data(&ctx.store, &request)).to_string()
+}
+
 fn handle_get_query(ctx: &HttpContext, path: &str) -> String {
     let params = parse_query_params(path);
     let context_str = params.get("context").map(String::as_str).unwrap_or("");
@@ -495,8 +510,8 @@ fn handle_get_signal_feed(ctx: &HttpContext, path: &str) -> String {
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
-                agent_id: None,
-                sigil_id: None,
+            agent_id: None,
+            sigil_id: None,
             space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
@@ -541,7 +556,8 @@ fn handle_get_presence_feed(ctx: &HttpContext, path: &str) -> String {
         "sessions": results,
         "attributed_count": attributed,
         "anonymous_count": anonymous,
-    }).to_string()
+    })
+    .to_string()
 }
 
 fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> String {
@@ -582,8 +598,8 @@ fn handle_signals_query(ctx: &HttpContext, params: &HashMap<String, String>) -> 
             session_id: None,
             owner_account: ctx.binding.owner_account.clone(),
             device_identity: Some(ctx.binding.device_identity.clone()),
-                agent_id: None,
-                sigil_id: None,
+            agent_id: None,
+            sigil_id: None,
             space: None,
             ttl_hours: DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS,
         },
@@ -799,6 +815,41 @@ mod tests {
         let override_response = parse_body(&handle_http_request(&ctx, override_request));
         assert_eq!(override_response["ttl_hours"], 5);
         assert_eq!(override_response["ttl_source"], "explicit");
+    }
+
+    #[test]
+    fn ambient_priors_returns_runtime_projection() {
+        let ctx = make_ctx();
+
+        let post_trace = concat!(
+            "POST /v1/traces HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "{\"capability\":\"claude-code/Bash\",\"outcome\":\"failed\",\"latency_ms\":12,\"input_size\":34,\"context\":\"restart thronglets service after ssh timeout\",\"model\":\"codex\"}",
+        );
+        let _ = handle_http_request(&ctx, post_trace);
+
+        let response = parse_body(&handle_http_request(
+            &ctx,
+            concat!(
+                "POST /v1/ambient-priors HTTP/1.1\r\n",
+                "Host: localhost\r\n",
+                "Content-Type: application/json\r\n",
+                "\r\n",
+                "{\"text\":\"restart thronglets service after ssh timeout\",\"limit\":3}"
+            ),
+        ));
+        assert_eq!(response["summary"]["status"], "ready");
+        let priors = response["priors"].as_array().unwrap();
+        assert!(!priors.is_empty());
+        assert_eq!(priors[0]["kind"], "failure-residue");
+        assert!(
+            priors[0]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("recent failure residue")
+        );
     }
 
     #[test]

@@ -106,7 +106,7 @@ async fn mcp_full_protocol_handshake() {
     .await;
 
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 8);
+    assert!(tools.len() >= 9, "expected at least 9 tools after ambient prior surface expansion");
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(tool_names.contains(&"trace_record"));
     assert!(tool_names.contains(&"substrate_query"));
@@ -116,6 +116,7 @@ async fn mcp_full_protocol_handshake() {
     assert!(tool_names.contains(&"presence_ping"));
     assert!(tool_names.contains(&"presence_feed"));
     assert!(tool_names.contains(&"authorization_check"));
+    assert!(tool_names.contains(&"ambient_priors"));
 
     // 4. Record a trace
     let resp = rpc_call(
@@ -176,7 +177,10 @@ async fn mcp_full_protocol_handshake() {
     assert_eq!(parsed["stats"]["total_traces"], 1);
     // Pheromone field uses EMA with neutral prior (0.5), so 1 success → ~0.55
     let sr = parsed["stats"]["success_rate"].as_f64().unwrap();
-    assert!(sr > 0.5 && sr <= 1.0, "success_rate should be > 0.5, got {sr}");
+    assert!(
+        sr > 0.5 && sr <= 1.0,
+        "success_rate should be > 0.5, got {sr}"
+    );
 
     // 6. Explore available capabilities
     let resp = rpc_call(

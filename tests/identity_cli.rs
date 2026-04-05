@@ -502,10 +502,9 @@ fn connection_export_and_join_carry_oasyce_delegate_policy_bootstrap() {
         &secondary_dir,
     );
 
-    let joined_binding: Value = serde_json::from_slice(
-        &std::fs::read(secondary_dir.join("identity.v1.json")).unwrap(),
-    )
-    .unwrap();
+    let joined_binding: Value =
+        serde_json::from_slice(&std::fs::read(secondary_dir.join("identity.v1.json")).unwrap())
+            .unwrap();
     assert_eq!(
         joined_binding["oasyce_delegate_policy"]["principal"],
         "oasyce1owner"

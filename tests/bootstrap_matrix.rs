@@ -31,7 +31,11 @@ fn bootstrap_claude_is_idempotent() {
     let data_dir = temp.path().join("data");
     std::fs::create_dir_all(home.join(".claude")).unwrap();
 
-    let first = run_bin(&["bootstrap", "--agent", "claude", "--json"], &home, &data_dir);
+    let first = run_bin(
+        &["bootstrap", "--agent", "claude", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         first.status.success(),
         "first bootstrap failed: {}",
@@ -41,7 +45,11 @@ fn bootstrap_claude_is_idempotent() {
     assert_eq!(first["summary"]["status"], Value::String("healthy".into()));
     assert_eq!(first["summary"]["restart_required"], Value::Bool(false));
 
-    let second = run_bin(&["bootstrap", "--agent", "claude", "--json"], &home, &data_dir);
+    let second = run_bin(
+        &["bootstrap", "--agent", "claude", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         second.status.success(),
         "second bootstrap failed: {}",
@@ -50,7 +58,9 @@ fn bootstrap_claude_is_idempotent() {
     let second = parse_command_data(&second, "bootstrap");
     assert_eq!(second["summary"]["status"], Value::String("healthy".into()));
     assert_eq!(
-        second["results"].as_array().unwrap()[0]["changed"].as_array().unwrap()[0],
+        second["results"].as_array().unwrap()[0]["changed"]
+            .as_array()
+            .unwrap()[0],
         Value::String("hooks already present".into())
     );
 }
@@ -62,14 +72,22 @@ fn bootstrap_codex_is_idempotent_after_initial_install() {
     let data_dir = temp.path().join("data");
     std::fs::create_dir_all(home.join(".codex")).unwrap();
 
-    let first = run_bin(&["bootstrap", "--agent", "codex", "--json"], &home, &data_dir);
+    let first = run_bin(
+        &["bootstrap", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         first.status.success(),
         "first bootstrap failed: {}",
         String::from_utf8_lossy(&first.stderr)
     );
 
-    let second = run_bin(&["bootstrap", "--agent", "codex", "--json"], &home, &data_dir);
+    let second = run_bin(
+        &["bootstrap", "--agent", "codex", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         second.status.success(),
         "second bootstrap failed: {}",
@@ -83,7 +101,9 @@ fn bootstrap_codex_is_idempotent_after_initial_install() {
     assert_eq!(second["summary"]["healthy"], Value::Bool(true));
     assert_eq!(second["summary"]["restart_pending"], Value::Bool(true));
     assert_eq!(
-        second["results"].as_array().unwrap()[0]["changed"].as_array().unwrap()[0],
+        second["results"].as_array().unwrap()[0]["changed"]
+            .as_array()
+            .unwrap()[0],
         Value::String("config already present".into())
     );
 }
@@ -95,7 +115,11 @@ fn bootstrap_openclaw_reports_restart_pending() {
     let data_dir = temp.path().join("data");
     std::fs::create_dir_all(home.join(".openclaw")).unwrap();
 
-    let output = run_bin(&["bootstrap", "--agent", "openclaw", "--json"], &home, &data_dir);
+    let output = run_bin(
+        &["bootstrap", "--agent", "openclaw", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         output.status.success(),
         "bootstrap failed: {}",
@@ -117,7 +141,11 @@ fn bootstrap_generic_stays_contract_only() {
     let home = temp.path().join("home");
     let data_dir = temp.path().join("data");
 
-    let output = run_bin(&["bootstrap", "--agent", "generic", "--json"], &home, &data_dir);
+    let output = run_bin(
+        &["bootstrap", "--agent", "generic", "--json"],
+        &home,
+        &data_dir,
+    );
     assert!(
         output.status.success(),
         "bootstrap failed: {}",
@@ -151,7 +179,10 @@ fn bootstrap_all_skips_undetected_codex_and_openclaw() {
     assert_eq!(data["summary"]["healthy"], Value::Bool(true));
 
     let results = data["results"].as_array().unwrap();
-    let codex = results.iter().find(|entry| entry["agent"] == "codex").unwrap();
+    let codex = results
+        .iter()
+        .find(|entry| entry["agent"] == "codex")
+        .unwrap();
     assert_eq!(codex["applied"], Value::Bool(false));
     let openclaw = results
         .iter()

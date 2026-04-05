@@ -405,8 +405,6 @@ fn prehook_profile_keeps_stdout_shape_when_signals_exist() {
     assert!(stderr.contains("git=skipped"));
 }
 
-
-
 #[test]
 fn prehook_ignores_global_retention_without_local_evidence() {
     let data_dir = tempfile::tempdir().unwrap();
@@ -602,9 +600,6 @@ fn prehook_ranks_danger_and_repair_above_history() {
     assert_eq!(top_level_signals, 2);
 }
 
-
-
-
 #[test]
 fn prehook_suppresses_specific_do_next_in_explore_mode() {
     let data_dir = tempfile::tempdir().unwrap();
@@ -661,10 +656,6 @@ fn prehook_suppresses_specific_do_next_in_explore_mode() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("do next:"));
 }
-
-
-
-
 
 #[test]
 fn prehook_upgrades_repair_with_collective_sources() {

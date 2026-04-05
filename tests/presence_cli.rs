@@ -43,7 +43,14 @@ fn presence_ping_and_feed_roundtrip() {
     assert_eq!(ping["data"]["mode"], "focus");
 
     let feed = run_bin(
-        &["presence-feed", "--space", "psyche", "--hours", "1", "--json"],
+        &[
+            "presence-feed",
+            "--space",
+            "psyche",
+            "--hours",
+            "1",
+            "--json",
+        ],
         &data_dir,
     );
     assert_eq!(feed["schema_version"], "thronglets.presence.v1");
