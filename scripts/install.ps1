@@ -22,45 +22,6 @@ $ps1Wrapper = @"
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Test-RepoRoot([string]`$dir) {
-  if (-not (Test-Path (Join-Path `$dir "Cargo.toml"))) { return `$false }
-  if (-not (Test-Path (Join-Path `$dir "src\main.rs"))) { return `$false }
-  try {
-    return (Get-Content (Join-Path `$dir "Cargo.toml") -Raw).Contains('name = "thronglets"')
-  } catch {
-    return `$false
-  }
-}
-
-function Find-RepoRoot {
-  if (`$env:THRONGLETS_REPO_ROOT -and (Test-RepoRoot `$env:THRONGLETS_REPO_ROOT)) {
-    return `$env:THRONGLETS_REPO_ROOT
-  }
-
-  `$current = (Get-Location).Path
-  while (`$current) {
-    if (Test-RepoRoot `$current) { return `$current }
-    `$parent = Split-Path `$current -Parent
-    if (-not `$parent -or `$parent -eq `$current) { break }
-    `$current = `$parent
-  }
-  return `$null
-}
-
-`$repoRoot = Find-RepoRoot
-if (`$repoRoot) {
-  `$cargo = Get-Command cargo.exe -ErrorAction SilentlyContinue
-  if (`$cargo) {
-    & `$cargo.Source run --quiet --manifest-path (Join-Path `$repoRoot "Cargo.toml") -- @args
-    exit `$LASTEXITCODE
-  }
-  `$repoBin = Join-Path `$repoRoot "target\debug\thronglets.exe"
-  if (Test-Path `$repoBin) {
-    & `$repoBin @args
-    exit `$LASTEXITCODE
-  }
-}
-
 & "__BIN_PATH__" @args
 exit `$LASTEXITCODE
 "@

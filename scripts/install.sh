@@ -60,39 +60,6 @@ set -eu
 INSTALLED_BIN_DIR="__INSTALL_DIR__"
 INSTALLED_BIN="$INSTALLED_BIN_DIR/thronglets-bin"
 
-looks_like_repo_root() {
-  root="$1"
-  [ -f "$root/Cargo.toml" ] || return 1
-  [ -f "$root/src/main.rs" ] || return 1
-  grep -q 'name = "thronglets"' "$root/Cargo.toml" 2>/dev/null
-}
-
-find_repo_root() {
-  if [ -n "${THRONGLETS_REPO_ROOT:-}" ] && looks_like_repo_root "$THRONGLETS_REPO_ROOT"; then
-    printf '%s\n' "$THRONGLETS_REPO_ROOT"
-    return 0
-  fi
-
-  dir="${PWD:-$(pwd)}"
-  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-    if looks_like_repo_root "$dir"; then
-      printf '%s\n' "$dir"
-      return 0
-    fi
-    dir="$(dirname "$dir")"
-  done
-  return 1
-}
-
-if repo_root="$(find_repo_root 2>/dev/null)"; then
-  if command -v cargo >/dev/null 2>&1; then
-    exec cargo run --quiet --manifest-path "$repo_root/Cargo.toml" -- "$@"
-  fi
-  if [ -x "$repo_root/target/debug/thronglets" ]; then
-    exec "$repo_root/target/debug/thronglets" "$@"
-  fi
-fi
-
 exec "$INSTALLED_BIN" "$@"
 EOF
   sed -i.bak "s#__INSTALL_DIR__#$INSTALL_DIR#g" "$tmpdir/$BIN_NAME"

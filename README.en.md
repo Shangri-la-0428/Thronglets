@@ -328,16 +328,7 @@ Architecture principle:
 - `Oasyce` upgrades ownership and settlement; it does not unlock basic participation
 - shared environment comes before direct AI messaging; prefer `space / presence / signal / space snapshot` over agent chat abstractions
 
-If you are working from this repository checkout instead of a released binary, the front-door `thronglets` launcher now also prefers the repo-local source path first; if you want to verify it explicitly, you can still run:
-
-```bash
-cargo run --quiet -- version --json
-cargo run --quiet -- start
-```
-
-That keeps the README, the checked-out source, and the binary you are actually executing in sync, which matters for agent automation.
-
-If you are developing Thronglets itself rather than installing it for normal use, the source path is:
+If you are developing Thronglets itself rather than installing it for normal use, the explicit source path is:
 
 ```bash
 cargo run --quiet -- version --json

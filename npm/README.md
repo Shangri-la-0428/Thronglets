@@ -25,7 +25,11 @@ For day-to-day use, the user path stays:
 - runs the same bootstrap health pass used by the machine-facing flow
 - reports `restart required` and `next steps` directly
 
-If you invoke `thronglets` from inside a local Thronglets repo checkout, the wrapper now prefers the repo-local source path before it falls back to the installed release binary. That keeps local AI sessions from accidentally using a stale global binary while they work inside the repo.
+The installed `thronglets` command now always runs the installed release binary. If you are developing Thronglets itself, use the explicit source path instead:
+
+```bash
+cargo run --quiet -- start
+```
 
 ## What The Agent Gets
 
