@@ -2528,7 +2528,7 @@ async fn main() {
     let cli = Cli::parse();
     let dir = data_dir(&cli.data_dir);
 
-    if let Commands::Version { json } = cli.command {
+    if let Commands::Version { json } = &cli.command {
         let binary_path = std::env::current_exe()
             .unwrap_or_else(|_| PathBuf::from("thronglets"))
             .display()
@@ -2543,12 +2543,316 @@ async fn main() {
             binary_path,
             source_hint: "If you are operating inside the Thronglets repo, prefer `cargo run --quiet -- <command>` so the binary matches the checked-out docs and source.",
         };
-        if json {
+        if *json {
             print_machine_json_with_schema(VERSION_SCHEMA_VERSION, "version", &data);
         } else {
             render_version_report(&data);
         }
         return;
+    }
+
+    match &cli.command {
+        Commands::ProfileSummary => {
+            let mut input = String::new();
+            if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
+                std::process::exit(0);
+            }
+
+            if let Some(summary) = summarize_prehook_profiles(&input) {
+                println!("{}", summary.render());
+            } else {
+                println!("no prehook profile samples found");
+            }
+            return;
+        }
+        Commands::ProfileCheck => {
+            let mut input = String::new();
+            if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
+                std::process::exit(0);
+            }
+
+            if let Some(summary) = summarize_prehook_profiles(&input) {
+                let (passed, rendered) = summary.render_check(&ProfileCheckThresholds::default());
+                println!("{rendered}");
+                if !passed {
+                    std::process::exit(1);
+                }
+            } else {
+                println!("FAIL");
+                println!("violations: no prehook profile samples found");
+                std::process::exit(1);
+            }
+            return;
+        }
+        Commands::ReleaseCheck {
+            hours,
+            max_sessions,
+            project_root,
+            eval_scope,
+            global,
+            require_profile_samples,
+            compare_baseline,
+            json,
+        } => {
+            let mut input = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+            let profile_thresholds = ProfileCheckThresholds::default();
+            let effective_eval_scope = if *global {
+                ReleaseEvalScopeArg::Global
+            } else {
+                *eval_scope
+            };
+            let baseline = compare_baseline
+                .as_deref()
+                .map(load_eval_baseline)
+                .transpose()
+                .expect("failed to load eval baseline");
+
+            let profile_section = match summarize_prehook_profiles(&input) {
+                Some(summary) => {
+                    let violations = summary.check(&profile_thresholds);
+                    let passed = violations.is_empty();
+                    let (_, rendered) = summary.render_check(&profile_thresholds);
+                    (
+                        if passed { "PASS" } else { "FAIL" },
+                        !passed,
+                        strip_check_header(&rendered),
+                        serde_json::json!({
+                            "status": if passed { "PASS" } else { "FAIL" },
+                            "thresholds": profile_thresholds,
+                            "summary": summary,
+                            "violations": violations,
+                            "notes": Vec::<String>::new(),
+                        }),
+                    )
+                }
+                None => {
+                    let status = if *require_profile_samples {
+                        "FAIL"
+                    } else {
+                        "SKIP"
+                    };
+                    let violations = if *require_profile_samples {
+                        vec!["no prehook profile samples found".to_string()]
+                    } else {
+                        Vec::new()
+                    };
+                    let notes = if *require_profile_samples {
+                        Vec::new()
+                    } else {
+                        vec!["no prehook profile samples found".to_string()]
+                    };
+                    (
+                        status,
+                        *require_profile_samples,
+                        if *require_profile_samples {
+                            "violations: no prehook profile samples found".to_string()
+                        } else {
+                            "notes: no prehook profile samples found".to_string()
+                        },
+                        serde_json::json!({
+                            "status": status,
+                            "thresholds": profile_thresholds,
+                            "summary": serde_json::Value::Null,
+                            "violations": violations,
+                            "notes": notes,
+                        }),
+                    )
+                }
+            };
+
+            let home_dir = home_dir();
+            let doctor_section = run_release_doctor_section(&home_dir, &dir);
+
+            let eval_thresholds = EvalCheckThresholds::default();
+            let store = open_store(&dir);
+            let local_feedback = LocalFeedbackSummary::from_workspace(&WorkspaceState::load(&dir));
+            let default_project_root = project_root.clone().unwrap_or_else(|| {
+                std::env::current_dir().expect("failed to determine current working directory")
+            });
+            let eval_sections: Vec<_> = match effective_eval_scope {
+                ReleaseEvalScopeArg::Project => vec![(
+                    "project",
+                    run_release_eval_section(
+                        &store,
+                        *hours,
+                        *max_sessions,
+                        Some(default_project_root.as_path()),
+                        local_feedback.clone(),
+                        &eval_thresholds,
+                        baseline.as_ref(),
+                    ),
+                )],
+                ReleaseEvalScopeArg::Global => vec![(
+                    "global",
+                    run_release_eval_section(
+                        &store,
+                        *hours,
+                        *max_sessions,
+                        None,
+                        None,
+                        &eval_thresholds,
+                        baseline.as_ref(),
+                    ),
+                )],
+                ReleaseEvalScopeArg::Both => vec![
+                    (
+                        "project",
+                        run_release_eval_section(
+                            &store,
+                            *hours,
+                            *max_sessions,
+                            Some(default_project_root.as_path()),
+                            local_feedback,
+                            &eval_thresholds,
+                            baseline.as_ref(),
+                        ),
+                    ),
+                    (
+                        "global",
+                        run_release_eval_section(
+                            &store,
+                            *hours,
+                            *max_sessions,
+                            None,
+                            None,
+                            &eval_thresholds,
+                            baseline.as_ref(),
+                        ),
+                    ),
+                ],
+            };
+
+            let overall_failed = profile_section.1
+                || doctor_section.1
+                || eval_sections.iter().any(|(_, section)| section.1);
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": if overall_failed { "FAIL" } else { "PASS" },
+                        "eval_scope": match effective_eval_scope {
+                            ReleaseEvalScopeArg::Project => "project",
+                            ReleaseEvalScopeArg::Global => "global",
+                            ReleaseEvalScopeArg::Both => "both",
+                        },
+                        "profile": profile_section.3,
+                        "doctor": doctor_section.3,
+                        "eval": if eval_sections.len() == 1 {
+                            eval_sections[0].1.3.clone()
+                        } else {
+                            serde_json::json!({
+                                "project": eval_sections[0].1.3.clone(),
+                                "global": eval_sections[1].1.3.clone(),
+                            })
+                        },
+                    }))
+                    .expect("failed to serialize release check")
+                );
+            } else {
+                println!("{}", if overall_failed { "FAIL" } else { "PASS" });
+                print_release_section("profile", profile_section.0, &profile_section.2);
+                print_release_section("doctor", doctor_section.0, &doctor_section.2);
+                if eval_sections.len() == 1 {
+                    let (label, section) = &eval_sections[0];
+                    print_release_section(&format!("eval ({label})"), section.0, &section.2);
+                } else {
+                    for (label, section) in &eval_sections {
+                        print_release_section(&format!("eval ({label})"), section.0, &section.2);
+                    }
+                }
+            }
+            if overall_failed {
+                std::process::exit(1);
+            }
+            return;
+        }
+        Commands::EvalSignals {
+            hours,
+            max_sessions,
+            project_root,
+            global,
+            local_history_gate_min,
+            pattern_support_min,
+            compare_baseline,
+            top_breakdowns,
+            focus,
+            json,
+        } => {
+            let store = open_store(&dir);
+            let project_scope = if *global {
+                None
+            } else {
+                Some(project_root.clone().unwrap_or_else(|| {
+                    std::env::current_dir().expect("failed to determine current working directory")
+                }))
+            };
+            let eval_config = EvalConfig {
+                local_history_gate_min: *local_history_gate_min,
+                pattern_support_min: *pattern_support_min,
+            };
+            let default_config = EvalConfig::default();
+            match evaluate_signal_quality(
+                &store,
+                *hours,
+                *max_sessions,
+                project_scope.as_deref(),
+                eval_config,
+            )
+            .expect("failed to evaluate signal quality")
+            {
+                Some(summary) => {
+                    let summary = if eval_config != default_config {
+                        match evaluate_signal_quality(
+                            &store,
+                            *hours,
+                            *max_sessions,
+                            project_scope.as_deref(),
+                            default_config,
+                        )
+                        .expect("failed to evaluate default signal quality")
+                        {
+                            Some(baseline) => summary.with_comparison_to_default(&baseline),
+                            None => summary,
+                        }
+                    } else {
+                        summary
+                    }
+                    .with_local_feedback(if project_scope.is_some() {
+                        LocalFeedbackSummary::from_workspace(&WorkspaceState::load(&dir))
+                    } else {
+                        None
+                    });
+                    let summary = if let Some(baseline_path) = compare_baseline.as_ref() {
+                        summary.with_comparison_to_baseline(
+                            &load_eval_baseline(baseline_path)
+                                .expect("failed to load eval baseline"),
+                        )
+                    } else {
+                        summary
+                    };
+                    let summary = summary.focused((*focus).into(), *top_breakdowns);
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&summary)
+                                .expect("failed to serialize eval summary")
+                        );
+                    } else {
+                        println!("{}", summary.render());
+                    }
+                }
+                None => {
+                    if *json {
+                        println!("null");
+                    } else {
+                        println!("not enough recent session history to evaluate signals yet");
+                    }
+                }
+            }
+            return;
+        }
+        _ => {}
     }
 
     let identity = load_identity(&dir);
@@ -4098,6 +4402,21 @@ async fn main() {
             }
             profiler.stage_or_skip("experience", experience_checked);
 
+            // ── Conflict prior: mixed outcomes mean the environment has not
+            // yet settled on a stable path. This remains a lightweight
+            // contextual prior, not a command.
+            let conflict_prior_checked = explicit_signals_checked && !has_danger;
+            if conflict_prior_checked
+                && let Some(store) = cached_collective_store(&mut collective_store, &dir)
+                && let Some(mut prior) =
+                    unresolved_conflict_prior(store, &ctx_hash, current_space.as_deref())
+            {
+                prior.score += ws
+                    .recommendation_score_adjustment(SignalKind::History, current_space.as_deref());
+                signals.push(prior);
+            }
+            profiler.stage_or_skip("conflict_prior", conflict_prior_checked);
+
             // ── Success prior: convergent success leaves a reusable prior ──
             // This is not a command and not a fact claim. It is a lightweight
             // hint that similar contexts have already been traversed
@@ -5206,6 +5525,35 @@ fn convergent_success_prior(
     })
 }
 
+fn unresolved_conflict_prior(
+    store: &TraceStore,
+    context_hash: &[u8; 16],
+    space: Option<&str>,
+) -> Option<Signal> {
+    let convergent = store
+        .count_convergent_sessions(context_hash, 48, space)
+        .ok()?;
+    let contradictory_failures = store
+        .count_contradicting_failed_sessions(context_hash, 48, 48, space)
+        .ok()?;
+    let minority = convergent.min(contradictory_failures);
+    let majority = convergent.max(contradictory_failures);
+
+    if minority < 2 || majority.saturating_sub(minority) >= 2 {
+        return None;
+    }
+
+    let score = 185 + (minority.min(3) as i32) * 15 + (majority.min(4) as i32) * 5;
+    Some(Signal {
+        kind: SignalKind::History,
+        score,
+        body: format!(
+            "  ~ mixed residue: {convergent} success / {contradictory_failures} failure sessions in similar context"
+        ),
+        candidate: None,
+    })
+}
+
 fn reinforced_success_threshold(
     feedback_events: &[workspace::RecommendationFeedbackEvent],
     contradictory_failures: u32,
@@ -6071,6 +6419,99 @@ mod tests {
         }
 
         assert!(convergent_success_prior(&store, &simhash(ctx), None).is_none());
+    }
+
+    #[test]
+    fn unresolved_conflict_prior_surfaces_when_success_and_failure_both_accumulate() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "bash: cargo test --workspace";
+        for idx in 0..2 {
+            let success = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("success-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&success).unwrap();
+
+            let failed = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Failed,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("failed-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&failed).unwrap();
+        }
+
+        let prior = unresolved_conflict_prior(&store, &simhash(ctx), None).unwrap();
+        assert_eq!(prior.kind, SignalKind::History);
+        assert!(prior.body.contains("mixed residue"));
+    }
+
+    #[test]
+    fn unresolved_conflict_prior_stays_quiet_when_one_side_clearly_dominates() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "bash: cargo test --workspace";
+        for idx in 0..4 {
+            let success = Trace::new_with_agent(
+                "tool:Bash".into(),
+                Outcome::Succeeded,
+                0,
+                1,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(format!("success-{idx}")),
+                None,
+                Some(identity.device_identity()),
+                None,
+                None,
+                "codex".into(),
+                identity.public_key_bytes(),
+                |msg| identity.sign(msg),
+            );
+            store.insert(&success).unwrap();
+        }
+        let failed = Trace::new_with_agent(
+            "tool:Bash".into(),
+            Outcome::Failed,
+            0,
+            1,
+            simhash(ctx),
+            Some(ctx.into()),
+            Some("failed-0".into()),
+            None,
+            Some(identity.device_identity()),
+            None,
+            None,
+            "codex".into(),
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        store.insert(&failed).unwrap();
+
+        assert!(unresolved_conflict_prior(&store, &simhash(ctx), None).is_none());
     }
 
     #[test]

@@ -1843,12 +1843,40 @@ mod tests {
         let id = NodeIdentity::generate();
         let ctx = "bash: cargo test --workspace";
         for session_id in ["failed-a", "failed-b"] {
-            let mut trace = make_trace(&id, "claude-code/Bash", Outcome::Failed, ctx);
-            trace.session_id = Some(session_id.into());
+            let trace = Trace::new_with_agent(
+                "claude-code/Bash".into(),
+                Outcome::Failed,
+                100,
+                5000,
+                crate::context::simhash(ctx),
+                Some(ctx.into()),
+                Some(session_id.into()),
+                None,
+                Some(id.device_identity()),
+                None,
+                None,
+                "test-model".into(),
+                id.public_key_bytes(),
+                |m| id.sign(m),
+            );
             store.insert(&trace).unwrap();
         }
-        let mut duplicate = make_trace(&id, "claude-code/Bash", Outcome::Failed, ctx);
-        duplicate.session_id = Some("failed-a".into());
+        let duplicate = Trace::new_with_agent(
+            "claude-code/Bash".into(),
+            Outcome::Failed,
+            100,
+            5000,
+            crate::context::simhash(ctx),
+            Some(ctx.into()),
+            Some("failed-a".into()),
+            None,
+            Some(id.device_identity()),
+            None,
+            None,
+            "test-model".into(),
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
         store.insert(&duplicate).unwrap();
 
         let count = store
