@@ -1,6 +1,6 @@
 {
   "name": "thronglets",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Local AI substrate for agents — pheromone field, Hebbian co-excitation, overlay effect signals",
   "keywords": [
     "ai-agents",
