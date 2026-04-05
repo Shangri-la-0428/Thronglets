@@ -401,14 +401,14 @@ Thronglets 现在的主线已经明确（当前 release: `v0.5.5`）：
 目标：真正的一行命令安装。
 
 当前状态：
-- npm / python wrapper metadata and package docs now track the current `v0.5.5` sparse-signal product shape
+- npm / python wrapper metadata and package docs now track the current sparse-signal product shape
 - CI 已经会挡住 package-facing 文案和版本再漂回旧的 `0.2.0 / 8 layers`
 - repo 内已经有 tagged release workflow 和 `scripts/install.sh`
 
 完成标准：
 - 切一次真实 tag release，产出 shell installer 依赖的 binary assets
 - 默认安装文档切到 shell installer
-- 安装后可以直接跑 `thronglets setup`
+- 安装后可以直接跑 `thronglets start`
 
 ### 12. Generic contract examples by runtime
 

@@ -90,7 +90,7 @@ After setup:
 ```bash
 thronglets status           # check status
 thronglets share            # get connection file for others
-thronglets join <file>      # join another node
+thronglets join             # join another node (reads the Desktop handoff file by default)
 ```
 
 ## P2P Networking

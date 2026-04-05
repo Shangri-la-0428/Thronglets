@@ -100,7 +100,7 @@ fn package_and_agent_docs_do_not_regress_to_old_context_model() {
             "{path} regressed to the old 8-layer framing"
         );
         assert!(
-            content.contains("thronglets start") || content.contains("thronglets setup"),
+            content.contains("thronglets start"),
             "{path} should include the default onboarding path"
         );
     }
@@ -111,6 +111,13 @@ fn package_and_agent_docs_do_not_regress_to_old_context_model() {
 
     let python_readme = read("python/README.md");
     assert!(python_readme.contains("thronglets install-plan --agent generic --json"));
+    assert!(python_readme.contains("thronglets share"));
+    assert!(python_readme.contains("thronglets join"));
+    assert!(python_readme.contains("thronglets status"));
+
+    assert!(npm_readme.contains("thronglets share"));
+    assert!(npm_readme.contains("thronglets join"));
+    assert!(npm_readme.contains("thronglets status"));
 
     let llms = read("llms.txt");
     assert!(llms.contains("thronglets.bootstrap.v2"));
@@ -155,6 +162,35 @@ fn package_and_agent_docs_do_not_regress_to_old_context_model() {
             "{path} should teach the high-level primary-device sharing flow"
         );
     }
+
+    let agents = read("AGENTS.md");
+    assert!(agents.contains("thronglets share"));
+    assert!(agents.contains("thronglets join             # join another node (reads the Desktop handoff file by default)"));
+
+    let llms = read("llms.txt");
+    let share_pos = llms.find("thronglets share").expect("llms share path");
+    let join_pos = llms.find("thronglets join").expect("llms join path");
+    assert!(
+        share_pos < join_pos,
+        "llms quick setup should teach primary-device share before second-device join"
+    );
+
+    let docs_index = read("docs/index.html");
+    assert!(docs_index.contains("thronglets start"));
+    assert!(docs_index.contains("thronglets share"));
+    assert!(docs_index.contains("thronglets join"));
+    assert!(
+        docs_index.contains("'interface.setup.title': 'Prebuilt Install'"),
+        "docs/index.html should keep its i18n setup title aligned with the public install surface"
+    );
+    assert!(
+        !docs_index.contains("thronglets setup       <span class=\"cmt\"># install 6 hooks into Claude Code</span>"),
+        "docs/index.html should not present setup as the normal public CLI path"
+    );
+    assert!(
+        !docs_index.contains("'hero.alts': 'six hooks, zero config'"),
+        "docs/index.html should not keep setup-first hero alt text in the i18n table"
+    );
 }
 
 #[test]

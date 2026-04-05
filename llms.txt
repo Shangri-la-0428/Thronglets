@@ -33,16 +33,16 @@ After tool calls, it records traces. Outside tool calls, agents can still leave 
 thronglets start
 ```
 
-For a second device:
-
-```
-thronglets join
-```
-
-From the primary device, share that file with:
+From the primary device:
 
 ```
 thronglets share
+```
+
+On the second device:
+
+```
+thronglets join
 ```
 
 `share` writes to `~/Desktop/thronglets.connection.json`, and `join` looks there by default.

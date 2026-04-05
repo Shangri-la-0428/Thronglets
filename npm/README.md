@@ -12,7 +12,13 @@ thronglets version --json
 thronglets start
 ```
 
-That is the whole local bootstrap path.
+That is the whole normal first-device path.
+
+For day-to-day use, the user path stays:
+- first device: `thronglets start`
+- primary device shares: `thronglets share`
+- second device joins: `thronglets join`
+- status page: `thronglets status`
 
 `thronglets start` now:
 - configures known local adapters for Claude Code, Codex, and OpenClaw

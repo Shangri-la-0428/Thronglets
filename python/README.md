@@ -11,15 +11,23 @@ This Python package installs the `thronglets` CLI wrapper and downloads a matchi
 ```bash
 pip install thronglets
 thronglets version --json
-thronglets setup
+thronglets start
 ```
 
-That is the whole local bootstrap path.
+That is the whole normal first-device path.
 
-`thronglets setup` now:
+For day-to-day use, the user path stays:
+- first device: `thronglets start`
+- primary device shares: `thronglets share`
+- second device joins: `thronglets join`
+- status page: `thronglets status`
+
+`thronglets start` now:
 - configures known local adapters for Claude Code, Codex, and OpenClaw
 - runs the same bootstrap health pass used by the machine-facing flow
 - reports `restart required` and `next steps` directly
+
+If you invoke `thronglets` from inside a local Thronglets repo checkout, the wrapper prefers the repo-local source path before it falls back to the installed release binary. That keeps local AI sessions from accidentally using a stale global binary while they work inside the repo.
 
 ## Sparse Signals
 
@@ -34,7 +42,7 @@ The hot path stays silence-by-default and budgeted for latency and tokens.
 
 ## Machine Bootstrap
 
-If an AI wants to configure itself, use the machine-facing contract:
+If an AI wants to configure itself directly, use the machine-facing contract:
 
 ```bash
 thronglets detect --json
