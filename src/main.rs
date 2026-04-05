@@ -304,10 +304,18 @@ struct VersionSummary {
 }
 
 #[derive(Serialize)]
+struct VersionCapabilities {
+    connection_export_surfaces: Vec<&'static str>,
+    managed_runtime_surface: &'static str,
+    managed_runtime_refresh_command: &'static str,
+}
+
+#[derive(Serialize)]
 struct VersionData {
     summary: VersionSummary,
     binary_path: String,
     source_hint: &'static str,
+    capabilities: VersionCapabilities,
 }
 
 #[derive(Serialize)]
@@ -1809,6 +1817,15 @@ fn render_version_report(data: &VersionData) {
         "Schemas: bootstrap={}, identity={}",
         data.summary.bootstrap_schema_version, data.summary.identity_schema_version
     );
+    println!(
+        "Connection export surfaces: {}",
+        data.capabilities.connection_export_surfaces.join(", ")
+    );
+    println!(
+        "Managed runtime: {} (refresh with `{}`)",
+        data.capabilities.managed_runtime_surface,
+        data.capabilities.managed_runtime_refresh_command
+    );
     println!("Binary: {}", data.binary_path);
     println!("Hint: {}", data.source_hint);
 }
@@ -2560,6 +2577,11 @@ async fn main() {
             },
             binary_path,
             source_hint: "If you are operating inside the Thronglets repo, prefer `cargo run --quiet -- <command>` so the binary matches the checked-out docs and source.",
+            capabilities: VersionCapabilities {
+                connection_export_surfaces: vec!["thronglets", "oasyce"],
+                managed_runtime_surface: "thronglets-managed",
+                managed_runtime_refresh_command: "thronglets setup",
+            },
         };
         if *json {
             print_machine_json_with_schema(VERSION_SCHEMA_VERSION, "version", &data);

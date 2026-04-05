@@ -37,4 +37,16 @@ fn version_json_surfaces_binary_and_schema_versions() {
             .expect("source hint")
             .contains("cargo run --quiet --")
     );
+    assert_eq!(
+        data["data"]["capabilities"]["connection_export_surfaces"],
+        serde_json::json!(["thronglets", "oasyce"])
+    );
+    assert_eq!(
+        data["data"]["capabilities"]["managed_runtime_surface"],
+        "thronglets-managed"
+    );
+    assert_eq!(
+        data["data"]["capabilities"]["managed_runtime_refresh_command"],
+        "thronglets setup"
+    );
 }
