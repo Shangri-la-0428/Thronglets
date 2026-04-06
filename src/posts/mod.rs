@@ -262,14 +262,18 @@ pub fn create_auto_signal_trace(
 ) -> Trace {
     config.model_id = AUTO_DERIVED_SIGNAL_MODEL_ID.into();
     create_signal_trace_with_capability_and_meta(
-        kind.capability(),
-        context,
-        message,
+        SignalTraceInput {
+            capability: kind.capability(),
+            context,
+            message,
+            now_ms: now_ms(),
+            node_pubkey,
+            meta: SignalTraceMeta {
+                derived_guidance_epoch: Some(DERIVED_GUIDANCE_EPOCH),
+                derived_guidance_source: Some(AUTO_DERIVED_SIGNAL_SOURCE),
+            },
+        },
         config,
-        now_ms(),
-        node_pubkey,
-        Some(DERIVED_GUIDANCE_EPOCH),
-        Some(AUTO_DERIVED_SIGNAL_SOURCE),
         sign_fn,
     )
 }
@@ -284,14 +288,15 @@ fn create_signal_trace_at(
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
     create_signal_trace_with_capability_and_meta(
-        kind.capability(),
-        context,
-        message,
+        SignalTraceInput {
+            capability: kind.capability(),
+            context,
+            message,
+            now_ms,
+            node_pubkey,
+            meta: SignalTraceMeta::default(),
+        },
         config,
-        now_ms,
-        node_pubkey,
-        None,
-        None,
         sign_fn,
     )
 }
@@ -306,44 +311,54 @@ fn create_signal_reinforcement_trace_at(
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
     create_signal_trace_with_capability_and_meta(
-        kind.reinforcement_capability(),
-        context,
-        message,
+        SignalTraceInput {
+            capability: kind.reinforcement_capability(),
+            context,
+            message,
+            now_ms,
+            node_pubkey,
+            meta: SignalTraceMeta::default(),
+        },
         config,
-        now_ms,
-        node_pubkey,
-        None,
-        None,
         sign_fn,
     )
 }
 
-fn create_signal_trace_with_capability_and_meta(
+#[derive(Default)]
+struct SignalTraceMeta<'a> {
+    derived_guidance_epoch: Option<&'a str>,
+    derived_guidance_source: Option<&'a str>,
+}
+
+struct SignalTraceInput<'a> {
     capability: String,
-    context: &str,
-    message: &str,
-    config: SignalTraceConfig,
+    context: &'a str,
+    message: &'a str,
     now_ms: u64,
     node_pubkey: [u8; 32],
-    derived_guidance_epoch: Option<&str>,
-    derived_guidance_source: Option<&str>,
+    meta: SignalTraceMeta<'a>,
+}
+
+fn create_signal_trace_with_capability_and_meta(
+    input: SignalTraceInput<'_>,
+    config: SignalTraceConfig,
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
     let payload = SignalTracePayload {
-        context: context.to_string(),
-        message: message.to_string(),
+        context: input.context.to_string(),
+        message: input.message.to_string(),
         space: config.space.clone(),
-        expires_at: expires_at_ms(now_ms, config.ttl_hours),
-        derived_guidance_epoch: derived_guidance_epoch.map(ToOwned::to_owned),
-        derived_guidance_source: derived_guidance_source.map(ToOwned::to_owned),
+        expires_at: expires_at_ms(input.now_ms, config.ttl_hours),
+        derived_guidance_epoch: input.meta.derived_guidance_epoch.map(ToOwned::to_owned),
+        derived_guidance_source: input.meta.derived_guidance_source.map(ToOwned::to_owned),
     };
 
     let mut trace = Trace::new_with_agent(
-        capability,
+        input.capability,
         Outcome::Succeeded,
         0,
-        message.len().min(u32::MAX as usize) as u32,
-        simhash(context),
+        input.message.len().min(u32::MAX as usize) as u32,
+        simhash(input.context),
         Some(serde_json::to_string(&payload).expect("signal payload should serialize")),
         config.session_id,
         config.owner_account,
@@ -351,10 +366,10 @@ fn create_signal_trace_with_capability_and_meta(
         config.agent_id,
         config.sigil_id,
         config.model_id,
-        node_pubkey,
+        input.node_pubkey,
         sign_fn,
     );
-    trace.timestamp = now_ms;
+    trace.timestamp = input.now_ms;
     trace
 }
 
