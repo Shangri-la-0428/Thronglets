@@ -399,10 +399,12 @@ fn success_prior_threshold(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::active_policy::compile_active_policy;
     use crate::active_policy::{ActivePolicyRule, PolicyScope};
     use crate::context::simhash;
     use crate::identity::NodeIdentity;
     use crate::trace::{MethodCompliance, Outcome, Trace};
+    use serde_json::json;
 
     fn insert_trace(
         store: &TraceStore,
@@ -544,5 +546,48 @@ mod tests {
             .summary
             .contains("non-exclusive baseline during exploration"));
         assert!(stable.unwrap().confidence <= 0.68);
+    }
+
+    #[test]
+    fn duplicate_frontend_success_stays_unsettled_under_current_turn_component_policy() {
+        let store = TraceStore::in_memory().unwrap();
+        let identity = NodeIdentity::generate();
+        let ctx = "edit file: src/app/dashboard/page.tsx";
+        for idx in 0..4 {
+            insert_trace(
+                &store,
+                &identity,
+                ctx,
+                &format!("duplicate-ui-success-{idx}"),
+                Outcome::Succeeded,
+                Some(MethodCompliance::Noncompliant),
+            );
+        }
+
+        let payload = json!({
+            "currentTurnCorrection": "reuse existing shared components instead of hand-writing duplicate page UI",
+            "tool_input": {
+                "file_path": "/repo/src/app/dashboard/page.tsx"
+            }
+        });
+        let active_policy = compile_active_policy(&payload, &payload["tool_input"]);
+
+        let priors = ambient_priors_for_context_with_policy(
+            &store,
+            &simhash(ctx),
+            None,
+            Some(AmbientTurnGoal::Build),
+            3,
+            &active_policy.relevant_rules,
+        );
+        assert!(
+            priors.iter().all(|prior| prior.kind != "success-prior"),
+            "{priors:#?}"
+        );
+        let conflict = priors
+            .iter()
+            .find(|prior| prior.policy_state == Some(AmbientPolicyState::PolicyConflict));
+        assert!(conflict.is_some(), "{priors:#?}");
+        assert!(conflict.unwrap().summary.contains("policy conflict"));
     }
 }

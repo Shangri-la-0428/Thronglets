@@ -47,6 +47,7 @@ pub fn compile_active_policy(payload: &Value, tool_input: &Value) -> ActivePolic
             .get("active_policy")
             .or_else(|| payload.get("activePolicy")),
     );
+    all_rules.extend(parse_current_turn_policy_rules(payload));
     all_rules.extend(discover_project_rules(tool_input));
     dedupe_rules(&mut all_rules);
 
@@ -63,6 +64,42 @@ pub fn compile_active_policy(payload: &Value, tool_input: &Value) -> ActivePolic
         all_rules,
         relevant_rules,
     }
+}
+
+fn parse_current_turn_policy_rules(payload: &Value) -> Vec<ActivePolicyRule> {
+    let mut rules = parse_payload_rules(
+        payload
+            .get("current_turn_policy")
+            .or_else(|| payload.get("currentTurnPolicy"))
+            .or_else(|| payload.get("task_policy"))
+            .or_else(|| payload.get("taskPolicy")),
+    );
+
+    for key in [
+        "current_turn_correction",
+        "currentTurnCorrection",
+        "task_correction",
+        "taskCorrection",
+        "explicit_instruction",
+        "explicitInstruction",
+    ] {
+        let Some(summary) = payload.get(key).and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let summary = normalize_summary(summary);
+        if summary.is_empty() {
+            continue;
+        }
+        rules.push(ActivePolicyRule {
+            id: stable_rule_id("turn", &summary),
+            strength: PolicyStrength::Hard,
+            scope: PolicyScope::Task,
+            summary,
+        });
+    }
+
+    dedupe_rules(&mut rules);
+    rules
 }
 
 pub fn method_compliance_from_payload(
@@ -415,5 +452,33 @@ do not parse code fences
         };
         let compliance = method_compliance_from_payload(&json!({}), &set);
         assert_eq!(compliance, Some(MethodCompliance::Unknown));
+    }
+
+    #[test]
+    fn current_turn_correction_compiles_into_hard_task_rule() {
+        let set = compile_active_policy(
+            &json!({
+                "currentTurnCorrection": "reuse existing shared components instead of hand-writing duplicate page UI",
+                "tool_input": {
+                    "file_path": "/repo/src/app/dashboard/page.tsx"
+                }
+            }),
+            &json!({
+                "file_path": "/repo/src/app/dashboard/page.tsx"
+            }),
+        );
+
+        assert!(
+            set.all_rules.iter().any(|rule|
+                rule.scope == PolicyScope::Task
+                    && rule.strength == PolicyStrength::Hard
+                    && rule.summary.contains("reuse existing shared components")
+            ),
+            "{set:#?}"
+        );
+        assert!(
+            set.relevant_rules.iter().any(|rule| rule.summary.contains("reuse existing shared components")),
+            "{set:#?}"
+        );
     }
 }
