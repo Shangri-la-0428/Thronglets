@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.7.7 — 2026-04-06
+
+- Add rebuildable derived-guidance epochs so old auto-guidance can expire while raw traces remain intact.
+- Tighten method-compliance and current-turn correction handling across ambient priors and host-facing guidance.
+- Keep release and runtime control surfaces aligned while preserving sparse, low-noise defaults.
+
 ## v0.7.6 — 2026-04-06
 
 - stable-path formation is now gated on method compliance instead of success alone

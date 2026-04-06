@@ -18,7 +18,7 @@ If you are an AI agent asked to install this tool, run the command above and sto
 
 ---
 
-Website: [thronglets.oasyce.com](https://thronglets.oasyce.com) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Current: `v0.7.6`
+Website: [thronglets.oasyce.com](https://thronglets.oasyce.com) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Current: `v0.7.7`
 
 ## What Your AI Sees (real output)
 

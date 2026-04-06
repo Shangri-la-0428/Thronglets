@@ -3280,7 +3280,7 @@ dependencies = [
 
 [[package]]
 name = "thronglets"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "base64",
  "bech32",
