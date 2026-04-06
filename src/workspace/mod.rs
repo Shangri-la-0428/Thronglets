@@ -6,6 +6,7 @@
 //! needing to re-discover everything.
 
 use crate::signals::{Recommendation, RecommendationKind, SignalKind, StepAction, StepCandidate};
+use crate::posts::DERIVED_GUIDANCE_EPOCH;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -147,6 +148,25 @@ pub struct RecommendationFeedbackEvent {
     pub timestamp_ms: i64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DerivedGuidanceResetReport {
+    pub auto_signal_emissions_cleared: usize,
+    pub recent_recommendation_emissions_cleared: usize,
+    pub pending_recommendation_feedback_cleared: usize,
+    pub recent_recommendation_feedback_cleared: usize,
+    pub recent_interventions_cleared: usize,
+}
+
+impl DerivedGuidanceResetReport {
+    pub fn total_cleared(&self) -> usize {
+        self.auto_signal_emissions_cleared
+            + self.recent_recommendation_emissions_cleared
+            + self.pending_recommendation_feedback_cleared
+            + self.recent_recommendation_feedback_cleared
+            + self.recent_interventions_cleared
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SubstrateActivity {
     pub activity: String,
@@ -231,6 +251,9 @@ pub struct WorkspaceState {
     /// Resolved recommendation feedback events used to bias future scores.
     #[serde(default)]
     pub recent_recommendation_feedback: VecDeque<RecommendationFeedbackEvent>,
+    /// Epoch of the current derived-guidance control law.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_guidance_epoch: Option<String>,
     /// Last update timestamp.
     pub updated_ms: i64,
 }
@@ -277,6 +300,41 @@ impl WorkspaceState {
 
     fn path(data_dir: &Path) -> PathBuf {
         data_dir.join("workspace.json")
+    }
+
+    pub fn ensure_derived_guidance_epoch(
+        &mut self,
+        epoch: &str,
+    ) -> Option<DerivedGuidanceResetReport> {
+        if self.derived_guidance_epoch.as_deref() == Some(epoch) {
+            return None;
+        }
+        let report = self.reset_derived_guidance(epoch);
+        Some(report)
+    }
+
+    pub fn reset_derived_guidance(&mut self, epoch: &str) -> DerivedGuidanceResetReport {
+        let report = DerivedGuidanceResetReport {
+            auto_signal_emissions_cleared: self.auto_signal_emissions.len(),
+            recent_recommendation_emissions_cleared: self.recent_recommendation_emissions.len(),
+            pending_recommendation_feedback_cleared: self.pending_recommendation_feedback.len(),
+            recent_recommendation_feedback_cleared: self.recent_recommendation_feedback.len(),
+            recent_interventions_cleared: self.recent_interventions.len(),
+        };
+        self.auto_signal_emissions.clear();
+        self.recent_recommendation_emissions.clear();
+        self.pending_recommendation_feedback.clear();
+        self.recent_recommendation_feedback.clear();
+        self.recent_interventions.clear();
+        self.derived_guidance_epoch = Some(epoch.to_string());
+        self.updated_ms = chrono::Utc::now().timestamp_millis();
+        report
+    }
+
+    pub fn ensure_current_derived_guidance_epoch(
+        &mut self,
+    ) -> Option<DerivedGuidanceResetReport> {
+        self.ensure_derived_guidance_epoch(DERIVED_GUIDANCE_EPOCH)
     }
 
     fn step_action(tool: &str, file_path: Option<&str>) -> StepAction {
@@ -2126,6 +2184,62 @@ mod tests {
         assert_eq!(loaded.pending_feedback.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_current_derived_guidance_epoch_clears_guidance_caches_once() {
+        let mut ws = make_ws();
+        ws.auto_signal_emissions.push(AutoSignalEmission {
+            kind: "recommend".into(),
+            key: "ctx".into(),
+            timestamp_ms: 1,
+        });
+        ws.recent_recommendation_emissions
+            .push_front(RecentRecommendationEmission {
+                session_id: "s1".into(),
+                space: None,
+                fingerprint: "fp".into(),
+                timestamp_ms: 1,
+            });
+        ws.pending_recommendation_feedback
+            .push_front(PendingRecommendationFeedback {
+                session_id: "s1".into(),
+                space: None,
+                trigger_tool: "Edit".into(),
+                recommendation_kind: "do_next".into(),
+                source_kind: "history".into(),
+                expected_tool: Some("Edit".into()),
+                expected_target: None,
+                fingerprint: "fp".into(),
+                timestamp_ms: 1,
+            });
+        ws.recent_recommendation_feedback
+            .push_front(RecommendationFeedbackEvent {
+                recommendation_kind: "do_next".into(),
+                source_kind: "history".into(),
+                space: None,
+                positive: true,
+                timestamp_ms: 1,
+            });
+        ws.recent_interventions.push_front(RecentIntervention {
+            tool: "Edit".into(),
+            kinds: vec!["history".into()],
+            timestamp_ms: 1,
+        });
+
+        let report = ws.ensure_current_derived_guidance_epoch().unwrap();
+        assert_eq!(report.auto_signal_emissions_cleared, 1);
+        assert_eq!(report.recent_recommendation_emissions_cleared, 1);
+        assert_eq!(report.pending_recommendation_feedback_cleared, 1);
+        assert_eq!(report.recent_recommendation_feedback_cleared, 1);
+        assert_eq!(report.recent_interventions_cleared, 1);
+        assert_eq!(ws.derived_guidance_epoch.as_deref(), Some(DERIVED_GUIDANCE_EPOCH));
+        assert!(ws.auto_signal_emissions.is_empty());
+        assert!(ws.recent_recommendation_emissions.is_empty());
+        assert!(ws.pending_recommendation_feedback.is_empty());
+        assert!(ws.recent_recommendation_feedback.is_empty());
+        assert!(ws.recent_interventions.is_empty());
+        assert!(ws.ensure_current_derived_guidance_epoch().is_none());
     }
 
     #[test]

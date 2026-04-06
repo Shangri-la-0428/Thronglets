@@ -53,9 +53,9 @@ use thronglets::network_runtime::{
 use thronglets::pheromone::PheromoneField;
 use thronglets::posts::{
     DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, DEFAULT_SIGNAL_TTL_HOURS, SignalPostKind,
-    SignalScopeFilter, SignalTraceConfig, create_feed_reinforcement_traces,
-    create_query_reinforcement_traces, create_signal_trace, filter_signal_feed_results,
-    summarize_recent_signal_feed, summarize_signal_traces,
+    SignalScopeFilter, SignalTraceConfig, create_auto_signal_trace,
+    create_feed_reinforcement_traces, create_query_reinforcement_traces, create_signal_trace,
+    filter_signal_feed_results, summarize_recent_signal_feed, summarize_signal_traces,
 };
 use thronglets::presence::{
     DEFAULT_PRESENCE_TTL_MINUTES, PresenceFeedResult, PresenceTraceConfig, create_presence_trace,
@@ -76,6 +76,7 @@ const NETWORK_SCHEMA_VERSION: &str = "thronglets.network.v1";
 const PRESENCE_SCHEMA_VERSION: &str = "thronglets.presence.v1";
 const SPACE_SCHEMA_VERSION: &str = "thronglets.space.v2";
 const VERSION_SCHEMA_VERSION: &str = "thronglets.version.v1";
+const DERIVED_GUIDANCE_SCHEMA_VERSION: &str = "thronglets.derived-guidance.v1";
 const DEFAULT_CONNECTION_FILE_NAME: &str = "thronglets.connection.json";
 const TOP_LEVEL_AFTER_HELP: &str = "Normal path:\n  thronglets start\n  thronglets share\n  thronglets join\n  thronglets status\n\nAdvanced and machine-facing commands remain available, but are hidden from this top-level help so normal onboarding stays simple.";
 const RELEASE_MAX_LOCAL_RETENTION_DROP_TENTHS_PP: i32 = 50;
@@ -322,6 +323,22 @@ struct VersionData {
     binary_path: String,
     source_hint: &'static str,
     capabilities: VersionCapabilities,
+}
+
+#[derive(Serialize)]
+struct RebuildPriorsSummary {
+    status: &'static str,
+    ruleset_epoch: &'static str,
+    legacy_auto_signals_removed: u64,
+    workspace_caches_cleared: usize,
+    raw_traces_preserved: bool,
+    next_steps: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct RebuildPriorsData {
+    summary: RebuildPriorsSummary,
+    workspace_reset: workspace::DerivedGuidanceResetReport,
 }
 
 #[derive(Serialize)]
@@ -869,6 +886,14 @@ enum Commands {
     },
 
     #[command(hide = true)]
+    /// Rebuild derived guidance under the current control law without touching raw traces.
+    RebuildPriors {
+        /// Emit machine-readable JSON instead of text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    #[command(hide = true)]
     /// Handle agent lifecycle events (SessionStart, SessionEnd, SubagentStart, SubagentStop).
     /// Records lifecycle traces and optionally emits additionalContext.
     /// Designed to be fast (<50ms).
@@ -1139,6 +1164,41 @@ fn load_identity_binding(data_dir: &std::path::Path, identity: &NodeIdentity) ->
 fn open_store(data_dir: &std::path::Path) -> TraceStore {
     std::fs::create_dir_all(data_dir).expect("failed to create data directory");
     TraceStore::open(&data_dir.join("traces.db")).expect("failed to open trace store")
+}
+
+fn load_workspace_state(data_dir: &Path) -> WorkspaceState {
+    let mut workspace = WorkspaceState::load(data_dir);
+    if workspace.ensure_current_derived_guidance_epoch().is_some() {
+        workspace.save(data_dir);
+    }
+    workspace
+}
+
+fn rebuild_priors_data(data_dir: &Path, store: &TraceStore) -> RebuildPriorsData {
+    let removed = store
+        .delete_legacy_auto_signal_traces()
+        .expect("failed to prune legacy auto-derived signals");
+    let mut workspace = WorkspaceState::load(data_dir);
+    let reset = workspace.reset_derived_guidance(thronglets::posts::DERIVED_GUIDANCE_EPOCH);
+    workspace.save(data_dir);
+    let cleared = reset.total_cleared();
+    RebuildPriorsData {
+        summary: RebuildPriorsSummary {
+            status: if removed == 0 && cleared == 0 {
+                "already-current"
+            } else {
+                "rebuilt"
+            },
+            ruleset_epoch: thronglets::posts::DERIVED_GUIDANCE_EPOCH,
+            legacy_auto_signals_removed: removed,
+            workspace_caches_cleared: cleared,
+            raw_traces_preserved: true,
+            next_steps: vec![
+                "Raw traces were preserved; only derived guidance was rebuilt.".into(),
+            ],
+        },
+        workspace_reset: reset,
+    }
 }
 
 fn parse_outcome(s: &str) -> Outcome {
@@ -2131,6 +2191,30 @@ fn render_runtime_ready_report(data: &RuntimeReadyData) {
     }
 }
 
+fn render_rebuild_priors_report(data: &RebuildPriorsData) {
+    println!("Derived guidance: {}", data.summary.status);
+    println!("Ruleset epoch: {}", data.summary.ruleset_epoch);
+    println!(
+        "Legacy auto-signals removed: {}",
+        data.summary.legacy_auto_signals_removed
+    );
+    println!(
+        "Workspace caches cleared: {}",
+        data.summary.workspace_caches_cleared
+    );
+    println!(
+        "Raw traces preserved: {}",
+        if data.summary.raw_traces_preserved {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    for step in &data.summary.next_steps {
+        println!("Next: {step}");
+    }
+}
+
 fn summarize_doctor_reports(target: AdapterArg, reports: Vec<AdapterDoctor>) -> DoctorData {
     let healthy = !doctor_should_fail(target, &reports);
     let restart_pending = reports.iter().any(|report| report.restart_pending);
@@ -2712,7 +2796,7 @@ async fn main() {
 
             let eval_thresholds = EvalCheckThresholds::default();
             let store = open_store(&dir);
-            let local_feedback = LocalFeedbackSummary::from_workspace(&WorkspaceState::load(&dir));
+            let local_feedback = LocalFeedbackSummary::from_workspace(&load_workspace_state(&dir));
             let default_project_root = project_root.clone().unwrap_or_else(|| {
                 std::env::current_dir().expect("failed to determine current working directory")
             });
@@ -2865,7 +2949,7 @@ async fn main() {
                         summary
                     }
                     .with_local_feedback(if project_scope.is_some() {
-                        LocalFeedbackSummary::from_workspace(&WorkspaceState::load(&dir))
+                        LocalFeedbackSummary::from_workspace(&load_workspace_state(&dir))
                     } else {
                         None
                     });
@@ -2923,6 +3007,20 @@ async fn main() {
                 for prior in &data.priors {
                     println!("{} ({:.2})", prior.summary, prior.confidence);
                 }
+            }
+            return;
+        }
+        Commands::RebuildPriors { json } => {
+            let store = open_store(&dir);
+            let data = rebuild_priors_data(&dir, &store);
+            if *json {
+                print_machine_json_with_schema(
+                    DERIVED_GUIDANCE_SCHEMA_VERSION,
+                    "rebuild-priors",
+                    &data,
+                );
+            } else {
+                render_rebuild_priors_report(&data);
             }
             return;
         }
@@ -3045,6 +3143,9 @@ async fn main() {
         Commands::Version { .. } => unreachable!("version handled before identity bootstrap"),
         Commands::AmbientPriors { .. } => {
             unreachable!("ambient-priors handled before identity bootstrap")
+        }
+        Commands::RebuildPriors { .. } => {
+            unreachable!("rebuild-priors handled before identity bootstrap")
         }
 
         Commands::Start { json } => {
@@ -3755,7 +3856,7 @@ async fn main() {
             json,
         } => {
             let store = open_store(&dir);
-            let workspace = WorkspaceState::load(&dir);
+            let workspace = load_workspace_state(&dir);
             let presence_traces = store
                 .query_recent_presence_traces(hours, limit.max(1).saturating_mul(10))
                 .expect("failed to query recent presence traces");
@@ -4076,7 +4177,7 @@ async fn main() {
                 .unwrap_or_else(|| agent_source.to_string());
 
             // Load workspace once for both strategy inference and state update
-            let mut ws = WorkspaceState::load(&dir);
+            let mut ws = load_workspace_state(&dir);
             let enriched_context = if let Some(strategy) = ws.infer_strategy() {
                 format!("[{strategy}] {context_text}")
             } else {
@@ -4207,7 +4308,7 @@ async fn main() {
                     .any(|e| e.context == context_text);
                 if repeated {
                     let msg: String = err.chars().take(200).collect();
-                    let auto_signal = create_signal_trace(
+                    let auto_signal = create_auto_signal_trace(
                         SignalPostKind::Avoid,
                         &context_text,
                         &msg,
@@ -4256,7 +4357,7 @@ async fn main() {
                             "{} often follows errors here ({} sessions)",
                             repair_short, assoc_count
                         );
-                        let auto_signal = create_signal_trace(
+                        let auto_signal = create_auto_signal_trace(
                             SignalPostKind::Watch,
                             &error_ctx,
                             &msg,
@@ -4298,7 +4399,7 @@ async fn main() {
                         let success_short: String = context_text.chars().take(120).collect();
                         let error_short: String = error_ctx.chars().take(60).collect();
                         let msg = format!("{success_short} (replaces: {error_short})");
-                        let auto_signal = create_signal_trace(
+                        let auto_signal = create_auto_signal_trace(
                             SignalPostKind::Recommend,
                             &error_ctx,
                             &msg,
@@ -4357,7 +4458,7 @@ async fn main() {
                             compliant_success
                         )
                     };
-                    let auto_signal = create_signal_trace(
+                    let auto_signal = create_auto_signal_trace(
                         SignalPostKind::Recommend,
                         &context_text,
                         &msg,
@@ -4434,7 +4535,7 @@ async fn main() {
                                 .unwrap_or(other_file.as_str());
                             let msg =
                                 format!("{} usually co-edited ({} sessions)", short_name, co_count);
-                            let auto_signal = create_signal_trace(
+                            let auto_signal = create_auto_signal_trace(
                                 SignalPostKind::Recommend,
                                 &ctx_a,
                                 &msg,
@@ -4513,7 +4614,7 @@ async fn main() {
             // Everything else = pheromone (only emitted on anomaly).
 
             let mut signals: Vec<Signal> = Vec::new();
-            let mut ws = WorkspaceState::load(&dir);
+            let mut ws = load_workspace_state(&dir);
             let current_file = workspace::extract_file_path(tool_name, &payload["tool_input"]);
             let hook_context =
                 thronglets::context::build_hook_context(tool_name, &payload["tool_input"]);
@@ -4788,7 +4889,7 @@ async fn main() {
             let current_space = payload_string(&payload, "space");
 
             let store = open_store(&dir);
-            let mut ws = WorkspaceState::load(&dir);
+            let mut ws = load_workspace_state(&dir);
 
             match event.as_str() {
                 "session-start" => {
@@ -5251,7 +5352,7 @@ async fn main() {
 
             let eval_thresholds = EvalCheckThresholds::default();
             let store = open_store(&dir);
-            let local_feedback = LocalFeedbackSummary::from_workspace(&WorkspaceState::load(&dir));
+            let local_feedback = LocalFeedbackSummary::from_workspace(&load_workspace_state(&dir));
             let default_project_root = project_root.unwrap_or_else(|| {
                 std::env::current_dir().expect("failed to determine current working directory")
             });
@@ -5404,7 +5505,7 @@ async fn main() {
                         summary
                     }
                     .with_local_feedback(if project_scope.is_some() {
-                        LocalFeedbackSummary::from_workspace(&WorkspaceState::load(&dir))
+                        LocalFeedbackSummary::from_workspace(&load_workspace_state(&dir))
                     } else {
                         None
                     });
@@ -6273,12 +6374,12 @@ mod tests {
         store.insert(&avoid).unwrap();
 
         // Insert watch signal
-        let watch = create_signal_trace(
+        let watch = create_auto_signal_trace(
             SignalPostKind::Watch,
             "bash: cargo test",
             "Bash errors → Edit (2 sessions)",
             SignalTraceConfig {
-                model_id: "thronglets-auto".into(),
+                model_id: "ignored".into(),
                 session_id: Some("local-b".into()),
                 owner_account: None,
                 device_identity: Some(local_identity.device_identity()),
@@ -6293,12 +6394,12 @@ mod tests {
         store.insert(&watch).unwrap();
 
         // Insert recommend signal
-        let recommend = create_signal_trace(
+        let recommend = create_auto_signal_trace(
             SignalPostKind::Recommend,
             "bash: Run full test suite",
             "convergent: 4 sessions did this",
             SignalTraceConfig {
-                model_id: "thronglets-auto".into(),
+                model_id: "ignored".into(),
                 session_id: Some("local-c".into()),
                 owner_account: None,
                 device_identity: Some(local_identity.device_identity()),

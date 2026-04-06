@@ -14,6 +14,9 @@ pub const DEFAULT_AVOID_SIGNAL_TTL_HOURS: u32 = 72;
 pub const DEFAULT_WATCH_SIGNAL_TTL_HOURS: u32 = 48;
 pub const DEFAULT_INFO_SIGNAL_TTL_HOURS: u32 = 24;
 pub const DEFAULT_PSYCHE_STATE_SIGNAL_TTL_HOURS: u32 = 6;
+pub const DERIVED_GUIDANCE_EPOCH: &str = "thronglets.derived.v1";
+pub const AUTO_DERIVED_SIGNAL_MODEL_ID: &str = "thronglets-auto";
+const AUTO_DERIVED_SIGNAL_SOURCE: &str = "derived-guidance";
 
 #[derive(Debug, Clone)]
 pub struct SignalTraceConfig {
@@ -124,6 +127,10 @@ struct SignalTracePayload {
     message: String,
     space: Option<String>,
     expires_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    derived_guidance_epoch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    derived_guidance_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -245,6 +252,28 @@ pub fn create_signal_reinforcement_trace(
     )
 }
 
+pub fn create_auto_signal_trace(
+    kind: SignalPostKind,
+    context: &str,
+    message: &str,
+    mut config: SignalTraceConfig,
+    node_pubkey: [u8; 32],
+    sign_fn: impl FnOnce(&[u8]) -> Signature,
+) -> Trace {
+    config.model_id = AUTO_DERIVED_SIGNAL_MODEL_ID.into();
+    create_signal_trace_with_capability_and_meta(
+        kind.capability(),
+        context,
+        message,
+        config,
+        now_ms(),
+        node_pubkey,
+        Some(DERIVED_GUIDANCE_EPOCH),
+        Some(AUTO_DERIVED_SIGNAL_SOURCE),
+        sign_fn,
+    )
+}
+
 fn create_signal_trace_at(
     kind: SignalPostKind,
     context: &str,
@@ -254,13 +283,15 @@ fn create_signal_trace_at(
     node_pubkey: [u8; 32],
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
-    create_signal_trace_with_capability(
+    create_signal_trace_with_capability_and_meta(
         kind.capability(),
         context,
         message,
         config,
         now_ms,
         node_pubkey,
+        None,
+        None,
         sign_fn,
     )
 }
@@ -274,24 +305,28 @@ fn create_signal_reinforcement_trace_at(
     node_pubkey: [u8; 32],
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
-    create_signal_trace_with_capability(
+    create_signal_trace_with_capability_and_meta(
         kind.reinforcement_capability(),
         context,
         message,
         config,
         now_ms,
         node_pubkey,
+        None,
+        None,
         sign_fn,
     )
 }
 
-fn create_signal_trace_with_capability(
+fn create_signal_trace_with_capability_and_meta(
     capability: String,
     context: &str,
     message: &str,
     config: SignalTraceConfig,
     now_ms: u64,
     node_pubkey: [u8; 32],
+    derived_guidance_epoch: Option<&str>,
+    derived_guidance_source: Option<&str>,
     sign_fn: impl FnOnce(&[u8]) -> Signature,
 ) -> Trace {
     let payload = SignalTracePayload {
@@ -299,6 +334,8 @@ fn create_signal_trace_with_capability(
         message: message.to_string(),
         space: config.space.clone(),
         expires_at: expires_at_ms(now_ms, config.ttl_hours),
+        derived_guidance_epoch: derived_guidance_epoch.map(ToOwned::to_owned),
+        derived_guidance_source: derived_guidance_source.map(ToOwned::to_owned),
     };
 
     let mut trace = Trace::new_with_agent(
@@ -321,6 +358,24 @@ fn create_signal_trace_with_capability(
     trace
 }
 
+pub fn is_legacy_auto_signal_trace(trace: &Trace) -> bool {
+    if !is_signal_capability(&trace.capability) || trace.model_id != AUTO_DERIVED_SIGNAL_MODEL_ID {
+        return false;
+    }
+
+    let Some(decoded) = decode_signal_payload(trace) else {
+        return true;
+    };
+
+    !matches!(
+        (
+            decoded.derived_guidance_epoch.as_deref(),
+            decoded.derived_guidance_source.as_deref(),
+        ),
+        (Some(DERIVED_GUIDANCE_EPOCH), Some(AUTO_DERIVED_SIGNAL_SOURCE))
+    )
+}
+
 pub fn summarize_signal_traces(
     traces: &[Trace],
     query_context: &str,
@@ -333,6 +388,9 @@ pub fn summarize_signal_traces(
     let mut groups: HashMap<(SignalPostKind, String, Option<String>), SignalGroup> = HashMap::new();
 
     for trace in traces {
+        if is_legacy_auto_signal_trace(trace) {
+            continue;
+        }
         let Some(decoded) = decode_signal_trace(trace) else {
             continue;
         };
@@ -460,6 +518,9 @@ pub fn summarize_recent_signal_feed(
     let mut groups: HashMap<(SignalPostKind, String, Option<String>), SignalGroup> = HashMap::new();
 
     for trace in traces {
+        if is_legacy_auto_signal_trace(trace) {
+            continue;
+        }
         let Some(decoded) = decode_signal_trace(trace) else {
             continue;
         };
@@ -663,7 +724,7 @@ pub fn create_feed_reinforcement_traces(
 
 fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
     let (kind, reinforcement) = SignalPostKind::from_capability(&trace.capability)?;
-    let payload: SignalTracePayload = serde_json::from_str(trace.context_text.as_deref()?).ok()?;
+    let payload = decode_signal_payload(trace)?;
     Some(DecodedSignalTrace {
         kind,
         reinforcement,
@@ -672,6 +733,10 @@ fn decode_signal_trace(trace: &Trace) -> Option<DecodedSignalTrace> {
         space: payload.space,
         expires_at: payload.expires_at,
     })
+}
+
+fn decode_signal_payload(trace: &Trace) -> Option<SignalTracePayload> {
+    serde_json::from_str(trace.context_text.as_deref()?).ok()
 }
 
 pub fn expires_at_ms(now_ms: u64, ttl_hours: u32) -> u64 {
@@ -1084,6 +1149,40 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].kind, "watch");
         assert_eq!(results[0].total_posts, 1);
+    }
+
+    #[test]
+    fn summarize_signal_posts_ignores_legacy_auto_signals() {
+        let identity = NodeIdentity::generate();
+        let legacy = create_signal_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "stable path: stale derived guidance",
+            signal_config(&identity, AUTO_DERIVED_SIGNAL_MODEL_ID, "legacy-auto"),
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        assert!(is_legacy_auto_signal_trace(&legacy));
+
+        let current = create_auto_signal_trace(
+            SignalPostKind::Recommend,
+            "repair release flow",
+            "stable path: current derived guidance",
+            signal_config(&identity, "ignored", "current-auto"),
+            identity.public_key_bytes(),
+            |msg| identity.sign(msg),
+        );
+        assert!(!is_legacy_auto_signal_trace(&current));
+
+        let results = summarize_signal_traces(
+            &[legacy, current],
+            "repair release flow",
+            &identity.device_identity(),
+            identity.public_key_bytes(),
+            10,
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].message, "stable path: current derived guidance");
     }
 
     #[test]

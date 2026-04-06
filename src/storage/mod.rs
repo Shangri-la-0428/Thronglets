@@ -6,6 +6,7 @@
 use crate::continuity::CONTINUITY_CAPABILITY_PREFIX;
 use crate::posts::{
     SIGNAL_CAPABILITY_PREFIX, SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX, SignalPostKind,
+    is_legacy_auto_signal_trace,
 };
 use crate::presence::PRESENCE_CAPABILITY_PREFIX;
 use crate::signals::StepAction;
@@ -899,6 +900,63 @@ impl TraceStore {
             "DELETE FROM traces WHERE timestamp < ?1",
             params![cutoff_ms],
         )?;
+        Ok(deleted)
+    }
+
+    /// Count legacy auto-derived signal traces that no longer match the active epoch.
+    pub fn count_legacy_auto_signal_traces(&self) -> rusqlite::Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT {TRACE_SELECT_COLUMNS}
+             FROM traces
+             WHERE (capability LIKE ?1 OR capability LIKE ?2)
+               AND model_id = ?3"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let traces = Self::collect_traces(
+            &mut stmt,
+            params![
+                format!("{SIGNAL_CAPABILITY_PREFIX}%"),
+                format!("{SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX}%"),
+                crate::posts::AUTO_DERIVED_SIGNAL_MODEL_ID,
+            ],
+        )?;
+        Ok(traces
+            .into_iter()
+            .filter(is_legacy_auto_signal_trace)
+            .count() as u64)
+    }
+
+    /// Remove legacy auto-derived signal traces while preserving raw execution traces.
+    pub fn delete_legacy_auto_signal_traces(&self) -> rusqlite::Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT {TRACE_SELECT_COLUMNS}
+             FROM traces
+             WHERE (capability LIKE ?1 OR capability LIKE ?2)
+               AND model_id = ?3"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let traces = Self::collect_traces(
+            &mut stmt,
+            params![
+                format!("{SIGNAL_CAPABILITY_PREFIX}%"),
+                format!("{SIGNAL_REINFORCEMENT_CAPABILITY_PREFIX}%"),
+                crate::posts::AUTO_DERIVED_SIGNAL_MODEL_ID,
+            ],
+        )?;
+        let legacy_ids: Vec<[u8; 32]> = traces
+            .into_iter()
+            .filter(is_legacy_auto_signal_trace)
+            .map(|trace| trace.id)
+            .collect();
+        let mut deleted = 0_u64;
+        for trace_id in legacy_ids {
+            deleted += conn.execute(
+                "DELETE FROM traces WHERE id = ?1",
+                params![trace_id.as_slice()],
+            )? as u64;
+        }
         Ok(deleted)
     }
 
@@ -2075,6 +2133,82 @@ mod tests {
         assert_eq!(stats.success_unknown, 1);
         assert_eq!(stats.success_compliant, 0);
         assert_eq!(stats.success_noncompliant, 0);
+    }
+
+    #[test]
+    fn delete_legacy_auto_signal_traces_preserves_raw_traces() {
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+        let ctx = "edit file: src/app/dashboard.tsx";
+
+        let raw = Trace::new_with_agent(
+            "tool:Edit".into(),
+            Outcome::Succeeded,
+            100,
+            5000,
+            crate::context::simhash(ctx),
+            Some(ctx.into()),
+            Some("raw-session".into()),
+            None,
+            Some(id.device_identity()),
+            None,
+            None,
+            "codex".into(),
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        store.insert(&raw).unwrap();
+
+        let legacy_auto = crate::posts::create_signal_trace(
+            SignalPostKind::Recommend,
+            ctx,
+            "stable path: stale auto guidance",
+            crate::posts::SignalTraceConfig {
+                model_id: crate::posts::AUTO_DERIVED_SIGNAL_MODEL_ID.into(),
+                session_id: Some("legacy-auto".into()),
+                owner_account: None,
+                device_identity: Some(id.device_identity()),
+                agent_id: None,
+                sigil_id: None,
+                space: None,
+                ttl_hours: 24,
+            },
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        store.insert(&legacy_auto).unwrap();
+
+        let current_auto = crate::posts::create_auto_signal_trace(
+            SignalPostKind::Recommend,
+            ctx,
+            "stable path: current auto guidance",
+            crate::posts::SignalTraceConfig {
+                model_id: "ignored".into(),
+                session_id: Some("current-auto".into()),
+                owner_account: None,
+                device_identity: Some(id.device_identity()),
+                agent_id: None,
+                sigil_id: None,
+                space: None,
+                ttl_hours: 24,
+            },
+            id.public_key_bytes(),
+            |m| id.sign(m),
+        );
+        store.insert(&current_auto).unwrap();
+
+        assert_eq!(store.count_legacy_auto_signal_traces().unwrap(), 1);
+        assert_eq!(store.delete_legacy_auto_signal_traces().unwrap(), 1);
+        assert_eq!(store.count_legacy_auto_signal_traces().unwrap(), 0);
+        assert_eq!(store.count().unwrap(), 2);
+        assert_eq!(store.query_capability("tool:Edit", 10).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .query_capability(&SignalPostKind::Recommend.capability(), 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

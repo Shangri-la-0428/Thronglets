@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::active_policy::{ActivePolicyRule, PolicyStrength};
 use crate::context::simhash;
 use crate::contracts::PREHOOK_MAX_HINTS;
+use crate::posts::DERIVED_GUIDANCE_EPOCH;
 use crate::storage::{ContextResidueStats, TraceStore};
 
 pub const AMBIENT_PRIOR_SCHEMA_VERSION: &str = "thronglets.ambient.v1";
@@ -66,6 +67,7 @@ pub struct AmbientPriorProjection {
 pub struct AmbientPriorSummary {
     pub status: &'static str,
     pub emitted: usize,
+    pub ruleset_epoch: &'static str,
     pub context_hash: String,
     pub space: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -108,6 +110,7 @@ pub fn ambient_prior_data(store: &TraceStore, request: &AmbientPriorRequest) -> 
         summary: AmbientPriorSummary {
             status: if priors.is_empty() { "quiet" } else { "ready" },
             emitted: priors.len(),
+            ruleset_epoch: DERIVED_GUIDANCE_EPOCH,
             context_hash: hex_encode(&context_hash),
             space: space.map(str::to_string),
             goal,
