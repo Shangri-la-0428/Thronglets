@@ -594,12 +594,15 @@ The minimum JSON contract is fixed. `prehook` reads input like:
   "session_id": "session-123",
   "space": "shared-space",
   "mode": "focus",
+  "current_turn_correction": "reuse existing shared components instead of hand-writing duplicate page UI",
   "tool_name": "Edit",
   "tool_input": {
     "file_path": "src/main.rs"
   }
 }
 ```
+
+If the host has an explicit current-turn correction, pass it as `current_turn_correction`. Thronglets will treat it as a task-scoped hard method policy for this lineage without requiring the host to build a structured `active_policy` object first.
 
 `hook` uses the same payload plus `tool_response`:
 

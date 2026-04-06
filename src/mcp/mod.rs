@@ -404,6 +404,10 @@ fn tool_definitions() -> Value {
                                 },
                                 "required": ["id", "strength", "scope", "summary"]
                             }
+                        },
+                        "current_turn_correction": {
+                            "type": "string",
+                            "description": "Optional explicit current-turn correction in natural language. Treated as a task-scoped hard policy for this runtime turn only."
                         }
                     },
                     "required": ["text"]
@@ -1558,6 +1562,23 @@ fn handle_ambient_priors(ctx: &McpContext, id: Value, args: Value) -> JsonRpcRes
         .cloned()
         .map(|value| serde_json::from_value(value).unwrap_or_default())
         .unwrap_or_default();
+    let current_turn_correction = args
+        .get("current_turn_correction")
+        .or_else(|| args.get("currentTurnCorrection"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let active_policy = if let Some(correction) = current_turn_correction {
+        let payload = json!({
+            "active_policy": active_policy,
+            "current_turn_correction": correction,
+            "tool_input": {}
+        });
+        crate::active_policy::compile_active_policy(&payload, &payload["tool_input"]).all_rules
+    } else {
+        active_policy
+    };
     let response_json = ambient_prior_data(
         &ctx.store,
         &AmbientPriorRequest {
@@ -1786,6 +1807,18 @@ mod tests {
         context: &str,
         latency: u32,
     ) {
+        insert_trace_with_compliance(ctx, cap, outcome, model, context, latency, None);
+    }
+
+    fn insert_trace_with_compliance(
+        ctx: &McpContext,
+        cap: &str,
+        outcome: Outcome,
+        model: &str,
+        context: &str,
+        latency: u32,
+        method_compliance: Option<crate::trace::MethodCompliance>,
+    ) {
         let trace = Trace::new_with_identity(
             cap.into(),
             outcome,
@@ -1800,6 +1833,13 @@ mod tests {
             ctx.identity.public_key_bytes(),
             |msg| ctx.identity.sign(msg),
         );
+        let trace = if method_compliance.is_some() {
+            let mut updated = trace;
+            updated.method_compliance = method_compliance;
+            updated
+        } else {
+            trace
+        };
         ctx.store.insert(&trace).unwrap();
         // Sleep briefly so content-addressed IDs differ (timestamp is part of ID)
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -2129,6 +2169,54 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("recent failure residue")
+        );
+    }
+
+    #[tokio::test]
+    async fn ambient_priors_accept_current_turn_correction_without_structured_policy_object() {
+        let ctx = make_ctx();
+        let session = McpSession::new();
+        let context = "edit file: src/app/dashboard/page.tsx";
+
+        for idx in 0..3 {
+            insert_trace_with_compliance(
+                &ctx,
+                "codex/Edit",
+                Outcome::Succeeded,
+                "codex",
+                context,
+                120 + idx,
+                Some(crate::trace::MethodCompliance::Noncompliant),
+            );
+        }
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(72)),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "ambient_priors",
+                "arguments": {
+                    "text": context,
+                    "goal": "build",
+                    "current_turn_correction": "reuse existing shared components instead of hand-writing duplicate page UI"
+                }
+            }),
+        };
+        let resp = handle_request(&ctx, &session, req).await.unwrap();
+        assert!(resp.error.is_none(), "ambient_priors should succeed");
+
+        let text = resp.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed: Value =
+            serde_json::from_str(&text).expect("ambient prior response should be valid JSON");
+        let priors = parsed["priors"].as_array().unwrap();
+        assert!(priors.iter().all(|prior| prior["kind"] != "success-prior"), "{priors:#?}");
+        assert!(
+            priors.iter().any(|prior| prior["policy_state"] == "policy-conflict"),
+            "{priors:#?}"
         );
     }
 

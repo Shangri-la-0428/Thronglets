@@ -27,6 +27,7 @@
         "contract": {
           "prehook_stdin": {
             "agent_source": "my-agent",
+            "current_turn_correction": "reuse existing shared components instead of hand-writing duplicate page UI",
             "model": "my-model",
             "mode": "focus",
             "session_id": "session-123",
@@ -38,6 +39,7 @@
           },
           "hook_stdin": {
             "agent_source": "my-agent",
+            "current_turn_correction": "reuse existing shared components instead of hand-writing duplicate page UI",
             "model": "my-model",
             "mode": "focus",
             "session_id": "session-123",

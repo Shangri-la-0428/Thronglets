@@ -173,6 +173,12 @@ fn install_plan_generic_json_includes_contract_examples() {
     assert_eq!(plan["contract"]["prehook_stdin"]["tool_name"], "Edit");
     assert_eq!(plan["contract"]["prehook_stdin"]["space"], "shared-space");
     assert_eq!(plan["contract"]["prehook_stdin"]["mode"], "focus");
+    assert!(
+        plan["contract"]["prehook_stdin"]["current_turn_correction"]
+            .as_str()
+            .unwrap()
+            .contains("reuse existing shared components")
+    );
     assert!(plan["contract"]["hook_stdin"]["tool_response"].is_object());
     assert!(
         plan["contract"]["runtimes"]["node"]["prehook"]

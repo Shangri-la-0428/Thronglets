@@ -792,6 +792,7 @@ fn hook_contract_examples() -> HookContractExamples {
         "session_id": "session-123",
         "space": "shared-space",
         "mode": "focus",
+        "current_turn_correction": "reuse existing shared components instead of hand-writing duplicate page UI",
         "tool_name": "Edit",
         "tool_input": {
             "file_path": "src/main.rs"
