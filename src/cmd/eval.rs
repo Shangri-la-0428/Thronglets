@@ -22,6 +22,8 @@ pub(crate) struct FieldCouplingEdge {
     predecessor: String,
     successor: String,
     weight: f64,
+    level: u8,
+    bucket: i64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -504,10 +506,12 @@ pub(crate) fn eval_emergence(
         let top_couplings: Vec<FieldCouplingEdge> = field
             .active_edges(20)
             .into_iter()
-            .map(|(pred, succ, w)| FieldCouplingEdge {
+            .map(|(pred, succ, w, level, bucket)| FieldCouplingEdge {
                 predecessor: pred,
                 successor: succ,
                 weight: (w * 1000.0).round() / 1000.0,
+                level: level as u8,
+                bucket,
             })
             .collect();
         FieldConvergence {

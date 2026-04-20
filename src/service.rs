@@ -770,6 +770,7 @@ pub fn field_clusters(ctx: &Ctx, min_weight: f64) -> Result<Value, String> {
                 "total_weight": round2(c.total_weight),
                 "edge_count": c.edge_count,
                 "level": c.level,
+                "bucket": c.bucket,
             })
         })
         .collect();

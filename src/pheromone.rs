@@ -335,14 +335,16 @@ struct EdgeKey {
     predecessor: String,
     successor: String,
     level: AbstractionLevel,
+    bucket: i64,
 }
 
 impl EdgeKey {
-    fn at_level(predecessor: &str, successor: &str, level: AbstractionLevel) -> Self {
+    fn at_level(predecessor: &str, successor: &str, level: AbstractionLevel, bucket: i64) -> Self {
         Self {
             predecessor: normalize_capability(predecessor),
             successor: normalize_capability(successor),
             level,
+            bucket,
         }
     }
 
@@ -418,6 +420,8 @@ pub struct CouplingSnapshotEntry {
     pub last_reinforced: u64,
     #[serde(default)]
     pub level: AbstractionLevel,
+    #[serde(default)]
+    pub bucket: i64,
 }
 
 /// Result of scanning the field near a context.
@@ -444,6 +448,7 @@ pub struct FieldCluster {
     pub total_weight: f64,
     pub edge_count: usize,
     pub level: u8,
+    pub bucket: i64,
 }
 
 /// Snapshot of the entire field for P2P sync.
@@ -489,6 +494,7 @@ impl FieldSnapshot {
             buf.push(0);
             buf.extend_from_slice(&c.weight.to_le_bytes());
             buf.push(c.level as u8);
+            buf.extend_from_slice(&c.bucket.to_le_bytes());
         }
         buf.extend_from_slice(&self.total_intensity.to_le_bytes());
         buf.extend_from_slice(&self.node_pubkey);
@@ -836,16 +842,37 @@ impl PheromoneField {
         let mut inner = self.inner.write().unwrap();
         let delta = inner.excite_node(trace, space);
 
-        // Hebbian: detect co-excitations per level.
-        // For each (capability, level) pair, find max(last_excited).
-        // Edges form within each level independently — "edit and search
-        // co-occur in Rust source files" is a Level 2 edge.
         let now_ms = trace.timestamp;
         let normalized_cap = normalize_capability(&trace.capability);
+
+        let concrete_bucket = context_bucket(&trace.context_hash);
+        let project_bucket = space.map(crate::target_kind::space_bucket).unwrap_or(0);
+        let file_path = trace
+            .context_text
+            .as_deref()
+            .and_then(crate::target_kind::extract_file_path);
+        let typed_bucket = file_path
+            .map(crate::target_kind::typed_bucket)
+            .unwrap_or_else(|| crate::target_kind::typed_bucket("unknown.src"));
+
+        let bucket_for = |level: AbstractionLevel| -> i64 {
+            match level {
+                AbstractionLevel::Concrete => concrete_bucket,
+                AbstractionLevel::Project => project_bucket,
+                AbstractionLevel::Typed => typed_bucket,
+                AbstractionLevel::Universal => 0,
+            }
+        };
+
+        // Hebbian: detect co-excitations per level.
+        // Only same-bucket nodes form edges — edges inherit spatial scope.
         let co_excited: Vec<(String, AbstractionLevel)> = {
             let mut max_ts: HashMap<(String, AbstractionLevel), u64> = HashMap::new();
             for (k, p) in &inner.nodes {
                 if k.capability == normalized_cap {
+                    continue;
+                }
+                if k.bucket != bucket_for(k.level) {
                     continue;
                 }
                 let key = (k.capability.clone(), k.level);
@@ -860,7 +887,7 @@ impl PheromoneField {
         };
 
         for (cap, level) in &co_excited {
-            let edge_key = EdgeKey::at_level(cap, &normalized_cap, *level);
+            let edge_key = EdgeKey::at_level(cap, &normalized_cap, *level, bucket_for(*level));
             let edge = inner.edges.entry(edge_key).or_insert(Edge {
                 weight: 0.0,
                 last_reinforced: now_ms,
@@ -964,7 +991,7 @@ impl PheromoneField {
 
         for (primary_cap, primary_intensity, primary_valence, primary_sim) in &primary_data {
             for (key, edge) in &inner.edges {
-                if key.level != level {
+                if key.level != level || key.bucket < bucket_lo || key.bucket > bucket_hi {
                     continue;
                 }
                 let Some(partner) = key.other_end(primary_cap) else {
@@ -1117,7 +1144,7 @@ impl PheromoneField {
                 .collect();
             for (pcap, pi, pv, ps) in &primaries {
                 for (ek, edge) in &inner.edges {
-                    if ek.level != level {
+                    if ek.level != level || ek.bucket < bucket_lo || ek.bucket > bucket_hi {
                         continue;
                     }
                     let Some(partner) = ek.other_end(pcap) else {
@@ -1265,17 +1292,16 @@ impl PheromoneField {
     }
 
     /// List Hebbian edges with live weights, sorted by weight descending.
-    /// Returns (predecessor, successor, weight) triples — directed edges.
-    pub fn active_edges(&self, limit: usize) -> Vec<(String, String, f64)> {
+    pub fn active_edges(&self, limit: usize) -> Vec<(String, String, f64, AbstractionLevel, i64)> {
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
         let inner = self.inner.read().unwrap();
-        let mut edges: Vec<(String, String, f64)> = inner
+        let mut edges: Vec<(String, String, f64, AbstractionLevel, i64)> = inner
             .edges
             .iter()
             .filter_map(|(key, edge)| {
                 let w = edge.current_weight(now_ms);
                 if w > COUPLING_PRUNE_THRESHOLD {
-                    Some((key.predecessor.clone(), key.successor.clone(), w))
+                    Some((key.predecessor.clone(), key.successor.clone(), w, key.level, key.bucket))
                 } else {
                     None
                 }
@@ -1298,12 +1324,11 @@ impl PheromoneField {
             COUPLING_PRUNE_THRESHOLD
         };
 
-        // Group live edges by abstraction level
-        let mut level_edges: HashMap<u8, Vec<(&str, &str, f64)>> = HashMap::new();
+        let mut level_edges: HashMap<(u8, i64), Vec<(&str, &str, f64)>> = HashMap::new();
         for (key, edge) in &inner.edges {
             let w = edge.current_weight(now_ms);
             if w > threshold {
-                level_edges.entry(key.level as u8).or_default().push((
+                level_edges.entry((key.level as u8, key.bucket)).or_default().push((
                     &key.predecessor,
                     &key.successor,
                     w,
@@ -1312,7 +1337,7 @@ impl PheromoneField {
         }
 
         let mut clusters = Vec::new();
-        for (level, edges) in &level_edges {
+        for (&(level, bucket), edges) in &level_edges {
             // Union-find on capabilities
             let mut cap_index: HashMap<&str, usize> = HashMap::new();
             let mut parent: Vec<usize> = Vec::new();
@@ -1360,7 +1385,8 @@ impl PheromoneField {
                     capabilities: caps.into_iter().map(String::from).collect(),
                     total_weight,
                     edge_count,
-                    level: *level,
+                    level,
+                    bucket,
                 });
             }
         }
@@ -1429,6 +1455,7 @@ impl PheromoneField {
                 weight: e.current_weight(now_ms),
                 last_reinforced: e.last_reinforced,
                 level: key.level,
+                bucket: key.bucket,
             })
             .collect();
 
@@ -1467,7 +1494,7 @@ impl PheromoneField {
         }
 
         for entry in &snapshot.couplings {
-            let key = EdgeKey::at_level(&entry.predecessor, &entry.successor, entry.level);
+            let key = EdgeKey::at_level(&entry.predecessor, &entry.successor, entry.level, entry.bucket);
             let edge = inner.edges.entry(key).or_insert(Edge {
                 weight: 0.0,
                 last_reinforced: entry.last_reinforced,
@@ -1532,6 +1559,7 @@ impl PheromoneField {
                 weight: e.current_weight(now_ms),
                 last_reinforced: e.last_reinforced,
                 level: key.level,
+                bucket: key.bucket,
             })
             .collect();
 
@@ -1596,7 +1624,7 @@ impl PheromoneField {
             if !entry.level.is_syncable() {
                 continue;
             }
-            let key = EdgeKey::at_level(&entry.predecessor, &entry.successor, entry.level);
+            let key = EdgeKey::at_level(&entry.predecessor, &entry.successor, entry.level, entry.bucket);
             let discounted_weight = entry.weight * trust_discount;
             let edge = inner.edges.entry(key).or_insert(Edge {
                 weight: 0.0,
@@ -1692,12 +1720,14 @@ impl PheromoneField {
             None => (0.0, 0.0, 0.0),
         };
 
-        // Edge-derived coupling: average weight of live edges involving this capability.
         let coupling = {
-            let norm_cap = &key.capability; // already normalized by FieldKey::new
+            let norm_cap = &key.capability;
             let mut total_weight = 0.0;
             let mut count = 0u32;
             for (edge_key, edge) in &inner.edges {
+                if edge_key.level != key.level || edge_key.bucket != key.bucket {
+                    continue;
+                }
                 if edge_key.predecessor == *norm_cap || edge_key.successor == *norm_cap {
                     let w = edge.current_weight(now_ms);
                     if w > COUPLING_PRUNE_THRESHOLD {
@@ -2051,7 +2081,8 @@ mod tests {
 
         // Verify the Concrete-level edge exists
         let inner = field.inner.read().unwrap();
-        let key = EdgeKey::at_level("cap/alpha", "cap/beta", AbstractionLevel::Concrete);
+        let bucket = context_bucket(&simhash("task context"));
+        let key = EdgeKey::at_level("cap/alpha", "cap/beta", AbstractionLevel::Concrete, bucket);
         let edge = inner
             .edges
             .get(&key)
@@ -2076,7 +2107,7 @@ mod tests {
         let edges = field.active_edges(100);
         // All edges should be first→second (at various levels), never reversed
         assert!(!edges.is_empty(), "should have at least one edge");
-        for (pred, succ, _w) in &edges {
+        for (pred, succ, _w, _level, _bucket) in &edges {
             assert_eq!(
                 pred, "tool:first",
                 "predecessor should be the first-excited cap"
@@ -2089,12 +2120,14 @@ mod tests {
 
         // Reverse edge should NOT exist at any level
         let inner = field.inner.read().unwrap();
-        for level in [
-            AbstractionLevel::Concrete,
-            AbstractionLevel::Typed,
-            AbstractionLevel::Universal,
+        let ctx_bucket = context_bucket(&simhash("ctx"));
+        let typed_bucket = crate::target_kind::typed_bucket("unknown.src");
+        for (level, bucket) in [
+            (AbstractionLevel::Concrete, ctx_bucket),
+            (AbstractionLevel::Typed, typed_bucket),
+            (AbstractionLevel::Universal, 0),
         ] {
-            let reverse_key = EdgeKey::at_level("cap/second", "cap/first", level);
+            let reverse_key = EdgeKey::at_level("cap/second", "cap/first", level, bucket);
             assert!(
                 inner.edges.get(&reverse_key).is_none(),
                 "reverse edge should not exist at {:?}",
@@ -2152,9 +2185,9 @@ mod tests {
 
         assert!(field.coupling_count() >= 1, "coupling should have formed");
 
-        // Scan for primary's context — associated should surface via coupling
+        // Scan with fallback — associated should surface via Typed/Universal coupling
         let hash = simhash("search context");
-        let results = field.scan(&hash, 1, 10);
+        let results = field.scan_with_fallback(&hash, None, None, 10);
 
         let caps: Vec<&str> = results.iter().map(|r| r.capability.as_str()).collect();
         assert!(
@@ -2650,6 +2683,79 @@ mod tests {
         assert!(
             !universal_edges.is_empty(),
             "should have Universal-level edges"
+        );
+    }
+
+    #[test]
+    fn hebbian_edges_differentiate_by_space() {
+        use crate::target_kind;
+
+        let field = PheromoneField::new();
+
+        // Excite search→edit in "backend" space
+        let t1 = make_trace("cap/search", "find handler", Outcome::Succeeded, 100);
+        let t2 = make_trace("cap/edit", "fix handler", Outcome::Succeeded, 200);
+        field.excite_with_space(&t1, Some("backend"));
+        field.excite_with_space(&t2, Some("backend"));
+
+        // Excite search→read in "android" space
+        let t3 = make_trace("cap/search", "find layout", Outcome::Succeeded, 300);
+        let t4 = make_trace("cap/read", "check layout", Outcome::Succeeded, 400);
+        field.excite_with_space(&t3, Some("android"));
+        field.excite_with_space(&t4, Some("android"));
+
+        let inner = field.inner.read().unwrap();
+        let backend_bucket = target_kind::space_bucket("backend");
+        let android_bucket = target_kind::space_bucket("android");
+
+        // Backend should have search→edit edge at Project level
+        let be_edge = EdgeKey::at_level(
+            "cap/search", "cap/edit", AbstractionLevel::Project, backend_bucket,
+        );
+        assert!(
+            inner.edges.contains_key(&be_edge),
+            "backend should have search→edit edge at Project level"
+        );
+
+        // Android should have search→read edge at Project level
+        let an_edge = EdgeKey::at_level(
+            "cap/search", "cap/read", AbstractionLevel::Project, android_bucket,
+        );
+        assert!(
+            inner.edges.contains_key(&an_edge),
+            "android should have search→read edge at Project level"
+        );
+
+        // Backend should NOT have search→read, android should NOT have search→edit
+        let cross1 = EdgeKey::at_level(
+            "cap/search", "cap/read", AbstractionLevel::Project, backend_bucket,
+        );
+        let cross2 = EdgeKey::at_level(
+            "cap/search", "cap/edit", AbstractionLevel::Project, android_bucket,
+        );
+        assert!(
+            !inner.edges.contains_key(&cross1),
+            "backend should not have android's edge pattern"
+        );
+        assert!(
+            !inner.edges.contains_key(&cross2),
+            "android should not have backend's edge pattern"
+        );
+
+        // Universal level should have BOTH patterns (bucket=0, shared)
+        let uni_edit = EdgeKey::at_level(
+            "cap/search", "cap/edit", AbstractionLevel::Universal, 0,
+        );
+        let uni_read = EdgeKey::at_level(
+            "cap/search", "cap/read", AbstractionLevel::Universal, 0,
+        );
+        assert!(
+            inner.edges.contains_key(&uni_edit),
+            "Universal should have search→edit"
+        );
+        assert!(
+            inner.edges.contains_key(&uni_read),
+            "Universal should have search→read"
         );
     }
 
