@@ -459,6 +459,7 @@ struct McpSession {
     session_id: String,
     model_hint: std::sync::Mutex<String>,
     last_presence_ms: std::sync::Mutex<u64>,
+    default_space: std::sync::Mutex<Option<String>>,
 }
 
 impl McpSession {
@@ -471,6 +472,7 @@ impl McpSession {
             session_id: format!("mcp-{now:016x}"),
             model_hint: std::sync::Mutex::new("unknown".into()),
             last_presence_ms: std::sync::Mutex::new(0),
+            default_space: std::sync::Mutex::new(None),
         }
     }
 
@@ -488,6 +490,35 @@ impl McpSession {
             .map(|m| m.clone())
             .unwrap_or_else(|_| "unknown".into())
     }
+
+    fn update_roots(&self, params: &Value) {
+        let roots = params.get("roots").and_then(|v| v.as_array());
+        if let Some(roots) = roots {
+            if let Some(space) = space_from_roots(roots) {
+                if let Ok(mut s) = self.default_space.lock() {
+                    *s = Some(space);
+                }
+            }
+        }
+    }
+
+    fn space(&self) -> Option<String> {
+        self.default_space.lock().ok().and_then(|s| s.clone())
+    }
+}
+
+fn space_from_roots(roots: &[Value]) -> Option<String> {
+    let uri = roots.first()?.get("uri")?.as_str()?;
+    let path = uri.strip_prefix("file://")?;
+    let p = std::path::Path::new(path);
+    let mut parts = p.components().rev().take(2).collect::<Vec<_>>();
+    parts.reverse();
+    let space: String = parts
+        .iter()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    if space.is_empty() { None } else { Some(space) }
 }
 
 /// Run the MCP server over stdio.
@@ -549,8 +580,12 @@ async fn handle_request(
             debug!(method = %req.method, "Received MCP notification");
             None
         }
+        "notifications/roots/list_changed" => {
+            session.update_roots(&req.params);
+            None
+        }
         "initialize" => {
-            // Ambient: the substrate notices you arrived.
+            session.update_roots(&req.params);
             emit_presence(ctx, session, "arrive");
             Some(JsonRpcResponse::success(id, server_info()))
         }
@@ -587,7 +622,7 @@ async fn handle_tool_call(
     }
 
     match tool_name {
-        "trace_record" => handle_trace_record(ctx, id, arguments).await,
+        "trace_record" => handle_trace_record(ctx, session, id, arguments).await,
         "signal_post" => handle_signal_post(ctx, id, arguments).await,
         "signal_feed" => handle_signal_feed(ctx, id, arguments),
         "presence_ping" => handle_presence_ping(ctx, id, arguments).await,
@@ -604,7 +639,7 @@ async fn handle_tool_call(
 // Tool 1: trace_record
 // ---------------------------------------------------------------------------
 
-async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRpcResponse {
+async fn handle_trace_record(ctx: &McpContext, session: &McpSession, id: Value, args: Value) -> JsonRpcResponse {
     let capability = args
         .get("capability")
         .and_then(|v| v.as_str())
@@ -648,6 +683,7 @@ async fn handle_trace_record(ctx: &McpContext, id: Value, args: Value) -> JsonRp
             .get("space")
             .and_then(|v| v.as_str())
             .map(String::from)
+            .or_else(|| session.space())
             .or_else(crate::service::space_from_cwd),
         agent_id: args
             .get("agent_id")
@@ -2059,5 +2095,41 @@ mod tests {
         let resp = handle_request(&ctx, &session, req).await.unwrap();
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    #[test]
+    fn space_from_roots_extracts_project_path() {
+        let roots = vec![json!({"uri": "file:///Users/alice/Desktop/MyProject"})];
+        assert_eq!(space_from_roots(&roots), Some("Desktop/MyProject".into()));
+
+        let roots = vec![json!({"uri": "file:///home/dev/repos/backend"})];
+        assert_eq!(space_from_roots(&roots), Some("repos/backend".into()));
+
+        let empty: Vec<Value> = vec![];
+        assert_eq!(space_from_roots(&empty), None);
+
+        let no_uri = vec![json!({"name": "test"})];
+        assert_eq!(space_from_roots(&no_uri), None);
+    }
+
+    #[tokio::test]
+    async fn initialize_with_roots_sets_session_space() {
+        let ctx = make_ctx();
+        let session = McpSession::new();
+        assert!(session.space().is_none());
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "initialize".into(),
+            params: json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "codex", "version": "1.0"},
+                "roots": [{"uri": "file:///Users/dev/Desktop/Oasis_App"}]
+            }),
+        };
+        let _resp = handle_request(&ctx, &session, req).await;
+        assert_eq!(session.space(), Some("Desktop/Oasis_App".into()));
     }
 }
