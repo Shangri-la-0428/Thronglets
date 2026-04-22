@@ -40,7 +40,8 @@ const MAX_RECENT_RECOMMENDATION_EMISSIONS: usize = 40;
 /// Dedupe repeated recommendations within the same session over a short window.
 const RECOMMENDATION_DEDUPE_WINDOW_MS: i64 = 30_000;
 /// Pending feedback remains meaningful only within this window.
-const RECOMMENDATION_FEEDBACK_WINDOW_MS: i64 = 600_000;
+/// 30 min covers a typical coding task unit (was 10 min, too narrow for co-edit patterns).
+const RECOMMENDATION_FEEDBACK_WINDOW_MS: i64 = 1_800_000;
 
 /// A file that was recently touched by the AI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -601,7 +602,7 @@ impl WorkspaceState {
                     self.push_feedback_event(event.clone());
                     resolved.push(event);
                 }
-                "do_next" | "maybe_also" => {
+                "do_next" => {
                     if same_trigger_tool {
                         retained.push_back(recommendation);
                         continue;
@@ -620,6 +621,24 @@ impl WorkspaceState {
                     let event = Self::make_feedback_event(&recommendation, positive);
                     self.push_feedback_event(event.clone());
                     resolved.push(event);
+                }
+                "maybe_also" => {
+                    if same_trigger_tool {
+                        retained.push_back(recommendation);
+                        continue;
+                    }
+
+                    let followed = recommendation.expected_tool.as_deref() == Some(tool)
+                        && Self::file_name_matches(
+                            file_path,
+                            recommendation.expected_target.as_deref(),
+                        );
+                    if followed && outcome != "failed" {
+                        let event = Self::make_feedback_event(&recommendation, true);
+                        self.push_feedback_event(event.clone());
+                        resolved.push(event);
+                    }
+                    // Not followed → discard silently (information, not advice)
                 }
                 _ => {}
             }

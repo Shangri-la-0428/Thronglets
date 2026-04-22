@@ -252,12 +252,17 @@ pub(crate) fn co_edit_signals(
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(other_file.as_str());
-                signals.push(Signal {
-                    kind: SignalKind::Adjacency,
-                    score: 150,
-                    body: format!("  ~ co-edited: {} ({} sessions)", short_name, co_count),
-                    candidate: None,
-                });
+                signals.push(Signal::adjacency_candidate(
+                    format!("  ~ co-edited: {} ({} sessions)", short_name, co_count),
+                    150,
+                    StepCandidate::single(
+                        "Edit",
+                        Some(other_file.clone()),
+                        "co-edit",
+                        co_count as u32,
+                        1,
+                    ),
+                ));
             }
         }
     }

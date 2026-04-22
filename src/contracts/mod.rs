@@ -5,7 +5,7 @@
 //! and a bounded number of emitted signals.
 
 /// Only inject prehook context at decision points.
-pub const PREHOOK_MATCHER: &str = "Edit|Write|Bash|Agent";
+pub const PREHOOK_MATCHER: &str = "Edit|Write|Bash|Agent|Read|Grep|Glob";
 
 /// Keep prehook output bounded even when several signals are available.
 pub const PREHOOK_MAX_HINTS: usize = 3;
