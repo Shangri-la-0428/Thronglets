@@ -520,21 +520,21 @@ pub(crate) fn prehook(ctx: &FullCtx) {
     }
     profiler.stage("repair");
 
-    // Co-edit signals: files that are frequently edited together.
-    if supports_file_guidance
+    // Co-edit observations: files frequently edited together (fact, not advice).
+    let co_edit_obs = if supports_file_guidance
         && let Some(current_file) = current_file.as_deref()
         && let Some(store) = cached_store(&mut secondary_store, &ctx.dir)
     {
-        for sig in co_edit_signals(
+        co_edit_observations(
             store,
             current_file,
             &ws.recent_actions,
             current_session_id.as_deref(),
             current_space.as_deref(),
-        ) {
-            signals.push(sig);
-        }
-    }
+        )
+    } else {
+        Vec::new()
+    };
     profiler.stage("co_edit");
 
     let presence_checked =
@@ -552,19 +552,19 @@ pub(crate) fn prehook(ctx: &FullCtx) {
     // Field observations travel beside recommendations instead of competing
     // for the same signal slot.
     let field_checked = !hook_context.is_empty();
-    let field_observations = if field_checked {
-        let mut obs = render_field_observations(load_field_scans(
+    let mut field_observations = if field_checked {
+        render_field_observations(load_field_scans(
             &ctx.dir,
             &ctx_hash,
             current_space.as_deref(),
             current_file.as_deref(),
             12,
-        ));
-        obs.truncate(FIELD_OBSERVATION_MAX);
-        obs
+        ))
     } else {
         Vec::new()
     };
+    field_observations.extend(co_edit_obs);
+    field_observations.truncate(FIELD_OBSERVATION_MAX);
     profiler.stage_or_skip("field_scan", field_checked);
 
     // History is a fallback when we don't already know a likely next move.

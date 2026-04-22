@@ -208,19 +208,18 @@ pub(crate) fn active_policy_signal(active_policy: &ActivePolicySet) -> Option<Si
 
 /// Derive co-edit signals lazily at Prehook time.
 /// Replaces the eager Hebbian co-edit block that was in the Hook handler.
-pub(crate) fn co_edit_signals(
+pub(crate) fn co_edit_observations(
     store: &TraceStore,
     current_file: &str,
     recent_actions: &std::collections::VecDeque<thronglets::workspace::RecentAction>,
     session_id: Option<&str>,
     space: Option<&str>,
-) -> Vec<Signal> {
+) -> Vec<String> {
     let session_id = match session_id {
         Some(s) => s,
         None => return Vec::new(),
     };
 
-    // Find other files edited in the same session
     let mut co_files: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for action in recent_actions {
@@ -238,7 +237,7 @@ pub(crate) fn co_edit_signals(
         }
     }
 
-    let mut signals = Vec::new();
+    let mut observations = Vec::new();
     let ctx_a = format!("edit file: {}", current_file);
     let hash_a = simhash(&ctx_a);
 
@@ -252,21 +251,11 @@ pub(crate) fn co_edit_signals(
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(other_file.as_str());
-                signals.push(Signal::adjacency_candidate(
-                    format!("  ~ co-edited: {} ({} sessions)", short_name, co_count),
-                    150,
-                    StepCandidate::single(
-                        "Edit",
-                        Some(other_file.clone()),
-                        "co-edit",
-                        co_count as u32,
-                        1,
-                    ),
-                ));
+                observations.push(format!("  coupled: {} ({} sessions)", short_name, co_count));
             }
         }
     }
-    signals
+    observations
 }
 
 pub(crate) fn presence_context_signal(

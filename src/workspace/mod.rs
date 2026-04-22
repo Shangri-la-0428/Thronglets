@@ -602,7 +602,7 @@ impl WorkspaceState {
                     self.push_feedback_event(event.clone());
                     resolved.push(event);
                 }
-                "do_next" => {
+                "do_next" | "maybe_also" => {
                     if same_trigger_tool {
                         retained.push_back(recommendation);
                         continue;
@@ -621,24 +621,6 @@ impl WorkspaceState {
                     let event = Self::make_feedback_event(&recommendation, positive);
                     self.push_feedback_event(event.clone());
                     resolved.push(event);
-                }
-                "maybe_also" => {
-                    if same_trigger_tool {
-                        retained.push_back(recommendation);
-                        continue;
-                    }
-
-                    let followed = recommendation.expected_tool.as_deref() == Some(tool)
-                        && Self::file_name_matches(
-                            file_path,
-                            recommendation.expected_target.as_deref(),
-                        );
-                    if followed && outcome != "failed" {
-                        let event = Self::make_feedback_event(&recommendation, true);
-                        self.push_feedback_event(event.clone());
-                        resolved.push(event);
-                    }
-                    // Not followed → discard silently (information, not advice)
                 }
                 _ => {}
             }
