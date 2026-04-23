@@ -245,13 +245,21 @@ pub(crate) fn co_edit_observations(
         let ctx_b = format!("edit file: {}", other_file);
         let hash_b = simhash(&ctx_b);
 
-        if let Ok(co_count) = store.count_co_occurring_sessions(&hash_a, &hash_b, 168, space) {
-            if co_count >= 2 {
+        if let Ok(stats) = store.count_co_occurring_sessions(&hash_a, &hash_b, 168, space) {
+            if stats.co_sessions >= 2 {
                 let short_name = std::path::Path::new(other_file.as_str())
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(other_file.as_str());
-                observations.push(format!("  coupled: {} ({} sessions)", short_name, co_count));
+                let quality = if stats.co_sessions >= 3 {
+                    format!(", {}%", (stats.success_rate() * 100.0).round() as u32)
+                } else {
+                    String::new()
+                };
+                observations.push(format!(
+                    "  coupled: {} ({} sessions{})",
+                    short_name, stats.co_sessions, quality
+                ));
             }
         }
     }

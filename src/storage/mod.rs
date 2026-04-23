@@ -31,6 +31,21 @@ pub struct TraceStore {
     conn: Mutex<Connection>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct CoEditStats {
+    pub co_sessions: u32,
+    pub co_succeeded: u32,
+}
+
+impl CoEditStats {
+    pub fn success_rate(&self) -> f64 {
+        if self.co_sessions == 0 {
+            return 0.0;
+        }
+        self.co_succeeded as f64 / self.co_sessions as f64
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ContextResidueStats {
     pub success_compliant: u32,
@@ -709,16 +724,15 @@ impl TraceStore {
         Ok(sessions.len() as u32)
     }
 
-    /// Hebbian co-occurrence: count sessions where two contexts both succeeded.
-    /// "Neurons that fire together wire together" — files edited together
-    /// across multiple sessions reveal structural coupling.
+    /// Hebbian co-occurrence with outcome quality.
+    /// Returns both total co-occurring sessions and how many had both contexts succeed.
     pub fn count_co_occurring_sessions(
         &self,
         context_a_hash: &[u8; 16],
         context_b_hash: &[u8; 16],
         max_distance: u32,
         space: Option<&str>,
-    ) -> rusqlite::Result<u32> {
+    ) -> rusqlite::Result<CoEditStats> {
         let conn = self.conn.lock().unwrap();
 
         let a_bucket = context_bucket(context_a_hash);
@@ -729,14 +743,13 @@ impl TraceStore {
         let b_lo = (b_bucket - radius).max(0);
         let b_hi = (b_bucket + radius).min(65535);
 
-        let sql = "SELECT t1.session_id, t1.context_hash, t2.context_hash
+        let sql = "SELECT t1.session_id, t1.context_hash, t2.context_hash,
+                          t1.outcome, t2.outcome
                    FROM traces t1
                    JOIN traces t2 ON t2.session_id = t1.session_id
                                   AND t2.node_pubkey = t1.node_pubkey
                                   AND t2.id != t1.id
-                   WHERE t1.outcome = 0
-                     AND t2.outcome = 0
-                     AND t1.context_bucket BETWEEN ?1 AND ?2
+                   WHERE t1.context_bucket BETWEEN ?1 AND ?2
                      AND t2.context_bucket BETWEEN ?3 AND ?4
                      AND t1.session_id IS NOT NULL
                      AND t1.capability NOT LIKE 'urn:thronglets:%'
@@ -745,15 +758,18 @@ impl TraceStore {
                    LIMIT 200";
 
         let mut stmt = conn.prepare(sql)?;
-        let rows: Vec<(String, Vec<u8>, Vec<u8>)> = stmt
+        let rows: Vec<(String, Vec<u8>, Vec<u8>, i32, i32)> = stmt
             .query_map(params![a_lo, a_hi, b_lo, b_hi, space], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
             })?
             .filter_map(|r| r.ok())
             .collect();
 
-        let mut sessions = std::collections::HashSet::new();
-        for (session_id, a_hash, b_hash) in &rows {
+        let mut seen = std::collections::HashMap::<String, bool>::new();
+        for (session_id, a_hash, b_hash, o1, o2) in &rows {
+            if seen.contains_key(session_id) {
+                continue;
+            }
             if a_hash.len() == 16 && b_hash.len() == 16 {
                 let mut ah = [0u8; 16];
                 let mut bh = [0u8; 16];
@@ -762,12 +778,15 @@ impl TraceStore {
                 if crate::context::hamming_distance(&ah, context_a_hash) <= max_distance
                     && crate::context::hamming_distance(&bh, context_b_hash) <= max_distance
                 {
-                    sessions.insert(session_id.clone());
+                    seen.insert(session_id.clone(), *o1 == 0 && *o2 == 0);
                 }
             }
         }
 
-        Ok(sessions.len() as u32)
+        Ok(CoEditStats {
+            co_sessions: seen.len() as u32,
+            co_succeeded: seen.values().filter(|&&s| s).count() as u32,
+        })
     }
 
     /// Query recent failed traces with similar context.
@@ -1682,7 +1701,7 @@ mod tests {
             store.insert(t).unwrap();
         }
 
-        let count = store
+        let stats = store
             .count_co_occurring_sessions(
                 &simhash("edit file: src/main.rs"),
                 &simhash("edit file: src/storage/mod.rs"),
@@ -1691,13 +1710,15 @@ mod tests {
             )
             .unwrap();
         assert!(
-            count >= 2,
+            stats.co_sessions >= 2,
             "should find >= 2 co-occurring sessions, got {}",
-            count
+            stats.co_sessions
         );
+        assert_eq!(stats.co_sessions, stats.co_succeeded);
+        assert!((stats.success_rate() - 1.0).abs() < f64::EPSILON);
 
         // Unrelated pair → 0
-        let count_unrelated = store
+        let stats_unrelated = store
             .count_co_occurring_sessions(
                 &simhash("edit file: src/main.rs"),
                 &simhash("bash: cargo build"),
@@ -1705,7 +1726,61 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(count_unrelated, 0);
+        assert_eq!(stats_unrelated.co_sessions, 0);
+        assert!((stats_unrelated.success_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn co_edit_stats_tracks_mixed_outcomes() {
+        use crate::context::simhash;
+
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+
+        let mk = |cap: &str, outcome: Outcome, ctx: &str, sess: &str| {
+            Trace::new(
+                cap.into(),
+                outcome,
+                10,
+                10,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(sess.into()),
+                "model".into(),
+                id.public_key_bytes(),
+                |m| id.sign(m),
+            )
+        };
+
+        // Session 1: both succeed
+        let traces = vec![
+            mk("claude-code/Edit", Outcome::Succeeded, "edit file: a.rs", "s1"),
+            mk("claude-code/Edit", Outcome::Succeeded, "edit file: b.rs", "s1"),
+            // Session 2: a succeeds, b fails
+            mk("claude-code/Edit", Outcome::Succeeded, "edit file: a.rs", "s2"),
+            mk("claude-code/Edit", Outcome::Failed, "edit file: b.rs", "s2"),
+            // Session 3: both succeed
+            mk("claude-code/Edit", Outcome::Succeeded, "edit file: a.rs", "s3"),
+            mk("claude-code/Edit", Outcome::Succeeded, "edit file: b.rs", "s3"),
+        ];
+        for t in &traces {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            store.insert(t).unwrap();
+        }
+
+        let stats = store
+            .count_co_occurring_sessions(
+                &simhash("edit file: a.rs"),
+                &simhash("edit file: b.rs"),
+                168,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(stats.co_sessions, 3);
+        assert_eq!(stats.co_succeeded, 2);
+        let rate = stats.success_rate();
+        assert!((rate - 2.0 / 3.0).abs() < 0.01, "expected ~67%, got {:.1}%", rate * 100.0);
     }
 
     #[test]
