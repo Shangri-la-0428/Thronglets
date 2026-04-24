@@ -377,9 +377,20 @@ impl IdentityBinding {
     pub fn load_or_create(path: &Path, node_identity: &NodeIdentity) -> std::io::Result<Self> {
         let mut binding = if path.exists() {
             let bytes = fs::read(path)?;
-            let binding: Self = serde_json::from_slice(&bytes).map_err(invalid_data)?;
-            binding.verify_for_node(node_identity)?;
-            binding
+            if bytes.is_empty() {
+                Self::new(node_identity.device_identity())
+            } else {
+                match serde_json::from_slice::<Self>(&bytes) {
+                    Ok(b) => {
+                        b.verify_for_node(node_identity)?;
+                        b
+                    }
+                    Err(_) => {
+                        backup_corrupt_identity_binding(path)?;
+                        Self::new(node_identity.device_identity())
+                    }
+                }
+            }
         } else {
             Self::new(node_identity.device_identity())
         };
@@ -422,12 +433,14 @@ impl IdentityBinding {
             fs::create_dir_all(parent)?;
         }
         let bytes = serde_json::to_vec_pretty(self).map_err(invalid_data)?;
-        fs::write(path, bytes)?;
+        let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+        fs::write(&tmp_path, &bytes)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+            fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))?;
         }
+        fs::rename(&tmp_path, path)?;
         Ok(())
     }
 
@@ -592,6 +605,18 @@ impl IdentityBinding {
         self.updated_at = now_ms();
         Ok(())
     }
+}
+
+fn backup_corrupt_identity_binding(path: &Path) -> std::io::Result<()> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "identity binding path has no filename",
+        ));
+    };
+    let backup = path.with_file_name(format!("{file_name}.corrupt.{}", now_ms()));
+    fs::rename(path, backup)?;
+    Ok(())
 }
 
 impl ConnectionFile {
@@ -1076,6 +1101,77 @@ mod tests {
 
         let error = IdentityBinding::load_or_create(&path, &node_b).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn load_or_create_recovers_from_empty_file() {
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let original_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", &home) };
+
+        let node = NodeIdentity::generate();
+        let path = identity_binding_path(dir.path());
+        fs::write(&path, b"").unwrap();
+
+        let binding = IdentityBinding::load_or_create(&path, &node).unwrap();
+        assert_eq!(binding.device_identity, node.device_identity());
+
+        let bytes = fs::read(&path).unwrap();
+        assert!(!bytes.is_empty());
+        let reloaded: IdentityBinding = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reloaded.device_identity, node.device_identity());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        match original_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn load_or_create_recovers_from_corrupt_file() {
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let original_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", &home) };
+
+        let node = NodeIdentity::generate();
+        let path = identity_binding_path(dir.path());
+        let corrupt_bytes = b"{truncated";
+        fs::write(&path, corrupt_bytes).unwrap();
+
+        let binding = IdentityBinding::load_or_create(&path, &node).unwrap();
+        assert_eq!(binding.device_identity, node.device_identity());
+        let reloaded: IdentityBinding = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(reloaded.device_identity, node.device_identity());
+
+        let backups: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("identity.v1.json.corrupt.")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read(backups[0].path()).unwrap(), corrupt_bytes.to_vec());
+
+        match original_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     #[test]
