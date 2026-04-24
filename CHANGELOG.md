@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v1.0.8 — 2026-04-24
+
+- **Space derivation uses project identity** — `space_from_cwd()` and MCP `space_from_roots()` now walk up from the path looking for a `.git` root first, then common project manifests (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `build.gradle`, `build.gradle.kts`). Only falls back to the old "last 2 path components" heuristic when neither is found. Shared helper `service::derive_project_space(path)`.
+
+  **Why**: the previous `cwd.components().rev().take(2)` shortcut fragmented a single project into multiple spaces when the user cd'd into subdirectories. Example: `~/Desktop/Oasis_App`, `frontend/android`, `Oasis_App/backend`, `ios/Oasyce` all resolved to distinct spaces despite belonging to the same project. Level 1 isolation prevented their traces from cross-reinforcing — a textbook K-fragmentation of stigmergic emergence (validated in primordial-soup `exp_task_diversity`). The fix makes the implementation match the documented intent ("project identity from cwd").
+
+  **Migration**: none. Old traces keep their old space labels; new traces write under the corrected space. The 168h decay window will naturally phase out the fragmented labels within a week.
+
 ## v1.0.1 — 2026-04-16
 
 - **Architecture refactor** — `main.rs` reduced from 4985 lines to 26. All command handlers extracted into `src/cmd/` module tree (9 submodules grouped by resource pattern). CLI data definitions moved to `src/cli.rs`. Two-tier context pattern (`BaseCtx` / `FullCtx`) cleanly separates identity-free and identity-required commands. Zero behavior change.

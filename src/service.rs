@@ -25,6 +25,7 @@ use crate::trace::{MethodCompliance, Outcome, Trace};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::path::Path;
 
 // ── Context ──────────────────────────────────────────────────
 
@@ -39,11 +40,47 @@ pub struct Ctx<'a> {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/// Derive space from cwd (last 2 path components). Used as fallback
-/// when MCP/HTTP clients don't send an explicit space parameter.
-pub fn space_from_cwd() -> Option<String> {
-    let cwd = std::env::current_dir().ok()?;
-    let mut parts = cwd.components().rev().take(2).collect::<Vec<_>>();
+/// Project manifest filenames used to detect package boundaries when
+/// there is no `.git` above the current path.
+const PROJECT_MANIFESTS: &[&str] = &[
+    "Cargo.toml",
+    "package.json",
+    "pyproject.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+];
+
+/// Derive a project-identity space string from a path.
+///
+/// Walks up `path.ancestors()` looking for (in priority order):
+///   1. a `.git` file or directory — the repo root (authoritative)
+///   2. a common project manifest (Cargo.toml, package.json, …)
+/// If neither is found, falls back to the last two path components
+/// joined with `/` (the legacy heuristic).
+///
+/// Intent: one project = one space. Subdirectories of the same project
+/// map to the same space string so their traces cross-reinforce at
+/// Level 1.
+pub fn derive_project_space(path: &Path) -> Option<String> {
+    for dir in path.ancestors() {
+        if dir.join(".git").exists() {
+            return dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .filter(|s| !s.is_empty());
+        }
+    }
+    for dir in path.ancestors() {
+        if PROJECT_MANIFESTS.iter().any(|m| dir.join(m).exists()) {
+            return dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .filter(|s| !s.is_empty());
+        }
+    }
+    let mut parts = path.components().rev().take(2).collect::<Vec<_>>();
     parts.reverse();
     let space: String = parts
         .iter()
@@ -51,6 +88,12 @@ pub fn space_from_cwd() -> Option<String> {
         .collect::<Vec<_>>()
         .join("/");
     if space.is_empty() { None } else { Some(space) }
+}
+
+/// Derive space from cwd. Delegates to [`derive_project_space`].
+pub fn space_from_cwd() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    derive_project_space(&cwd)
 }
 
 pub fn parse_outcome(s: &str) -> Outcome {
@@ -775,4 +818,92 @@ pub fn field_clusters(ctx: &Ctx, min_weight: f64) -> Result<Value, String> {
         })
         .collect();
     Ok(json!({ "clusters": cluster_json }))
+}
+
+#[cfg(test)]
+mod derive_project_space_tests {
+    use super::derive_project_space;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn detects_git_root_from_nested_subdir() {
+        let dir = TempDir::new().unwrap();
+        let repo = dir.path().join("my-project");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let nested = repo.join("src").join("deep").join("nested");
+        fs::create_dir_all(&nested).unwrap();
+
+        let space = derive_project_space(&nested).expect("space");
+        assert_eq!(space, "my-project");
+    }
+
+    #[test]
+    fn git_as_file_also_detected() {
+        // Worktrees and submodules store `.git` as a file pointing to the real dir.
+        let dir = TempDir::new().unwrap();
+        let repo = dir.path().join("worktree-proj");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join(".git"), "gitdir: /elsewhere\n").unwrap();
+        let subdir = repo.join("sub");
+        fs::create_dir_all(&subdir).unwrap();
+
+        let space = derive_project_space(&subdir).expect("space");
+        assert_eq!(space, "worktree-proj");
+    }
+
+    #[test]
+    fn innermost_git_root_wins() {
+        // Nested git repos — the inner repo is a distinct unit.
+        let dir = TempDir::new().unwrap();
+        let outer = dir.path().join("outer");
+        let inner = outer.join("libs").join("inner");
+        fs::create_dir_all(&inner).unwrap();
+        fs::create_dir_all(outer.join(".git")).unwrap();
+        fs::create_dir_all(inner.join(".git")).unwrap();
+        let nested = inner.join("src");
+        fs::create_dir_all(&nested).unwrap();
+
+        let space = derive_project_space(&nested).expect("space");
+        assert_eq!(space, "inner");
+    }
+
+    #[test]
+    fn falls_back_to_manifest_when_no_git() {
+        let dir = TempDir::new().unwrap();
+        let proj = dir.path().join("rust-proj");
+        let src = proj.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(proj.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+
+        let space = derive_project_space(&src).expect("space");
+        assert_eq!(space, "rust-proj");
+    }
+
+    #[test]
+    fn falls_back_to_two_components_when_no_markers() {
+        let dir = TempDir::new().unwrap();
+        let nested = dir.path().join("a").join("b").join("c");
+        fs::create_dir_all(&nested).unwrap();
+
+        // Pure fallback: last 2 components joined by "/".
+        let space = derive_project_space(&nested).expect("space");
+        assert_eq!(space, "b/c");
+    }
+
+    #[test]
+    fn git_wins_over_manifest() {
+        // If both .git and Cargo.toml are present at the same level, git wins.
+        // Intentional — repo scope is the stronger signal.
+        let dir = TempDir::new().unwrap();
+        let proj = dir.path().join("mixed");
+        let sub = proj.join("crate-a");
+        fs::create_dir_all(&sub).unwrap();
+        fs::create_dir_all(proj.join(".git")).unwrap();
+        fs::write(sub.join("Cargo.toml"), "[package]\nname=\"a\"\n").unwrap();
+
+        let space = derive_project_space(&sub).expect("space");
+        assert_eq!(space, "mixed");
+    }
 }

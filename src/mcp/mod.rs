@@ -510,15 +510,7 @@ impl McpSession {
 fn space_from_roots(roots: &[Value]) -> Option<String> {
     let uri = roots.first()?.get("uri")?.as_str()?;
     let path = uri.strip_prefix("file://")?;
-    let p = std::path::Path::new(path);
-    let mut parts = p.components().rev().take(2).collect::<Vec<_>>();
-    parts.reverse();
-    let space: String = parts
-        .iter()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
-    if space.is_empty() { None } else { Some(space) }
+    crate::service::derive_project_space(std::path::Path::new(path))
 }
 
 /// Run the MCP server over stdio.
