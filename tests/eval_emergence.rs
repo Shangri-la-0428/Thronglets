@@ -62,7 +62,9 @@ fn eval_emergence_reports_signal_eval_and_space_contamination() {
             ("claude-code/Bash", Outcome::Succeeded, "bash: cargo test"),
         ] {
             let trace = make_trace(&identity, capability, outcome, context, session, timestamp);
-            store.insert(&trace).unwrap();
+            store
+                .insert_with_space(&trace, Some("space-alpha"))
+                .unwrap();
             timestamp += 1_000;
         }
         timestamp += 60_000;
@@ -168,6 +170,14 @@ fn eval_emergence_reports_signal_eval_and_space_contamination() {
     assert!(
         fc["total_coupling_edges"].as_u64().unwrap() > 0,
         "Hebbian coupling should form from co-occurring capabilities"
+    );
+    assert!(
+        fc["top_couplings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["level"].as_u64() == Some(1)),
+        "space-aware replay should surface Project-level couplings"
     );
 }
 

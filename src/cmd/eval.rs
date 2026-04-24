@@ -496,10 +496,12 @@ pub(crate) fn eval_emergence(
     // pheromone field with full Hebbian coupling, then inspect state.
     let field_convergence = {
         let field = PheromoneField::new();
-        let traces = store.recent_traces(hours, 50_000).unwrap_or_default();
+        let traces = store
+            .recent_traces_with_space(hours, 50_000)
+            .unwrap_or_default();
         let trace_count = traces.len() as u64;
-        for trace in &traces {
-            field.excite(trace);
+        for (trace, space) in &traces {
+            field.excite_with_space(trace, space.as_deref());
         }
         let caps = field.capabilities(100);
         let multi_source = caps.iter().filter(|c| c.source_count > 1).count();

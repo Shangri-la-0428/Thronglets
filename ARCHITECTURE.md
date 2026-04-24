@@ -73,7 +73,7 @@ FieldKey = (capability, bucket, level)
 
 **Space isolation is Level 1** — not a separate mechanism. It was always an abstraction level; v1.0 names it.
 
-**Scan fallback**: `scan_with_fallback()` walks Concrete → Project → Typed → Universal, stopping at the first level with strong signals (intensity > 0.5). Specific experience takes priority; abstract patterns fill gaps.
+**Scan fallback**: `scan_with_fallback()` walks Concrete → Project → Typed → Universal, gathers all available non-pruned observations, then sorts by live intensity and truncates to the caller's limit. Specific experience participates through its own bucket and intensity, while abstract Typed/Universal patterns remain visible instead of being hidden by an early stop.
 
 **Field IPC**: Long-running processes (MCP, HTTP, run) serve the live pheromone field over a Unix domain socket (`{data_dir}/field.sock`). The prehook queries the hot field via socket (~1ms) instead of loading a stale JSON snapshot from disk (~10ms). Falls back to disk when no socket is available. Protocol: one JSON line in, one JSON line out, then close. Defined in `pheromone_socket.rs`.
 

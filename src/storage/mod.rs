@@ -730,6 +730,7 @@ impl TraceStore {
         &self,
         context_a_hash: &[u8; 16],
         context_b_hash: &[u8; 16],
+        hours: u64,
         max_distance: u32,
         space: Option<&str>,
     ) -> rusqlite::Result<CoEditStats> {
@@ -742,8 +743,9 @@ impl TraceStore {
         let a_hi = (a_bucket + radius).min(65535);
         let b_lo = (b_bucket - radius).max(0);
         let b_hi = (b_bucket + radius).min(65535);
+        let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
 
-        let sql = "SELECT t1.session_id, t1.context_hash, t2.context_hash,
+        let sql = "SELECT t1.session_id, t1.node_pubkey, t1.context_hash, t2.context_hash,
                           t1.outcome, t2.outcome
                    FROM traces t1
                    JOIN traces t2 ON t2.session_id = t1.session_id
@@ -754,22 +756,41 @@ impl TraceStore {
                      AND t1.session_id IS NOT NULL
                      AND t1.capability NOT LIKE 'urn:thronglets:%'
                      AND t2.capability NOT LIKE 'urn:thronglets:%'
-                     AND (?5 IS NULL OR t1.space = ?5)
-                   LIMIT 200";
+                     AND t1.timestamp >= ?5
+                     AND t2.timestamp >= ?5
+                     AND (
+                         (?6 IS NOT NULL AND t1.space = ?6 AND t2.space = ?6)
+                         OR (?6 IS NULL AND (
+                             (t1.space IS NULL AND t2.space IS NULL)
+                             OR t1.space = t2.space
+                         ))
+                     )
+                   ORDER BY t1.timestamp DESC
+                   LIMIT 500";
 
         let mut stmt = conn.prepare(sql)?;
-        let rows: Vec<(String, Vec<u8>, Vec<u8>, i32, i32)> = stmt
-            .query_map(params![a_lo, a_hi, b_lo, b_hi, space], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        let rows: Vec<(String, Vec<u8>, Vec<u8>, Vec<u8>, i32, i32)> = stmt
+            .query_map(params![a_lo, a_hi, b_lo, b_hi, cutoff_ms, space], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
             })?
             .filter_map(|r| r.ok())
             .collect();
 
-        let mut seen = std::collections::HashMap::<String, bool>::new();
-        for (session_id, a_hash, b_hash, o1, o2) in &rows {
-            if seen.contains_key(session_id) {
-                continue;
-            }
+        #[derive(Default)]
+        struct SessionCoEdit {
+            a_succeeded: bool,
+            b_succeeded: bool,
+        }
+
+        let mut seen = std::collections::HashMap::<(String, Vec<u8>), SessionCoEdit>::new();
+        for (session_id, node_pubkey, a_hash, b_hash, o1, o2) in &rows {
             if a_hash.len() == 16 && b_hash.len() == 16 {
                 let mut ah = [0u8; 16];
                 let mut bh = [0u8; 16];
@@ -778,14 +799,21 @@ impl TraceStore {
                 if crate::context::hamming_distance(&ah, context_a_hash) <= max_distance
                     && crate::context::hamming_distance(&bh, context_b_hash) <= max_distance
                 {
-                    seen.insert(session_id.clone(), *o1 == 0 && *o2 == 0);
+                    let entry = seen
+                        .entry((session_id.clone(), node_pubkey.clone()))
+                        .or_default();
+                    entry.a_succeeded |= *o1 == 0;
+                    entry.b_succeeded |= *o2 == 0;
                 }
             }
         }
 
         Ok(CoEditStats {
             co_sessions: seen.len() as u32,
-            co_succeeded: seen.values().filter(|&&s| s).count() as u32,
+            co_succeeded: seen
+                .values()
+                .filter(|session| session.a_succeeded && session.b_succeeded)
+                .count() as u32,
         })
     }
 
@@ -1079,6 +1107,29 @@ impl TraceStore {
         Self::collect_traces(&mut stmt, params![cutoff_ms, limit as i64])
     }
 
+    /// Fetch recent traces with their SQL space column for field replay.
+    /// Keeps `Trace` wire shape unchanged while allowing evaluators to mirror
+    /// runtime `excite_with_space` behavior.
+    pub fn recent_traces_with_space(
+        &self,
+        hours: u64,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(Trace, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
+        let sql = format!(
+            "SELECT {TRACE_SELECT_COLUMNS}, space FROM traces \
+             WHERE timestamp >= ?1 \
+               AND capability NOT LIKE 'urn:thronglets:signal:%' \
+               AND capability NOT LIKE 'urn:thronglets:presence:%' \
+               AND capability NOT LIKE 'urn:thronglets:continuity:%' \
+               AND capability NOT LIKE 'urn:thronglets:signal-reinforcement:%' \
+             ORDER BY timestamp ASC LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        Self::collect_traces_with_space(&mut stmt, params![cutoff_ms, limit as i64])
+    }
+
     /// Total trace count.
     pub fn count(&self) -> rusqlite::Result<u64> {
         let conn = self.conn.lock().unwrap();
@@ -1189,6 +1240,19 @@ impl TraceStore {
         params: impl rusqlite::Params,
     ) -> rusqlite::Result<Vec<Trace>> {
         let rows = stmt.query_map(params, Self::trace_from_row)?;
+        rows.collect()
+    }
+
+    fn collect_traces_with_space(
+        stmt: &mut rusqlite::Statement,
+        params: impl rusqlite::Params,
+    ) -> rusqlite::Result<Vec<(Trace, Option<String>)>> {
+        let rows = stmt.query_map(params, |row| {
+            Ok((
+                Self::trace_from_row(row)?,
+                row.get::<_, Option<String>>(17)?,
+            ))
+        })?;
         rows.collect()
     }
 
@@ -1706,6 +1770,7 @@ mod tests {
                 &simhash("edit file: src/main.rs"),
                 &simhash("edit file: src/storage/mod.rs"),
                 168,
+                12,
                 None,
             )
             .unwrap();
@@ -1723,6 +1788,7 @@ mod tests {
                 &simhash("edit file: src/main.rs"),
                 &simhash("bash: cargo build"),
                 168,
+                12,
                 None,
             )
             .unwrap();
@@ -1754,14 +1820,39 @@ mod tests {
 
         // Session 1: both succeed
         let traces = vec![
-            mk("claude-code/Edit", Outcome::Succeeded, "edit file: a.rs", "s1"),
-            mk("claude-code/Edit", Outcome::Succeeded, "edit file: b.rs", "s1"),
+            mk(
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                "edit file: a.rs",
+                "s1",
+            ),
+            mk(
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                "edit file: b.rs",
+                "s1",
+            ),
             // Session 2: a succeeds, b fails
-            mk("claude-code/Edit", Outcome::Succeeded, "edit file: a.rs", "s2"),
+            mk(
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                "edit file: a.rs",
+                "s2",
+            ),
             mk("claude-code/Edit", Outcome::Failed, "edit file: b.rs", "s2"),
             // Session 3: both succeed
-            mk("claude-code/Edit", Outcome::Succeeded, "edit file: a.rs", "s3"),
-            mk("claude-code/Edit", Outcome::Succeeded, "edit file: b.rs", "s3"),
+            mk(
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                "edit file: a.rs",
+                "s3",
+            ),
+            mk(
+                "claude-code/Edit",
+                Outcome::Succeeded,
+                "edit file: b.rs",
+                "s3",
+            ),
         ];
         for t in &traces {
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -1773,6 +1864,7 @@ mod tests {
                 &simhash("edit file: a.rs"),
                 &simhash("edit file: b.rs"),
                 168,
+                12,
                 None,
             )
             .unwrap();
@@ -1780,7 +1872,171 @@ mod tests {
         assert_eq!(stats.co_sessions, 3);
         assert_eq!(stats.co_succeeded, 2);
         let rate = stats.success_rate();
-        assert!((rate - 2.0 / 3.0).abs() < 0.01, "expected ~67%, got {:.1}%", rate * 100.0);
+        assert!(
+            (rate - 2.0 / 3.0).abs() < 0.01,
+            "expected ~67%, got {:.1}%",
+            rate * 100.0
+        );
+    }
+
+    #[test]
+    fn co_edit_stats_respects_time_window() {
+        use crate::context::simhash;
+
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+        let mk = |ctx: &str, sess: &str| {
+            Trace::new(
+                "claude-code/Edit".into(),
+                Outcome::Succeeded,
+                10,
+                10,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(sess.into()),
+                "model".into(),
+                id.public_key_bytes(),
+                |m| id.sign(m),
+            )
+        };
+
+        let old_a = mk("edit file: a.rs", "old");
+        let old_b = mk("edit file: b.rs", "old");
+        let recent_a = mk("edit file: a.rs", "recent");
+        let recent_b = mk("edit file: b.rs", "recent");
+        for t in [&old_a, &old_b, &recent_a, &recent_b] {
+            store.insert(t).unwrap();
+        }
+
+        let two_days_ago_ms = chrono::Utc::now().timestamp_millis() - (48 * 3_600_000);
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE traces SET timestamp = ?1 WHERE session_id = 'old'",
+                params![two_days_ago_ms],
+            )
+            .unwrap();
+        }
+
+        let stats = store
+            .count_co_occurring_sessions(
+                &simhash("edit file: a.rs"),
+                &simhash("edit file: b.rs"),
+                24,
+                12,
+                None,
+            )
+            .unwrap();
+        assert_eq!(stats.co_sessions, 1);
+        assert_eq!(stats.co_succeeded, 1);
+    }
+
+    #[test]
+    fn co_edit_stats_requires_both_sides_in_scoped_space() {
+        use crate::context::simhash;
+
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+        let mk = |ctx: &str, sess: &str| {
+            Trace::new(
+                "claude-code/Edit".into(),
+                Outcome::Succeeded,
+                10,
+                10,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some(sess.into()),
+                "model".into(),
+                id.public_key_bytes(),
+                |m| id.sign(m),
+            )
+        };
+
+        let alpha_a = mk("edit file: a.rs", "alpha");
+        let alpha_b = mk("edit file: b.rs", "alpha");
+        let mixed_a = mk("edit file: a.rs", "mixed");
+        let mixed_b = mk("edit file: b.rs", "mixed");
+
+        store
+            .insert_with_space(&alpha_a, Some("space-alpha"))
+            .unwrap();
+        store
+            .insert_with_space(&alpha_b, Some("space-alpha"))
+            .unwrap();
+        store
+            .insert_with_space(&mixed_a, Some("space-alpha"))
+            .unwrap();
+        store
+            .insert_with_space(&mixed_b, Some("space-beta"))
+            .unwrap();
+
+        let scoped = store
+            .count_co_occurring_sessions(
+                &simhash("edit file: a.rs"),
+                &simhash("edit file: b.rs"),
+                168,
+                12,
+                Some("space-alpha"),
+            )
+            .unwrap();
+        assert_eq!(scoped.co_sessions, 1);
+        assert_eq!(scoped.co_succeeded, 1);
+
+        let global = store
+            .count_co_occurring_sessions(
+                &simhash("edit file: a.rs"),
+                &simhash("edit file: b.rs"),
+                168,
+                12,
+                None,
+            )
+            .unwrap();
+        assert_eq!(global.co_sessions, 1);
+    }
+
+    #[test]
+    fn co_edit_stats_dedupes_sessions_and_aggregates_success() {
+        use crate::context::simhash;
+
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+        let mk = |outcome: Outcome, ctx: &str| {
+            Trace::new(
+                "claude-code/Edit".into(),
+                outcome,
+                10,
+                10,
+                simhash(ctx),
+                Some(ctx.into()),
+                Some("s1".into()),
+                "model".into(),
+                id.public_key_bytes(),
+                |m| id.sign(m),
+            )
+        };
+
+        let traces = vec![
+            mk(Outcome::Succeeded, "edit file: a.rs"),
+            mk(Outcome::Failed, "edit file: b.rs"),
+            mk(Outcome::Succeeded, "edit file: b.rs"),
+            mk(Outcome::Succeeded, "edit file: a.rs"),
+        ];
+        for trace in &traces {
+            store.insert(trace).unwrap();
+        }
+
+        let stats = store
+            .count_co_occurring_sessions(
+                &simhash("edit file: a.rs"),
+                &simhash("edit file: b.rs"),
+                168,
+                12,
+                None,
+            )
+            .unwrap();
+        assert_eq!(stats.co_sessions, 1);
+        assert_eq!(stats.co_succeeded, 1);
+        assert!((stats.success_rate() - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]

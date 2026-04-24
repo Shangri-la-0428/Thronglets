@@ -1035,9 +1035,10 @@ impl PheromoneField {
     /// Scan with fallback across abstraction levels.
     ///
     /// Walks: Concrete → Project → Typed → Universal.
-    /// Collects results at each level. Stops early if a level yields
-    /// strong signals (intensity above threshold). This ensures specific
-    /// experience is preferred, with abstract patterns filling in gaps.
+    /// Collects results at every active level, then sorts by live intensity.
+    /// Specific experience participates through its bucket and intensity,
+    /// while abstract patterns remain visible instead of being hidden by
+    /// an early stop.
     pub fn scan_with_fallback(
         &self,
         context_hash: &ContextHash,

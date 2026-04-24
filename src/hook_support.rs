@@ -22,6 +22,9 @@ use thronglets::signals::{Recommendation, Signal, SignalKind, StepCandidate};
 use thronglets::storage::TraceStore;
 use thronglets::trace::Outcome;
 
+const CO_EDIT_OBSERVATION_HOURS: u64 = 168;
+const CO_EDIT_MAX_DISTANCE: u32 = 12;
+
 pub(crate) fn git_file_history(file_path: &str, max_entries: usize) -> Option<String> {
     use std::path::Path;
     use std::process::Command;
@@ -245,7 +248,13 @@ pub(crate) fn co_edit_observations(
         let ctx_b = format!("edit file: {}", other_file);
         let hash_b = simhash(&ctx_b);
 
-        if let Ok(stats) = store.count_co_occurring_sessions(&hash_a, &hash_b, 168, space) {
+        if let Ok(stats) = store.count_co_occurring_sessions(
+            &hash_a,
+            &hash_b,
+            CO_EDIT_OBSERVATION_HOURS,
+            CO_EDIT_MAX_DISTANCE,
+            space,
+        ) {
             if stats.co_sessions >= 2 {
                 let short_name = std::path::Path::new(other_file.as_str())
                     .file_name()
