@@ -77,7 +77,7 @@ FieldKey = (capability, bucket, level)
 
 **Field IPC**: Long-running processes (MCP, HTTP, run) serve the live pheromone field over a Unix domain socket (`{data_dir}/field.sock`). The prehook queries the hot field via socket (~1ms) instead of loading a stale JSON snapshot from disk (~10ms). Falls back to disk when no socket is available. Protocol: one JSON line in, one JSON line out, then close. Defined in `pheromone_socket.rs`.
 
-**P2P sync**: Only Level 2-3 flow between nodes via gossipsub field snapshots. Level 0-1 stay local — specific experience doesn't travel. Remote snapshots are discounted (0.7x) to prevent single-node dominance.
+**P2P sync**: Only Level 2-3 flow between nodes. Field snapshots publish only Typed/Universal points and couplings; received raw traces may enrich the same abstract levels but must not create Concrete/Project points. Level 0-1 stay local — specific experience doesn't travel. Remote snapshots are discounted (0.7x) to prevent single-node dominance.
 
 **Level 2 bucketing**: `TargetKind` × language → 16-bit bucket. `TargetKind` classifies file paths into semantic roles (SourceFile, TestFile, ConfigFile, BuildOutput, Documentation, Schema). Defined in `target_kind.rs`.
 
@@ -125,6 +125,8 @@ The core coordination model is:
 - `space snapshot`
 
 Multiple AIs should influence each other by changing a shared environment, not by becoming a direct messaging system.
+
+One user on one device can still evolve a local field through repeated sessions and agents. That repetition strengthens local traces, priors, and Hebbian order, but it does not count as independent multi-source corroboration.
 
 ### 3. Device-first, owner-optional
 

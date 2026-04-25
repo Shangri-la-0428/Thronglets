@@ -51,7 +51,7 @@ Lifecycle events reframed:
 ## Architecture
 
 ```
-Rust binary (v1.0.1)
+Rust binary (v1.0.9)
 ├── main.rs           — CLI entry point (~25 lines: parse + dispatch)
 ├── cli.rs            — CLI data definitions (Commands enum, arg types, clap derive)
 ├── cmd/              — Command handlers (grouped by resource pattern)
@@ -104,8 +104,9 @@ The pheromone field operates across four abstraction levels. One trace excites a
 | 3 | Universal | fixed 0 | Sync | Pure capability knowledge |
 
 - **Space = Level 1**. `derive_space(payload)` in `hook_support.rs` extracts project identity from cwd. This naturally maps to Level 1 bucket. PreToolUse's 7 signal paths query Level 0-1 via space-scoped APIs.
-- **Scan fallback**: `scan_with_fallback()` walks Concrete → Project → Typed → Universal. Stops at first level with strong signals (intensity > 0.5). Prehook uses this when all 7 concrete paths produce no signal.
-- **P2P**: Only Level 2-3 sync between nodes via `thronglets/field/v1` gossipsub topic. Remote snapshots discounted 0.7x. Level 0-1 never leave the device.
+- **Scan fallback**: `scan_with_fallback()` walks Concrete → Project → Typed → Universal, gathers all available non-pruned observations, then sorts by live intensity and truncates to the caller's limit.
+- **P2P**: Only Level 2-3 flow between nodes. Field snapshots publish only Typed/Universal points and couplings; received raw traces may enrich the same abstract levels but must not create Concrete/Project points. Remote snapshots discounted 0.7x. Level 0-1 never leave the device.
+- **Single-device learning**: One user running multiple local sessions/agents still reinforces local traces, priors, and Hebbian order. Same-device repetition does not count as independent multi-source corroboration.
 - **TargetKind** (`target_kind.rs`): Classifies file paths into semantic roles (SourceFile, TestFile, ConfigFile, BuildOutput, Documentation, Schema) for Level 2 bucket computation.
 - **Legacy compat**: Errors with `space: None` (pre-isolation) remain visible to all spaces.
 

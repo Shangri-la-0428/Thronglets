@@ -1130,6 +1130,29 @@ impl TraceStore {
         Self::collect_traces_with_space(&mut stmt, params![cutoff_ms, limit as i64])
     }
 
+    /// Fetch the newest real agent traces for cold field replay, returned in
+    /// chronological order with their stored space. Internal signal,
+    /// presence, continuity, and reinforcement traces are excluded so replay
+    /// matches ordinary tool activity.
+    pub fn field_replay_traces_with_space(
+        &self,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(Trace, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT * FROM ( \
+                 SELECT {TRACE_SELECT_COLUMNS}, space FROM traces \
+                 WHERE capability NOT LIKE 'urn:thronglets:signal:%' \
+                   AND capability NOT LIKE 'urn:thronglets:presence:%' \
+                   AND capability NOT LIKE 'urn:thronglets:continuity:%' \
+                   AND capability NOT LIKE 'urn:thronglets:signal-reinforcement:%' \
+                 ORDER BY timestamp DESC LIMIT ?1 \
+             ) ORDER BY timestamp ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        Self::collect_traces_with_space(&mut stmt, params![limit as i64])
+    }
+
     /// Total trace count.
     pub fn count(&self) -> rusqlite::Result<u64> {
         let conn = self.conn.lock().unwrap();

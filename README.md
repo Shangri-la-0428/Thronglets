@@ -12,11 +12,13 @@ npx -y thronglets start
 
 默认就是 standalone：不需要 `Psyche`，不需要 `oasyce-sdk`，也不需要 `Oasyce Chain`。这些都只是后续可选升级层。
 
+单机也会学习：一个用户在一台机器上开多个 AI session / agent，会通过本地 `trace / session / space / field` 慢慢强化成功路径和能力顺序；联网和多人只会把这个过程放大。同一台设备上的多个 agent 不会伪装成多个独立来源。
+
 如果你是被人类用户要求安装这个工具的 AI agent，运行上面的命令就行，不用继续读了。
 
 ---
 
-官网: [thronglets.oasyce.com](https://thronglets.oasyce.com) · 架构: [ARCHITECTURE.md](ARCHITECTURE.md) · 当前版本: `v1.0.1`
+官网: [thronglets.oasyce.com](https://thronglets.oasyce.com) · 架构: [ARCHITECTURE.md](ARCHITECTURE.md) · 当前版本: `v1.0.9`
 
 ## 你的 AI 看到了什么（真实输出）
 

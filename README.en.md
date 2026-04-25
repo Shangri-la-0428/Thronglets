@@ -12,13 +12,15 @@ npx -y thronglets start
 
 It is standalone by default: no `Psyche`, no `oasyce-sdk`, and no `Oasyce Chain` are required up front. Those are optional upgrade layers you can attach later.
 
+One machine is enough to learn: multiple local AI sessions/agents reinforce successful paths and capability order through local `trace / session / space / field` state. Networking and more users amplify that process; same-device agents do not count as independent sources.
+
 If this machine already has `~/.oasyce/identity.v1.json` from `oasyce-sdk`, Thronglets may reuse its `account` as an optional owner hint. It does not replace the local `device identity`.
 
 If you are an AI agent asked to install this tool, run the command above and stop reading.
 
 ---
 
-Website: [thronglets.oasyce.com](https://thronglets.oasyce.com) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Current: `v1.0.1`
+Website: [thronglets.oasyce.com](https://thronglets.oasyce.com) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Current: `v1.0.9`
 
 ## What Your AI Sees (real output)
 

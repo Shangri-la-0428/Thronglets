@@ -82,6 +82,11 @@ const COUPLING_PRUNE_THRESHOLD: f64 = 0.05;
 /// Calibrated for M1 Pro workloads. Set to f64::MAX to disable.
 const FIELD_CAPACITY: f64 = 10_000.0;
 
+/// Maximum recent traces replayed into a cold field when no live/persisted
+/// field snapshot is available. Matches the previous 500 capabilities × 200
+/// traces hydrate ceiling while preserving global chronological order.
+const FIELD_HYDRATE_TRACE_LIMIT: usize = 100_000;
+
 // ── Capability Normalization ────────────────────────────────────
 
 /// Normalize agent-specific capability URIs to canonical forms.
@@ -676,7 +681,15 @@ impl FieldInner {
     /// Same physics, four levels. The field naturally produces correct behavior:
     /// - Level 0 points are sparse → low corroboration → weak signals
     /// - Level 3 points are dense → high corroboration → strong signals
-    fn excite_node(&mut self, trace: &Trace, space: Option<&str>) -> FieldDelta {
+    fn excite_node_filtered<F>(
+        &mut self,
+        trace: &Trace,
+        space: Option<&str>,
+        include_level: F,
+    ) -> FieldDelta
+    where
+        F: Fn(AbstractionLevel) -> bool,
+    {
         use crate::target_kind;
 
         let cap = normalize_capability(&trace.capability);
@@ -745,7 +758,7 @@ impl FieldInner {
         let mut concrete_deposit = 0.0;
 
         for (key, active) in &keys {
-            if !*active {
+            if !*active || !include_level(key.level) {
                 continue;
             }
 
@@ -839,8 +852,26 @@ impl PheromoneField {
     /// Space enables Level 1 (Project) excitation — without it, only
     /// Concrete, Typed, and Universal levels fire.
     pub fn excite_with_space(&self, trace: &Trace, space: Option<&str>) -> FieldDelta {
+        self.excite_with_space_filtered(trace, space, |_| true)
+    }
+
+    /// Excite a trace received from the network. Remote raw traces may enrich
+    /// the abstract collective field, but Concrete and Project remain local.
+    pub fn excite_remote_abstract(&self, trace: &Trace) -> FieldDelta {
+        self.excite_with_space_filtered(trace, None, AbstractionLevel::is_syncable)
+    }
+
+    fn excite_with_space_filtered<F>(
+        &self,
+        trace: &Trace,
+        space: Option<&str>,
+        include_level: F,
+    ) -> FieldDelta
+    where
+        F: Fn(AbstractionLevel) -> bool + Copy,
+    {
         let mut inner = self.inner.write().unwrap();
-        let delta = inner.excite_node(trace, space);
+        let delta = inner.excite_node_filtered(trace, space, include_level);
 
         let now_ms = trace.timestamp;
         let normalized_cap = normalize_capability(&trace.capability);
@@ -869,6 +900,9 @@ impl PheromoneField {
         let co_excited: Vec<(String, AbstractionLevel)> = {
             let mut max_ts: HashMap<(String, AbstractionLevel), u64> = HashMap::new();
             for (k, p) in &inner.nodes {
+                if !include_level(k.level) {
+                    continue;
+                }
                 if k.capability == normalized_cap {
                     continue;
                 }
@@ -1302,7 +1336,13 @@ impl PheromoneField {
             .filter_map(|(key, edge)| {
                 let w = edge.current_weight(now_ms);
                 if w > COUPLING_PRUNE_THRESHOLD {
-                    Some((key.predecessor.clone(), key.successor.clone(), w, key.level, key.bucket))
+                    Some((
+                        key.predecessor.clone(),
+                        key.successor.clone(),
+                        w,
+                        key.level,
+                        key.bucket,
+                    ))
                 } else {
                     None
                 }
@@ -1329,11 +1369,10 @@ impl PheromoneField {
         for (key, edge) in &inner.edges {
             let w = edge.current_weight(now_ms);
             if w > threshold {
-                level_edges.entry((key.level as u8, key.bucket)).or_default().push((
-                    &key.predecessor,
-                    &key.successor,
-                    w,
-                ));
+                level_edges
+                    .entry((key.level as u8, key.bucket))
+                    .or_default()
+                    .push((&key.predecessor, &key.successor, w));
             }
         }
 
@@ -1495,7 +1534,12 @@ impl PheromoneField {
         }
 
         for entry in &snapshot.couplings {
-            let key = EdgeKey::at_level(&entry.predecessor, &entry.successor, entry.level, entry.bucket);
+            let key = EdgeKey::at_level(
+                &entry.predecessor,
+                &entry.successor,
+                entry.level,
+                entry.bucket,
+            );
             let edge = inner.edges.entry(key).or_insert(Edge {
                 weight: 0.0,
                 last_reinforced: entry.last_reinforced,
@@ -1625,7 +1669,12 @@ impl PheromoneField {
             if !entry.level.is_syncable() {
                 continue;
             }
-            let key = EdgeKey::at_level(&entry.predecessor, &entry.successor, entry.level, entry.bucket);
+            let key = EdgeKey::at_level(
+                &entry.predecessor,
+                &entry.successor,
+                entry.level,
+                entry.bucket,
+            );
             let discounted_weight = entry.weight * trust_discount;
             let edge = inner.edges.entry(key).or_insert(Edge {
                 weight: 0.0,
@@ -1754,13 +1803,6 @@ impl PheromoneField {
 }
 
 impl PheromoneField {
-    /// Hydrate the field from existing traces in the store.
-    /// Called once on startup to warm the field from cold storage.
-    ///
-    /// Uses excite_node() directly — no co-excitation scan per trace.
-    /// Historical traces have original timestamps (spread across hours/days),
-    /// so they'd never be within the 60s coupling window anyway.
-    /// O(traces) instead of O(traces × nodes).
     /// Clear all field state (nodes + edges). Used for data reset.
     pub fn clear(&self) {
         let mut inner = self.inner.write().unwrap();
@@ -1769,41 +1811,28 @@ impl PheromoneField {
         inner.total_intensity = 0.0;
     }
 
+    /// Hydrate the field from existing traces in the store.
+    /// Called once on startup to warm the field from cold storage.
+    ///
+    /// Replays persisted traces with their stored space so cold starts restore
+    /// the same Project-level points and same-bucket couplings as runtime
+    /// `excite_with_space()` calls. The store query keeps internal
+    /// signal/presence/continuity traces out of the field replay.
     pub fn hydrate_from_store(&self, store: &crate::storage::TraceStore) {
-        let caps = match store.distinct_capabilities(500) {
-            Ok(c) => c,
+        let traces = match store.field_replay_traces_with_space(FIELD_HYDRATE_TRACE_LIMIT) {
+            Ok(traces) => traces,
             Err(_) => return,
         };
         let mut count = 0u64;
-        for cap in &caps {
-            if crate::posts::is_signal_capability(cap)
-                || crate::presence::is_presence_capability(cap)
-                || crate::continuity::is_continuity_capability(cap)
-            {
-                continue;
-            }
-            let mut traces = match store.query_capability(cap, 200) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            // query_capability returns DESC (newest first).
-            // EMA gives most weight to last-processed observation.
-            // Reverse so newest traces dominate the final valence.
-            traces.reverse();
-            // Lock per capability batch — no coupling overhead
-            {
-                let mut inner = self.inner.write().unwrap();
-                for trace in &traces {
-                    inner.excite_node(trace, None);
-                    count += 1;
-                }
-            }
+        for (trace, space) in traces {
+            self.excite_with_space(&trace, space.as_deref());
+            count += 1;
         }
         if count > 0 {
             tracing::info!(
                 traces = count,
                 points = self.len(),
-                "Hydrated pheromone field from store"
+                "Hydrated space-aware pheromone field from store"
             );
         }
     }
@@ -2711,7 +2740,10 @@ mod tests {
 
         // Backend should have search→edit edge at Project level
         let be_edge = EdgeKey::at_level(
-            "cap/search", "cap/edit", AbstractionLevel::Project, backend_bucket,
+            "cap/search",
+            "cap/edit",
+            AbstractionLevel::Project,
+            backend_bucket,
         );
         assert!(
             inner.edges.contains_key(&be_edge),
@@ -2720,7 +2752,10 @@ mod tests {
 
         // Android should have search→read edge at Project level
         let an_edge = EdgeKey::at_level(
-            "cap/search", "cap/read", AbstractionLevel::Project, android_bucket,
+            "cap/search",
+            "cap/read",
+            AbstractionLevel::Project,
+            android_bucket,
         );
         assert!(
             inner.edges.contains_key(&an_edge),
@@ -2729,10 +2764,16 @@ mod tests {
 
         // Backend should NOT have search→read, android should NOT have search→edit
         let cross1 = EdgeKey::at_level(
-            "cap/search", "cap/read", AbstractionLevel::Project, backend_bucket,
+            "cap/search",
+            "cap/read",
+            AbstractionLevel::Project,
+            backend_bucket,
         );
         let cross2 = EdgeKey::at_level(
-            "cap/search", "cap/edit", AbstractionLevel::Project, android_bucket,
+            "cap/search",
+            "cap/edit",
+            AbstractionLevel::Project,
+            android_bucket,
         );
         assert!(
             !inner.edges.contains_key(&cross1),
@@ -2744,12 +2785,8 @@ mod tests {
         );
 
         // Universal level should have BOTH patterns (bucket=0, shared)
-        let uni_edit = EdgeKey::at_level(
-            "cap/search", "cap/edit", AbstractionLevel::Universal, 0,
-        );
-        let uni_read = EdgeKey::at_level(
-            "cap/search", "cap/read", AbstractionLevel::Universal, 0,
-        );
+        let uni_edit = EdgeKey::at_level("cap/search", "cap/edit", AbstractionLevel::Universal, 0);
+        let uni_read = EdgeKey::at_level("cap/search", "cap/read", AbstractionLevel::Universal, 0);
         assert!(
             inner.edges.contains_key(&uni_edit),
             "Universal should have search→edit"
@@ -2987,6 +3024,175 @@ mod tests {
 
         let result = field.aggregate_at_level("tool:edit", AbstractionLevel::Project);
         assert!(result.is_none(), "Level 1 should be empty without space");
+    }
+
+    #[test]
+    fn remote_raw_trace_excites_only_syncable_levels() {
+        let field = PheromoneField::new();
+        let t = make_trace(
+            "claude-code/Edit",
+            "edit file: src/network_runtime.rs",
+            Outcome::Succeeded,
+            100,
+        );
+
+        let delta = field.excite_remote_abstract(&t);
+
+        assert_eq!(
+            delta.intensity_add, 0.0,
+            "remote raw trace should not deposit at Concrete level"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Concrete)
+                .is_none(),
+            "remote raw trace must not create Concrete points"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Project)
+                .is_none(),
+            "remote raw trace must not create Project points"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Typed)
+                .is_some(),
+            "remote raw trace should still enrich Typed patterns"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Universal)
+                .is_some(),
+            "remote raw trace should still enrich Universal patterns"
+        );
+    }
+
+    #[test]
+    fn hydrate_from_store_replays_space_and_project_couplings() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = crate::storage::TraceStore::open(&dir.path().join("traces.db")).unwrap();
+        let base = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+
+        let mut read_alpha = make_trace_with_seed(
+            "claude-code/Read",
+            "read file: src/main.rs",
+            Outcome::Succeeded,
+            100,
+            1,
+        );
+        read_alpha.timestamp = base;
+        let mut edit_alpha = make_trace_with_seed(
+            "claude-code/Edit",
+            "edit file: src/main.rs",
+            Outcome::Succeeded,
+            100,
+            1,
+        );
+        edit_alpha.timestamp = base + 1_000;
+        let mut bash_beta = make_trace_with_seed(
+            "claude-code/Bash",
+            "bash: cargo test",
+            Outcome::Succeeded,
+            100,
+            1,
+        );
+        bash_beta.timestamp = base + 2_000;
+
+        store
+            .insert_with_space(&read_alpha, Some("space-alpha"))
+            .unwrap();
+        store
+            .insert_with_space(&edit_alpha, Some("space-alpha"))
+            .unwrap();
+        store
+            .insert_with_space(&bash_beta, Some("space-beta"))
+            .unwrap();
+
+        let field = PheromoneField::new();
+        field.hydrate_from_store(&store);
+
+        let alpha_results = field.scan_with_fallback(
+            &simhash("read file: src/main.rs"),
+            Some("space-alpha"),
+            None,
+            20,
+        );
+        assert!(
+            alpha_results
+                .iter()
+                .any(|scan| scan.capability == "tool:read"
+                    && scan.level == AbstractionLevel::Project),
+            "hydrate should restore Project-level points for stored space"
+        );
+
+        let alpha_bucket = crate::target_kind::space_bucket("space-alpha");
+        let beta_bucket = crate::target_kind::space_bucket("space-beta");
+        let edges = field.active_edges(20);
+        assert!(
+            edges.iter().any(|(pred, succ, _, level, bucket)| {
+                pred == "tool:read"
+                    && succ == "tool:edit"
+                    && *level == AbstractionLevel::Project
+                    && *bucket == alpha_bucket
+            }),
+            "space-aware hydrate should restore Project-level read→edit coupling"
+        );
+        assert!(
+            edges.iter().all(|(pred, succ, _, level, bucket)| {
+                !(pred == "tool:read"
+                    && succ == "tool:edit"
+                    && *level == AbstractionLevel::Project
+                    && *bucket == beta_bucket)
+            }),
+            "Project-level coupling should not leak into another space"
+        );
+    }
+
+    #[test]
+    fn same_device_sessions_reinforce_without_multisource() {
+        let field = PheromoneField::new();
+        let base = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
+
+        for idx in 0..3 {
+            let mut read = make_trace_with_seed(
+                "claude-code/Read",
+                "read file: src/lib.rs",
+                Outcome::Succeeded,
+                50,
+                7,
+            );
+            read.session_id = Some(format!("session-{idx}"));
+            read.timestamp = base + idx * 2_000;
+            let mut edit = make_trace_with_seed(
+                "claude-code/Edit",
+                "edit file: src/lib.rs",
+                Outcome::Succeeded,
+                75,
+                7,
+            );
+            edit.session_id = Some(format!("session-{idx}"));
+            edit.timestamp = read.timestamp + 500;
+
+            field.excite_with_space(&read, Some("single-user-space"));
+            field.excite_with_space(&edit, Some("single-user-space"));
+        }
+
+        let edit = field
+            .aggregate_at_level("claude-code/Edit", AbstractionLevel::Universal)
+            .expect("edit should be reinforced");
+        assert!(
+            edit.total_excitations >= 3,
+            "same-device sessions should still reinforce local capability memory"
+        );
+        assert_eq!(
+            edit.source_count, 1,
+            "same-device sessions must not masquerade as independent sources"
+        );
+        assert!(
+            field.coupling_count() > 0,
+            "same-device repeated sequences should still form local Hebbian couplings"
+        );
     }
 
     // ── Fix 2: Signed Field Snapshots ──

@@ -393,7 +393,7 @@ fn handle_network_event(
                 Ok(true) => {
                     let _ = store.mark_published(&[trace_id]);
                     if let Some(f) = field {
-                        f.excite(&trace);
+                        f.excite_remote_abstract(&trace);
                     }
                     info!(
                         capability = %trace.capability,
@@ -593,16 +593,18 @@ pub fn maybe_promote_same_owner_trace_source(
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_PUBLIC_BOOTSTRAP_SEEDS, effective_bootstrap_seeds,
+        DEFAULT_PUBLIC_BOOTSTRAP_SEEDS, effective_bootstrap_seeds, handle_network_event,
         maybe_promote_joined_primary_peer, maybe_promote_same_owner_trace_source,
         normalize_dialable_peer_address, observe_reusable_peer_address, publish_local_traces,
     };
     use crate::context::simhash;
     use crate::identity::{IdentityBinding, NodeIdentity};
-    use crate::network::NetworkCommand;
+    use crate::network::{NetworkCommand, NetworkEvent};
     use crate::network_state::NetworkSnapshot;
+    use crate::pheromone::{AbstractionLevel, PheromoneField};
     use crate::storage::TraceStore;
     use crate::trace::{Outcome, Trace};
+    use tempfile::TempDir;
     use tokio::sync::mpsc;
 
     #[test]
@@ -686,6 +688,73 @@ mod tests {
         assert_eq!(
             snapshot.trusted_peer_seed_addresses(8),
             vec!["/ip4/10.0.0.9/tcp/4001".to_string()]
+        );
+    }
+
+    #[test]
+    fn received_network_trace_only_excites_abstract_field_levels() {
+        let dir = TempDir::new().unwrap();
+        let store = TraceStore::open(&dir.path().join("traces.db")).unwrap();
+        let field = PheromoneField::new();
+        let local_identity = NodeIdentity::generate();
+        let remote_identity = NodeIdentity::generate();
+        let binding = IdentityBinding::new(local_identity.device_identity());
+
+        let mut remote_secret = remote_identity.secret_key_bytes();
+        let remote_keypair =
+            libp2p::identity::Keypair::ed25519_from_bytes(&mut remote_secret).unwrap();
+        let remote_peer_id = remote_keypair.public().to_peer_id();
+
+        let trace = Trace::new(
+            "claude-code/Edit".into(),
+            Outcome::Succeeded,
+            10,
+            1,
+            simhash("edit file: src/network_runtime.rs"),
+            Some("edit file: src/network_runtime.rs".into()),
+            Some("remote-session".into()),
+            "codex".into(),
+            remote_identity.public_key_bytes(),
+            |msg| remote_identity.sign(msg),
+        );
+
+        let mut snapshot = NetworkSnapshot::begin(0);
+        handle_network_event(
+            dir.path(),
+            &binding,
+            &store,
+            Some(&field),
+            &mut snapshot,
+            NetworkEvent::TraceReceived {
+                trace: Box::new(trace),
+                source_peer: remote_peer_id,
+            },
+        );
+
+        assert_eq!(store.count().unwrap(), 1);
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Concrete)
+                .is_none(),
+            "network raw trace must not create Concrete field points"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Project)
+                .is_none(),
+            "network raw trace must not create Project field points"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Typed)
+                .is_some(),
+            "network raw trace should enrich Typed field points"
+        );
+        assert!(
+            field
+                .aggregate_at_level("claude-code/Edit", AbstractionLevel::Universal)
+                .is_some(),
+            "network raw trace should enrich Universal field points"
         );
     }
 
