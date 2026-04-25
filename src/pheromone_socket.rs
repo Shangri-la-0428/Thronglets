@@ -11,7 +11,9 @@ use crate::pheromone::{FieldScan, PheromoneField};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tracing::{debug, warn};
 
 /// Socket filename inside the data directory.
@@ -36,12 +38,26 @@ pub struct ScanRequest {
 /// Start listening on the field socket. Returns a handle that cleans up
 /// the socket file when dropped. Runs until the tokio runtime shuts down.
 pub fn start_listener(field: Arc<PheromoneField>, data_dir: &Path) -> SocketGuard {
+    #[cfg(unix)]
+    {
+        return start_unix_listener(field, data_dir);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (field, data_dir);
+        SocketGuard(None)
+    }
+}
+
+#[cfg(unix)]
+fn start_unix_listener(field: Arc<PheromoneField>, data_dir: &Path) -> SocketGuard {
     let path = socket_path(data_dir);
 
     // Remove stale socket from a previous crash
     let _ = std::fs::remove_file(&path);
 
-    let guard = SocketGuard(path.clone());
+    let guard = SocketGuard(Some(path.clone()));
 
     tokio::spawn(async move {
         let listener = match tokio::net::UnixListener::bind(&path) {
@@ -87,11 +103,13 @@ pub fn start_listener(field: Arc<PheromoneField>, data_dir: &Path) -> SocketGuar
 }
 
 /// Cleans up the socket file on drop.
-pub struct SocketGuard(PathBuf);
+pub struct SocketGuard(Option<PathBuf>);
 
 impl Drop for SocketGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if let Some(path) = &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -100,6 +118,20 @@ impl Drop for SocketGuard {
 /// Query the field via Unix socket. Returns None if the socket
 /// is not available or the query times out (~50ms budget).
 pub fn query(data_dir: &Path, request: &ScanRequest) -> Option<Vec<FieldScan>> {
+    #[cfg(unix)]
+    {
+        return query_unix(data_dir, request);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (data_dir, request);
+        None
+    }
+}
+
+#[cfg(unix)]
+fn query_unix(data_dir: &Path, request: &ScanRequest) -> Option<Vec<FieldScan>> {
     let path = socket_path(data_dir);
     if !path.exists() {
         return None;
@@ -156,6 +188,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn socket_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
