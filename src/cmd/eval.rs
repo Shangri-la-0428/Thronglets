@@ -13,7 +13,6 @@ pub(crate) struct FieldConvergenceCapability {
     capability: String,
     intensity: f64,
     valence: f64,
-    source_count: u32,
     excitations: u64,
 }
 
@@ -30,7 +29,6 @@ pub(crate) struct FieldCouplingEdge {
 pub(crate) struct FieldConvergence {
     traces_replayed: u64,
     active_capabilities: usize,
-    multi_source_capabilities: usize,
     total_coupling_edges: usize,
     capabilities: Vec<FieldConvergenceCapability>,
     top_couplings: Vec<FieldCouplingEdge>,
@@ -67,9 +65,8 @@ impl EvalEmergenceOutput {
         }
 
         lines.push(format!(
-            "field: {} capabilities ({} multi-source), {} coupling edges, {} traces replayed",
+            "field: {} capabilities, {} coupling edges, {} traces replayed",
             self.field_convergence.active_capabilities,
-            self.field_convergence.multi_source_capabilities,
             self.field_convergence.total_coupling_edges,
             self.field_convergence.traces_replayed,
         ));
@@ -78,17 +75,16 @@ impl EvalEmergenceOutput {
                 .field_convergence
                 .capabilities
                 .iter()
-                .filter(|c| c.source_count > 1)
                 .take(5)
                 .map(|c| {
                     format!(
-                        "  {}  src={} exc={}",
-                        c.capability, c.source_count, c.excitations
+                        "  {}  intensity={:.2} exc={}",
+                        c.capability, c.intensity, c.excitations
                     )
                 })
                 .collect();
             if !top.is_empty() {
-                lines.push("multi-source convergence:".to_string());
+                lines.push("top capabilities by intensity:".to_string());
                 lines.extend(top);
             }
         }
@@ -504,7 +500,6 @@ pub(crate) fn eval_emergence(
             field.excite_with_space(trace, space.as_deref());
         }
         let caps = field.capabilities(100);
-        let multi_source = caps.iter().filter(|c| c.source_count > 1).count();
         let top_couplings: Vec<FieldCouplingEdge> = field
             .active_edges(20)
             .into_iter()
@@ -519,7 +514,6 @@ pub(crate) fn eval_emergence(
         FieldConvergence {
             traces_replayed: trace_count,
             active_capabilities: caps.len(),
-            multi_source_capabilities: multi_source,
             total_coupling_edges: field.coupling_count(),
             capabilities: caps
                 .iter()
@@ -527,7 +521,6 @@ pub(crate) fn eval_emergence(
                     capability: c.capability.clone(),
                     intensity: (c.intensity * 100.0).round() / 100.0,
                     valence: (c.valence * 1000.0).round() / 1000.0,
-                    source_count: c.source_count,
                     excitations: c.total_excitations,
                 })
                 .collect(),

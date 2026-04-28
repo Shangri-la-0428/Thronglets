@@ -43,11 +43,6 @@ const PRUNE_THRESHOLD: f64 = 0.01;
 /// α = 0.1 means new observation has 10% weight.
 const EMA_ALPHA: f64 = 0.1;
 
-/// Intensity multiplier for Sigil-attributed traces.
-/// Attributed traces deposit slightly more pheromone — the system
-/// naturally rewards identity without mandating it.
-const ATTRIBUTION_BOOST: f64 = 1.1;
-
 // ── Dynamics Constants ────────────────────────────────────────
 
 /// Fraction of intensity that diffuses to each neighbor per tick.
@@ -155,13 +150,6 @@ pub struct FieldPoint {
 
     /// Total excitation count (never decays — lifetime counter).
     pub total_excitations: u64,
-
-    /// Distinct source count (device_identity or node_pubkey).
-    /// For corroboration — multi-source is more trustworthy.
-    pub source_count: u32,
-
-    /// Track sources as hash set of first 8 bytes of identity.
-    sources: Vec<[u8; 8]>,
 }
 
 impl FieldPoint {
@@ -173,8 +161,6 @@ impl FieldPoint {
             variance: 0.0,
             last_excited: now_ms,
             total_excitations: 0,
-            source_count: 0,
-            sources: Vec::new(),
         }
     }
 
@@ -197,14 +183,7 @@ impl FieldPoint {
     }
 
     /// Excite this field point with a new observation.
-    fn excite(
-        &mut self,
-        outcome: Outcome,
-        latency_ms: u64,
-        now_ms: u64,
-        source_id: [u8; 8],
-        deposit: f64,
-    ) {
+    fn excite(&mut self, outcome: Outcome, latency_ms: u64, now_ms: u64, deposit: f64) {
         // First, decay existing intensity to current time
         self.decay(now_ms);
 
@@ -234,12 +213,6 @@ impl FieldPoint {
             } else {
                 self.latency = self.latency * (1.0 - EMA_ALPHA) + latency_ms as f64 * EMA_ALPHA;
             }
-        }
-
-        // Track unique sources (keep only first 8 bytes for compactness)
-        if !self.sources.contains(&source_id) {
-            self.sources.push(source_id);
-            self.source_count = self.sources.len() as u32;
         }
     }
 
@@ -438,7 +411,6 @@ pub struct FieldScan {
     pub latency: f64,
     pub variance: f64,
     pub total_excitations: u64,
-    pub source_count: u32,
     pub context_similarity: f64,
     pub level: AbstractionLevel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -537,9 +509,6 @@ pub struct FieldSnapshotEntry {
     pub variance: f64,
     pub last_excited: u64,
     pub total_excitations: u64,
-    pub source_count: u32,
-    #[serde(default)]
-    pub source_hashes: Vec<[u8; 8]>,
     #[serde(default)]
     pub level: AbstractionLevel,
 }
@@ -552,7 +521,6 @@ pub struct FieldDelta {
     pub intensity_add: f64,
     pub outcome: Outcome,
     pub latency_ms: u64,
-    pub source_id: [u8; 8],
     pub timestamp: u64,
     pub level: AbstractionLevel,
 }
@@ -673,14 +641,12 @@ impl FieldInner {
 
     /// Excite the field at all four abstraction levels for a single trace.
     ///
-    /// Three evolutionary pressures shape the effective deposit:
+    /// Two evolutionary pressures shape the effective deposit:
     /// 1. **Outcome weighting**: successful traces deposit more pheromone
-    /// 2. **Corroboration bonus**: multi-source points receive stronger deposits (per-level)
-    /// 3. **Carrying capacity**: deposit cost increases quadratically with field load
+    /// 2. **Carrying capacity**: deposit cost increases quadratically with field load
     ///
-    /// Same physics, four levels. The field naturally produces correct behavior:
-    /// - Level 0 points are sparse → low corroboration → weak signals
-    /// - Level 3 points are dense → high corroboration → strong signals
+    /// Same physics, four levels — identity-blind. The field aggregates by
+    /// (capability, context_bucket); who deposited is not part of the formula.
     fn excite_node_filtered<F>(
         &mut self,
         trace: &Trace,
@@ -694,21 +660,14 @@ impl FieldInner {
 
         let cap = normalize_capability(&trace.capability);
         let now_ms = trace.timestamp;
-        let source_id = source_fingerprint(trace);
 
         // ── Outcome weighting (computed once) ──
-        let outcome_weight = match trace.outcome {
+        let base_deposit = match trace.outcome {
             Outcome::Succeeded => 1.0,
             Outcome::Partial => 0.5,
             Outcome::Failed => 0.1,
             Outcome::Timeout => 0.2,
         };
-        let attribution = if trace.is_attributed() {
-            ATTRIBUTION_BOOST
-        } else {
-            1.0
-        };
-        let base_deposit = outcome_weight * attribution;
 
         // ── Carrying capacity (computed once, shared across levels) ──
         self.total_intensity = self.current_total_intensity(now_ms);
@@ -754,6 +713,8 @@ impl FieldInner {
             ),
         ];
 
+        let effective_deposit = base_deposit / cost_multiplier;
+
         let mut total_deposited = 0.0;
         let mut concrete_deposit = 0.0;
 
@@ -761,16 +722,6 @@ impl FieldInner {
             if !*active || !include_level(key.level) {
                 continue;
             }
-
-            // Per-level corroboration
-            let prior_source_count = self.nodes.get(key).map(|p| p.source_count).unwrap_or(0);
-            let corroboration = if prior_source_count > 1 {
-                1.0 + (prior_source_count as f64).ln() * 0.1
-            } else {
-                1.0
-            };
-
-            let effective_deposit = base_deposit * corroboration / cost_multiplier;
 
             let point = self
                 .nodes
@@ -780,7 +731,6 @@ impl FieldInner {
                 trace.outcome,
                 trace.latency_ms as u64,
                 now_ms,
-                source_id,
                 effective_deposit,
             );
             total_deposited += effective_deposit;
@@ -798,7 +748,6 @@ impl FieldInner {
             intensity_add: concrete_deposit,
             outcome: trace.outcome,
             latency_ms: trace.latency_ms as u64,
-            source_id,
             timestamp: now_ms,
             level: AbstractionLevel::Concrete,
         }
@@ -989,7 +938,6 @@ impl PheromoneField {
                     latency: 0.0,
                     variance: 0.0,
                     total_excitations: 0,
-                    source_count: 0,
                     context_similarity: 0.0,
                     level: key.level,
                     coupled_from: None,
@@ -1007,7 +955,6 @@ impl PheromoneField {
             }
             entry.intensity = total_w;
             entry.total_excitations += point.total_excitations;
-            entry.source_count = entry.source_count.max(point.source_count);
         }
 
         // Phase 2: surface Hebbian-coupled capabilities
@@ -1047,7 +994,6 @@ impl PheromoneField {
                         latency: 0.0,
                         variance: 0.0,
                         total_excitations: 0,
-                        source_count: 0,
                         context_similarity: primary_sim * cw,
                         level: key.level,
                         coupled_from: Some(primary_cap.clone()),
@@ -1144,7 +1090,6 @@ impl PheromoneField {
                         latency: 0.0,
                         variance: 0.0,
                         total_excitations: 0,
-                        source_count: 0,
                         context_similarity: 0.0,
                         level,
                         coupled_from: None,
@@ -1162,7 +1107,6 @@ impl PheromoneField {
                 }
                 entry.intensity = total_w;
                 entry.total_excitations += point.total_excitations;
-                entry.source_count = entry.source_count.max(point.source_count);
             }
 
             // Surface Hebbian-coupled capabilities at this level
@@ -1201,7 +1145,6 @@ impl PheromoneField {
                             latency: 0.0,
                             variance: 0.0,
                             total_excitations: 0,
-                            source_count: 0,
                             context_similarity: ps * cw,
                             level,
                             coupled_from: Some(pcap.clone()),
@@ -1242,7 +1185,6 @@ impl PheromoneField {
         let mut weighted_latency = 0.0;
         let mut weighted_variance = 0.0;
         let mut total_excitations = 0u64;
-        let mut max_source_count = 0u32;
 
         for (key, point) in &inner.nodes {
             if key.capability != normalized || key.level != level {
@@ -1257,7 +1199,6 @@ impl PheromoneField {
             weighted_variance += point.variance * intensity;
             total_intensity += intensity;
             total_excitations += point.total_excitations;
-            max_source_count = max_source_count.max(point.source_count);
         }
 
         if total_intensity < PRUNE_THRESHOLD {
@@ -1271,7 +1212,6 @@ impl PheromoneField {
             latency: weighted_latency / total_intensity,
             variance: weighted_variance / total_intensity,
             total_excitations,
-            source_count: max_source_count,
             context_similarity: 1.0,
             level,
             coupled_from: None,
@@ -1479,8 +1419,6 @@ impl PheromoneField {
                 variance: point.variance,
                 last_excited: point.last_excited,
                 total_excitations: point.total_excitations,
-                source_count: point.source_count,
-                source_hashes: point.sources.clone(),
                 level: key.level,
             })
             .collect();
@@ -1527,8 +1465,6 @@ impl PheromoneField {
                     variance: entry.variance,
                     last_excited: entry.last_excited,
                     total_excitations: entry.total_excitations,
-                    source_count: entry.source_count.max(entry.source_hashes.len() as u32),
-                    sources: entry.source_hashes.clone(),
                 },
             );
         }
@@ -1563,7 +1499,6 @@ impl PheromoneField {
             delta.outcome,
             delta.latency_ms,
             delta.timestamp,
-            delta.source_id,
             delta.intensity_add,
         );
         inner.total_intensity += delta.intensity_add;
@@ -1588,8 +1523,6 @@ impl PheromoneField {
                 variance: point.variance,
                 last_excited: point.last_excited,
                 total_excitations: point.total_excitations,
-                source_count: point.source_count,
-                source_hashes: point.sources.clone(),
                 level: key.level,
             })
             .collect();
@@ -1657,12 +1590,6 @@ impl PheromoneField {
 
             // Evidence merges unconditionally
             point.total_excitations = point.total_excitations.max(entry.total_excitations);
-            for src in &entry.source_hashes {
-                if !point.sources.contains(src) {
-                    point.sources.push(*src);
-                    point.source_count = point.sources.len() as u32;
-                }
-            }
         }
 
         for entry in &snapshot.couplings {
@@ -1692,7 +1619,7 @@ impl PheromoneField {
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
         let inner = self.inner.read().unwrap();
 
-        let mut cap_map: HashMap<&str, (f64, f64, f64, u64, u32)> = HashMap::new();
+        let mut cap_map: HashMap<&str, (f64, f64, f64, u64)> = HashMap::new();
 
         for (key, point) in &inner.nodes {
             if key.level != AbstractionLevel::Concrete {
@@ -1704,24 +1631,22 @@ impl PheromoneField {
             }
             let entry = cap_map
                 .entry(&key.capability)
-                .or_insert((0.0, 0.0, 0.0, 0, 0));
+                .or_insert((0.0, 0.0, 0.0, 0));
             entry.0 += intensity;
             entry.1 += point.valence * intensity;
             entry.2 += point.latency * intensity;
             entry.3 += point.total_excitations;
-            entry.4 = entry.4.max(point.source_count);
         }
 
         let mut results: Vec<FieldScan> = cap_map
             .into_iter()
-            .map(|(cap, (intensity, wv, wl, exc, sc))| FieldScan {
+            .map(|(cap, (intensity, wv, wl, exc))| FieldScan {
                 capability: cap.to_string(),
                 intensity,
                 valence: if intensity > 0.0 { wv / intensity } else { 0.5 },
                 latency: if intensity > 0.0 { wl / intensity } else { 0.0 },
                 variance: 0.0,
                 total_excitations: exc,
-                source_count: sc,
                 context_similarity: 0.0,
                 level: AbstractionLevel::Concrete,
                 coupled_from: None,
@@ -1844,24 +1769,6 @@ impl Default for PheromoneField {
     }
 }
 
-// ── Helpers ────────────────────────────────────────────────────
-
-/// Extract an 8-byte source fingerprint from a trace for tracking unique sources.
-fn source_fingerprint(trace: &Trace) -> [u8; 8] {
-    if let Some(ref di) = trace.device_identity {
-        let bytes = di.as_bytes();
-        let mut fp = [0u8; 8];
-        for (i, b) in bytes.iter().take(8).enumerate() {
-            fp[i] = *b;
-        }
-        fp
-    } else {
-        let mut fp = [0u8; 8];
-        fp.copy_from_slice(&trace.node_pubkey[..8]);
-        fp
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1893,20 +1800,6 @@ mod tests {
             key.verifying_key().to_bytes(),
             |bytes| key.sign(bytes),
         )
-    }
-
-    fn make_attributed_trace(
-        capability: &str,
-        context: &str,
-        outcome: Outcome,
-        latency_ms: u32,
-    ) -> Trace {
-        use crate::trace::TraceConfig;
-        let key = SigningKey::from_bytes(&[1u8; 32]);
-        TraceConfig::for_sigil("SIG_test", capability, outcome, "test-model")
-            .context_raw(simhash(context), Some(context.to_string()))
-            .latency_ms(latency_ms)
-            .sign(key.verifying_key().to_bytes(), |bytes| key.sign(bytes))
     }
 
     #[test]
@@ -1941,27 +1834,6 @@ mod tests {
         let agg = field.aggregate("claude-code/Edit").unwrap();
         assert_eq!(agg.total_excitations, 11);
         assert!(agg.valence > 0.5);
-    }
-
-    #[test]
-    fn attributed_traces_get_intensity_boost() {
-        let field = PheromoneField::new();
-        let anon = make_trace("anon-cap", "same context", Outcome::Succeeded, 100);
-        let attr = make_attributed_trace("attr-cap", "same context", Outcome::Succeeded, 100);
-
-        field.excite(&anon);
-        field.excite(&attr);
-
-        let anon_agg = field.aggregate("anon-cap").unwrap();
-        let attr_agg = field.aggregate("attr-cap").unwrap();
-
-        // Attributed trace should have higher intensity (1.1x)
-        assert!(
-            attr_agg.intensity > anon_agg.intensity,
-            "attributed ({}) should have higher intensity than anonymous ({})",
-            attr_agg.intensity,
-            anon_agg.intensity
-        );
     }
 
     #[test]
@@ -2289,40 +2161,6 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_restore_preserves_source_fingerprints() {
-        let field = PheromoneField::new();
-        let t1 = make_trace_with_seed("cap/src", "ctx", Outcome::Succeeded, 100, 1);
-        let t2 = make_trace_with_seed("cap/src", "ctx", Outcome::Succeeded, 100, 2);
-        field.excite(&t1);
-        field.excite(&t2);
-
-        let snapshot = field.snapshot();
-        assert_eq!(snapshot.points[0].source_hashes.len(), 2);
-
-        let restored = PheromoneField::new();
-        restored.restore(&snapshot);
-        restored.excite(&make_trace_with_seed(
-            "cap/src",
-            "ctx",
-            Outcome::Succeeded,
-            100,
-            1,
-        ));
-
-        let inner = restored.inner.read().unwrap();
-        let point = inner
-            .nodes
-            .values()
-            .find(|point| point.total_excitations >= 3)
-            .expect("expected restored point");
-        assert_eq!(
-            point.source_count, 2,
-            "restored source hashes should dedupe repeated sources"
-        );
-        assert_eq!(point.sources.len(), 2);
-    }
-
-    #[test]
     fn delta_sync() {
         let field_a = PheromoneField::new();
         let t = make_trace("cap/sync", "sync test", Outcome::Succeeded, 100);
@@ -2558,10 +2396,6 @@ mod tests {
             agg.total_excitations, 2,
             "both traces should contribute to same Concrete field point"
         );
-        assert_eq!(
-            agg.source_count, 2,
-            "two distinct sources should be tracked"
-        );
 
         // Also verify convergence at Universal level
         let agg_uni = field
@@ -2571,7 +2405,6 @@ mod tests {
             agg_uni.total_excitations, 2,
             "Universal level should also converge"
         );
-        assert_eq!(agg_uni.source_count, 2);
     }
 
     #[test]
@@ -2942,8 +2775,6 @@ mod tests {
                 variance: 0.0,
                 last_excited: chrono::Utc::now().timestamp_millis() as u64,
                 total_excitations: 999,
-                source_count: 1,
-                source_hashes: vec![],
                 level: AbstractionLevel::Concrete, // Should be rejected
             }],
             couplings: vec![],
@@ -3150,7 +2981,10 @@ mod tests {
     }
 
     #[test]
-    fn same_device_sessions_reinforce_without_multisource() {
+    fn repeated_sessions_reinforce_normally() {
+        // Identity is not part of field physics: repeated sessions reinforce
+        // the same field point and form Hebbian couplings, regardless of who
+        // emitted them. The field aggregates by (capability, context_bucket).
         let field = PheromoneField::new();
         let base = chrono::Utc::now().timestamp_millis() as u64 - 10_000;
 
@@ -3183,15 +3017,11 @@ mod tests {
             .expect("edit should be reinforced");
         assert!(
             edit.total_excitations >= 3,
-            "same-device sessions should still reinforce local capability memory"
-        );
-        assert_eq!(
-            edit.source_count, 1,
-            "same-device sessions must not masquerade as independent sources"
+            "repeated sessions should reinforce local capability memory"
         );
         assert!(
             field.coupling_count() > 0,
-            "same-device repeated sequences should still form local Hebbian couplings"
+            "repeated sequences should form local Hebbian couplings"
         );
     }
 
@@ -3252,8 +3082,6 @@ mod tests {
                 variance: 0.1,
                 last_excited: chrono::Utc::now().timestamp_millis() as u64,
                 total_excitations: 5,
-                source_count: 2,
-                source_hashes: vec![[1; 8]],
                 level: AbstractionLevel::Universal,
             }],
             couplings: vec![],
@@ -3291,8 +3119,6 @@ mod tests {
                 variance: 0.0,
                 last_excited: chrono::Utc::now().timestamp_millis() as u64,
                 total_excitations: 42,
-                source_count: 1,
-                source_hashes: vec![],
                 level: AbstractionLevel::Universal,
             }],
             couplings: vec![],
@@ -3327,8 +3153,6 @@ mod tests {
                 variance: 0.42,
                 last_excited: chrono::Utc::now().timestamp_millis() as u64,
                 total_excitations: 10,
-                source_count: 3,
-                source_hashes: vec![[2; 8]],
                 level: AbstractionLevel::Universal,
             }],
             couplings: vec![],

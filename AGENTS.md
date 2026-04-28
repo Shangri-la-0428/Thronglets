@@ -37,7 +37,6 @@ Stigmergic mechanisms (not features — these ARE the evolutionary physics):
 | **Hebbian co-edit** | 突触强化 — 共激活的capability形成edge |
 | **Pheromone decay** | 自然遗忘 — 蚂蚁不标记错误路径，未被强化的路径自然消失 |
 | **Carrying capacity** | 竞争压力 — 场容量有限，新deposit成本随密度增长 |
-| **Corroboration bonus** | 共振 — 多源确认的field point更持久 |
 | **Outcome-weighted deposits** | 梯度形成 — 成功trace 1.0 vs 未成功trace 0.1 |
 
 **Core insight**: 梯度（值之间的差异）IS信息。水往低处流，落差决定流速。不需要二分法（正确/错误），只需要强化差异。
@@ -106,7 +105,7 @@ The pheromone field operates across four abstraction levels. One trace excites a
 - **Space = Level 1**. `derive_space(payload)` in `hook_support.rs` extracts project identity from cwd. This naturally maps to Level 1 bucket. PreToolUse's 7 signal paths query Level 0-1 via space-scoped APIs.
 - **Scan fallback**: `scan_with_fallback()` walks Concrete → Project → Typed → Universal, gathers all available non-pruned observations, then sorts by live intensity and truncates to the caller's limit.
 - **P2P**: Only Level 2-3 flow between nodes. Field snapshots publish only Typed/Universal points and couplings; received raw traces may enrich the same abstract levels but must not create Concrete/Project points. Remote snapshots discounted 0.7x. Level 0-1 never leave the device.
-- **Single-device learning**: One user running multiple local sessions/agents still reinforces local traces, priors, and Hebbian order. Same-device repetition does not count as independent multi-source corroboration.
+- **Identity is not part of field physics** (v2.0.0): Trace identity (`node_pubkey`, `device_identity`, `sigil_id`, `owner_account`, `signature`) is preserved on every trace for the economic protocol — signing, chain anchoring, BOND attribution, settlement. The pheromone field aggregates by `(capability, context_bucket)` only; who deposited a trace does not enter the deposit formula. Stigmergy is identity-blind by design — the field reflects what was done, not who did it. Anti-spam is left to decay + capacity + the natural cost of actually executing tools.
 - **TargetKind** (`target_kind.rs`): Classifies file paths into semantic roles (SourceFile, TestFile, ConfigFile, BuildOutput, Documentation, Schema) for Level 2 bucket computation.
 - **Legacy compat**: Errors with `space: None` (pre-isolation) remain visible to all spaces.
 
@@ -123,7 +122,7 @@ Different agents name the same actions differently: `claude-code/Edit`, `codex/e
 | `urn:thronglets:*` | pass-through | Internal lifecycle |
 | `mcp:*` | pass-through | External MCP tools |
 
-**Design**: normalization happens at the field layer (`pheromone.rs`), not at storage. Traces preserve original capability URIs for audit. The field sees a unified namespace where `codex/edit` and `claude-code/Edit` are the same species — enabling corroboration, Hebbian coupling, and carrying capacity pressure to operate across agents.
+**Design**: normalization happens at the field layer (`pheromone.rs`), not at storage. Traces preserve original capability URIs for audit. The field sees a unified namespace where `codex/edit` and `claude-code/Edit` are the same species — enabling Hebbian coupling and carrying capacity pressure to operate across agents.
 
 MCP `trace_record` without explicit `space` falls back to cwd-derived space (`space_from_cwd()` in `service.rs`).
 
@@ -230,11 +229,11 @@ The P2P layer includes a full NAT traversal stack so nodes behind home routers c
 
 - [x] `sigil_id` is a first-class field on Trace (not a payload hack)
 - [x] `TraceConfig::for_sigil()` constructor — attributed traces are the path of least resistance
-- [x] Attribution boost: pheromone field gives 1.1x intensity to Sigil-attributed traces
 - [x] Presence feed reports `attributed_count` / `anonymous_count`
 - [x] Status endpoint reports `attributed_traces` count
 - [x] MCP + HTTP: `trace_record`, `signal_post`, `presence_ping` all accept `sigil_id`
 - [x] Versioned signing (0xFC tag) for backward-compatible trace verification
+- [x] **v2.0.0**: Identity removed from field physics — Sigil binding still propagates through traces for economic protocol, but no longer affects pheromone deposit intensity
 
 ## Upcoming
 
@@ -242,14 +241,15 @@ The P2P layer includes a full NAT traversal stack so nodes behind home routers c
 - [ ] Explicit BOND/UNBOND lifecycle events (not just implicit via trace TTL)
 - [ ] Multi-party BOND support (>2 Sigils sharing state)
 
-## Evolutionary Physics (implemented 2026-04-09)
+## Evolutionary Physics (revised 2026-04-28, v2.0.0)
 
-The pheromone field is an evolutionary substrate, not just shared memory. Four mechanisms in `pheromone.rs` create Darwinian selection on information:
+The pheromone field is an evolutionary substrate, not just shared memory. Three mechanisms in `pheromone.rs` create Darwinian selection on information:
 
 1. **Carrying capacity** (`FIELD_CAPACITY`): Total field intensity is bounded. New deposits cost more as the field fills (quadratic: `1 + load²`). Creates natural equilibrium — no hardcoded `max_traces`.
 2. **Outcome-weighted deposits**: Successful traces deposit 1.0, failed traces deposit 0.1. The field physically contains more pheromone from successful patterns.
 3. **Reinforcement-modulated decay**: Well-reinforced field points (high `total_excitations`) decay slower — up to ~2x half-life. Creates persistent landmarks from collective knowledge.
-4. **Corroboration bonus**: Multi-source field points receive stronger deposits (log-scaled). Information confirmed by multiple agents is harder to displace.
+
+The field is **identity-blind**: it does not count distinct sources or boost attributed traces. Reinforcement frequency × decay determines steady-state intensity. Multiple sources contribute by raising frequency at shared field points, not by triggering a separate "corroboration" multiplier. (Removed in v2.0.0: corroboration multiplier, attribution boost, source_fingerprint tracking — see `CHANGELOG.md`.)
 
 Set `FIELD_CAPACITY = f64::MAX` to disable all carrying capacity effects (backward compatible).
 

@@ -581,7 +581,6 @@ pub fn resolve(ctx: &Ctx, context_str: &str, limit: usize) -> Result<Value, Stri
                         "p50_latency_ms": s.latency.round() as u64,
                         "total_traces": s.total_excitations,
                         "field_intensity": round2(s.intensity),
-                        "source_count": s.source_count,
                         "level": format!("{:?}", s.level),
                     })
                 })
@@ -661,7 +660,6 @@ pub fn evaluate(ctx: &Ctx, capability: &str, limit: usize) -> Result<Value, Stri
             "success_rate": round2(ss.success_rate),
             "p50_latency_ms": ss.p50_latency_ms,
             "field_intensity": round2(fa.intensity),
-            "source_count": fa.source_count,
             "variance": round2(fa.variance),
         }),
         (Ok(Some(ss)), None) => json!({
@@ -675,7 +673,6 @@ pub fn evaluate(ctx: &Ctx, capability: &str, limit: usize) -> Result<Value, Stri
             "total_traces": fa.total_excitations,
             "success_rate": round2(fa.valence),
             "field_intensity": round2(fa.intensity),
-            "source_count": fa.source_count,
         }),
         _ => {
             return Ok(json!({
@@ -744,7 +741,6 @@ pub fn explore(ctx: &Ctx, context_str: &str, limit: usize) -> Result<Value, Stri
                     "success_rate": round2(store_sr),
                     "p50_latency_ms": s.latency.round() as u64,
                     "field_intensity": round2(s.intensity),
-                    "source_count": s.source_count,
                 }));
                 if store_sr < 0.5 {
                     gaps.push(format!("low success rate for {}", s.capability));

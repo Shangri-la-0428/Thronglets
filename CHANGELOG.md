@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.0.0 — 2026-04-28
+
+**BREAKING: Identity removed from field physics. Stigmergy is now identity-blind by design. Trace identity preserved for economic protocol only.**
+
+The pheromone field no longer counts distinct sources, no longer applies a corroboration multiplier for multi-source contributions, and no longer boosts Sigil-attributed traces. Identity remains on every trace (`node_pubkey`, `device_identity`, `sigil_id`, `owner_account`, `signature`) for the economic layer — signing, BOND attribution, chain anchoring, settlement — but is invisible to the field's deposit formula. The field aggregates by `(capability, context_bucket)` only.
+
+**Why**: the prior design conflated two distinct concerns — economic accountability ("who is responsible for this trace") and stigmergic resonance ("how many independent sources confirm this pattern"). The first requires identity; the second does not. Ant colonies have no identity concept and stigmergy works fine. The corroboration multiplier (`1 + ln(source_count) × 0.1`) created an artificial "single-source ceiling" — single users could never trigger the bonus, regardless of activity richness — without actually defending against Sybil (any user can mint keypairs). Anti-spam is left to natural mechanisms: pheromone decay, carrying capacity (quadratic deposit cost as field fills), and the inherent cost of actually executing tools to produce traces.
+
+### Removed
+- `FieldPoint.source_count` and `FieldPoint.sources` — no per-point source tracking
+- `FieldScan.source_count` — query results no longer carry source counts
+- `FieldSnapshotEntry.source_count` and `FieldSnapshotEntry.source_hashes` — P2P snapshots are leaner
+- `FieldDelta.source_id` — delta sync no longer carries identity hashes
+- `ATTRIBUTION_BOOST` constant (`1.1x` for Sigil-attributed traces) — Sigil binding still travels through traces but does not affect deposit intensity
+- Per-level corroboration multiplier in `excite_node_filtered`
+- `source_fingerprint()` helper (dead code after the above)
+- `FieldConvergence.multi_source_capabilities` and `FieldConvergenceCapability.source_count` in `eval-emergence` JSON output
+- `"source_count"` keys from `service.rs` JSON responses (capability resolve, query, suggest)
+- Tests: `attributed_traces_get_intensity_boost`, `multi_source_corroboration`, `snapshot_restore_preserves_source_fingerprints`, and identity-related assertions in `same_device_sessions_*` / `cross_agent_traces_*`
+
+### Migration
+- Old `pheromone-field.v1.json` files load automatically; extra fields in stored snapshots are ignored.
+- **P2P snapshot format is wire-incompatible with v1.x**: a v1.x peer cannot deserialize a v2.0.0 snapshot (missing `source_count` field has no `serde(default)`). All Thronglets nodes that share a field via P2P must upgrade together.
+- `eval-emergence --json` schema changes: `multi_source_capabilities` removed; `capabilities[].source_count` removed.
+- Hook-rendered prehook output is unaffected — overlay/intent rendering does not surface source counts.
+
+### Code-level summary
+~120 lines deleted across `src/pheromone.rs`, `src/cmd/eval.rs`, `src/cmd/hooks.rs` (test fixtures), `src/service.rs`, `tests/eval_emergence.rs`. Zero new logic. Pure subtractive refactor.
+
 ## v1.0.9 — 2026-04-25
 
 - **Local-first field hardening** — cold field hydration now replays stored traces with their `space`, restoring Project-level points and same-space Hebbian couplings instead of flattening startup learning into non-project buckets.
