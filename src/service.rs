@@ -221,10 +221,13 @@ pub fn record_trace(
         .insert_with_space(&trace, space.as_deref())
         .map_err(|e| format!("storage: {e}"))?;
 
-    // Excite pheromone field if available
-    if let Some(field) = ctx.field {
-        field.excite_with_space(&trace, space.as_deref());
-    }
+    // NOTE: We do not excite the pheromone field here. The field is a
+    // derived view of the store — the daemon's `pheromone_tail` loop
+    // picks up new rows and excites the field exactly once. This keeps
+    // hook-path traces (which insert directly to SQLite) and MCP-path
+    // traces (which go through this function) on a single excitation
+    // pipeline, eliminating the divergence that left the field stuck
+    // for ~7 days under v1.x.
 
     // ── Outcome reflexivity: auto-avoid on repeated failures ──
     if trace.outcome == Outcome::Failed && !is_signal_capability(&trace.capability) {

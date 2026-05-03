@@ -8,12 +8,13 @@ use thronglets::network_runtime::{
     NetworkRuntimeOptions, NetworkRuntimeRequest, start_network_runtime,
 };
 use thronglets::pheromone::PheromoneField;
+use thronglets::pheromone_tail::{DEFAULT_POLL_INTERVAL, FieldTail};
 use tracing::info;
 
 pub(crate) async fn run(ctx: FullCtx, port: u16, bootstrap: Vec<String>) {
     let store = Arc::new(open_store(&ctx.dir));
     let field = Arc::new(PheromoneField::new());
-    field.hydrate_from_store(&store);
+    let cold_start = init_field_from_store(&field, &store, &ctx.dir, false);
     let command_tx = start_network_runtime(NetworkRuntimeRequest {
         data_dir: &ctx.dir,
         identity: &ctx.identity,
@@ -29,6 +30,16 @@ pub(crate) async fn run(ctx: FullCtx, port: u16, bootstrap: Vec<String>) {
 
     // Background pulse emitter (fail-open: no-op if env vars missing)
     maybe_spawn_pulse(&ctx.dir, &store);
+
+    // Field tail: materializes field from new store rows. Source-of-truth =
+    // the SQLite store; the field is a derived view.
+    let _tail_handle = spawn_field_tail(
+        Arc::clone(&field),
+        Arc::clone(&store),
+        &ctx.dir,
+        ctx.identity.public_key_bytes(),
+        cold_start,
+    );
 
     // Field socket: prehook queries the live field via IPC
     let _field_socket = thronglets::pheromone_socket::start_listener(Arc::clone(&field), &ctx.dir);
@@ -57,22 +68,7 @@ pub(crate) async fn mcp(
     let store = Arc::new(open_store(&ctx.dir));
     let field = Arc::new(PheromoneField::new());
 
-    // Restore pheromone field from disk if available
-    let field_path = ctx.dir.join("pheromone-field.v1.json");
-    let restored_from_disk = if field_path.exists()
-        && let Ok(data) = std::fs::read_to_string(&field_path)
-        && let Ok(snapshot) = serde_json::from_str(&data)
-    {
-        field.restore(&snapshot);
-        tracing::info!(points = field.len(), "Restored pheromone field from disk");
-        true
-    } else {
-        false
-    };
-
-    if !restored_from_disk {
-        field.hydrate_from_store(&store);
-    }
+    let cold_start = init_field_from_store(&field, &store, &ctx.dir, true);
 
     if let Some(adapter) = agent.and_then(AdapterArg::as_kind) {
         let _ =
@@ -106,6 +102,16 @@ pub(crate) async fn mcp(
     // Background pulse emitter (fail-open: no-op if env vars missing)
     maybe_spawn_pulse(&ctx.dir, &store);
 
+    // Field tail: any new trace inserted into the store (by hooks, MCP, or
+    // network ingest) gets excited into the field on next poll.
+    let _tail_handle = spawn_field_tail(
+        Arc::clone(&field),
+        Arc::clone(&store),
+        &ctx.dir,
+        ctx.identity.public_key_bytes(),
+        cold_start,
+    );
+
     // Field socket: prehook queries the live field via IPC instead of loading stale JSON
     let _field_socket = thronglets::pheromone_socket::start_listener(Arc::clone(&field), &ctx.dir);
 
@@ -119,13 +125,7 @@ pub(crate) async fn mcp(
 
     thronglets::mcp::serve_stdio(mcp_ctx).await;
 
-    // Persist pheromone field on shutdown
-    let snapshot = field.snapshot();
-    if snapshot.points.is_empty() {
-        let _ = std::fs::remove_file(&field_path);
-    } else if let Ok(data) = serde_json::to_string(&snapshot) {
-        let _ = std::fs::write(&field_path, data);
-    }
+    persist_field_on_shutdown(&field, &ctx.dir);
 }
 
 pub(crate) async fn serve(
@@ -138,21 +138,7 @@ pub(crate) async fn serve(
     let store = Arc::new(open_store(&ctx.dir));
     let field = Arc::new(PheromoneField::new());
 
-    // Restore pheromone field from disk if available
-    let field_path = ctx.dir.join("pheromone-field.v1.json");
-    let restored_from_disk = if field_path.exists()
-        && let Ok(data) = std::fs::read_to_string(&field_path)
-        && let Ok(snapshot) = serde_json::from_str(&data)
-    {
-        field.restore(&snapshot);
-        tracing::info!(points = field.len(), "Restored pheromone field from disk");
-        true
-    } else {
-        false
-    };
-    if !restored_from_disk {
-        field.hydrate_from_store(&store);
-    }
+    let cold_start = init_field_from_store(&field, &store, &ctx.dir, true);
 
     // Auto-join P2P network unless --local is specified.
     let _network_tx = if !local {
@@ -180,6 +166,16 @@ pub(crate) async fn serve(
     // Background pulse emitter (fail-open: no-op if env vars missing)
     maybe_spawn_pulse(&ctx.dir, &store);
 
+    // Field tail: any new trace inserted into the store gets excited into
+    // the field on next poll.
+    let _tail_handle = spawn_field_tail(
+        Arc::clone(&field),
+        Arc::clone(&store),
+        &ctx.dir,
+        ctx.identity.public_key_bytes(),
+        cold_start,
+    );
+
     // Field socket: prehook queries the live field via IPC
     let _field_socket = thronglets::pheromone_socket::start_listener(Arc::clone(&field), &ctx.dir);
 
@@ -206,7 +202,70 @@ pub(crate) async fn serve(
         .await
         .expect("HTTP server failed");
 
-    // Persist pheromone field on shutdown
+    persist_field_on_shutdown(&field, &ctx.dir);
+}
+
+/// Initialize the in-memory field at daemon boot.
+///
+/// Strategy:
+/// 1. If `<data_dir>/pheromone-field.v1.json` exists and `try_disk_first`,
+///    restore from snapshot — this preserves field state across daemon restarts.
+///    Cursor (already on disk) governs where the tail picks up.
+/// 2. Otherwise (cold start, or daemon=`run` which always rehydrates from store),
+///    call `hydrate_from_store`. Seed the tail cursor to the latest agent
+///    trace timestamp so we don't double-excite traces hydrate just replayed.
+///
+/// Returns `true` for cold start (we hydrated and need to seed cursor).
+fn init_field_from_store(
+    field: &Arc<PheromoneField>,
+    store: &Arc<thronglets::storage::TraceStore>,
+    data_dir: &std::path::Path,
+    try_disk_first: bool,
+) -> bool {
+    let field_path = data_dir.join("pheromone-field.v1.json");
+    if try_disk_first
+        && field_path.exists()
+        && let Ok(data) = std::fs::read_to_string(&field_path)
+        && let Ok(snapshot) = serde_json::from_str(&data)
+    {
+        field.restore(&snapshot);
+        tracing::info!(points = field.len(), "Restored pheromone field from disk");
+        return false;
+    }
+    field.hydrate_from_store(store);
+    true
+}
+
+fn spawn_field_tail(
+    field: Arc<PheromoneField>,
+    store: Arc<thronglets::storage::TraceStore>,
+    data_dir: &std::path::Path,
+    local_node_pubkey: [u8; 32],
+    cold_start: bool,
+) -> tokio::task::JoinHandle<()> {
+    let tail = Arc::new(FieldTail::new(
+        field,
+        Arc::clone(&store),
+        data_dir,
+        local_node_pubkey,
+    ));
+    if cold_start && let Ok(Some(latest_ts)) = store.latest_agent_trace_timestamp_ms() {
+        // Hydrate already excited every agent trace through this timestamp.
+        // Seed cursor so the tail loop only handles strictly-later traces.
+        // SQLite returns i64; cursor space is u64 (matches Trace::timestamp).
+        tail.seed_cursor(latest_ts.max(0) as u64);
+    }
+    // On warm start (restored from disk), the cursor on disk already governs
+    // where to resume — drain whatever arrived while we were down.
+    let drained = tail.drain();
+    if drained > 0 {
+        tracing::info!(drained, "Field tail drained backlog");
+    }
+    Arc::clone(&tail).spawn(DEFAULT_POLL_INTERVAL)
+}
+
+fn persist_field_on_shutdown(field: &Arc<PheromoneField>, data_dir: &std::path::Path) {
+    let field_path = data_dir.join("pheromone-field.v1.json");
     let snapshot = field.snapshot();
     if snapshot.points.is_empty() {
         let _ = std::fs::remove_file(&field_path);

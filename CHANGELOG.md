@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.0.1 — 2026-05-04
+
+**Fix: hook-path traces now actually excite the pheromone field.**
+
+Until v2.0.1, only MCP-routed `trace_record` calls (~5% of activity in typical setups) excited the field. Hook-path traces (Claude Code's `PostToolUse` → `thronglets-managed hook`, ~95% of activity) inserted into SQLite but never reached the in-memory field — `src/cmd/hooks.rs::hook` did not call `field.excite_with_space`, and the pheromone socket protocol only supported reads, not writes. The result: long-running setups saw the field decay to near-zero with no replenishment, while traces continued to accumulate in the trace store. This had been latent since the hook split; under v2.0.0 it manifested as Hebbian edges stuck at the floor weight (~0.06) regardless of activity.
+
+**Architecture**: SQLite is the single source of truth for trace events; the pheromone field is a derived view. The daemon now runs a `pheromone_tail` loop that polls the store for new rows and excites the field exactly once per trace. Same code path for hook-path and MCP-path traces — divergence is no longer possible.
+
+### Added
+- `src/pheromone_tail.rs` — `FieldTail` with persisted cursor (`<data_dir>/field-tail.cursor.json`), poll loop, drain-on-boot, and remote-trace skip (avoids double-counting against `network_runtime`'s `excite_remote_abstract`).
+- `TraceStore::traces_after(since_ms, limit)` and `TraceStore::latest_agent_trace_timestamp_ms()` for cursor-driven incremental scan.
+- CLI: `thronglets rebuild-field --confirm` — clears `pheromone-field.v1.json` and the tail cursor; next daemon boot replays the field from the trace store. Use after physics fixes or long pipeline outages where the in-memory field has diverged from store reality.
+- Cold-start cursor seeding: when daemon boots and `hydrate_from_store` has just excited every agent trace, the cursor is seeded to the latest trace timestamp so the tail loop only handles strictly-later traces.
+
+### Changed
+- `src/cmd/daemon.rs` (run / mcp / serve): all three daemon entries now spawn a tail loop alongside the existing field socket listener. Helpers `init_field_from_store`, `spawn_field_tail`, and `persist_field_on_shutdown` consolidate the shared boot/shutdown paths.
+- `src/service.rs::record_trace`: removed the synchronous `field.excite_with_space` call. The tail loop now handles excitation for every trace regardless of write path. Eliminates the prior divergence between hook and MCP paths.
+
+### Migration
+- No schema changes. `pheromone-field.v1.json` format unchanged.
+- Field-tail cursor file is new and self-managing — no operator action required for fresh installs. Existing installs may want `thronglets rebuild-field --confirm` to clear stale snapshots that pre-date the fix; the field will reconstruct from the trace store on next daemon boot.
+- No wire protocol changes. v2.0.1 is fully P2P-compatible with v2.0.0.
+
+### Code-level summary
+~350 lines added across `src/pheromone_tail.rs` (new), `src/storage/mod.rs`, `src/cmd/daemon.rs`, `src/cmd/mod.rs`, `src/cli.rs`. ~5 lines removed from `src/service.rs`. **Zero changes to `src/pheromone.rs`** — physics constants, decay, Hebbian, carrying capacity all untouched. The fix is plumbing, not physics.
+
 ## v2.0.0 — 2026-04-28
 
 **BREAKING: Identity removed from field physics. Stigmergy is now identity-blind by design. Trace identity preserved for economic protocol only.**

@@ -14,6 +14,7 @@ pub mod network_runtime;
 pub mod network_state;
 pub mod pheromone;
 pub mod pheromone_socket;
+pub mod pheromone_tail;
 pub mod posts;
 pub mod presence;
 pub mod profile;

@@ -206,6 +206,33 @@ pub(crate) async fn dispatch(cli: Cli) {
             eval::profile_check();
             return;
         }
+        Commands::RebuildField { confirm } => {
+            if !*confirm {
+                eprintln!(
+                    "rebuild-field: this deletes the persisted pheromone field snapshot \
+                     and tail cursor in {}. The trace store is not affected.\n\
+                     Re-run with --confirm to proceed.\n\
+                     The next daemon boot (mcp/run/serve) will replay the field from store.",
+                    base.dir.display()
+                );
+                std::process::exit(2);
+            }
+            let removed = thronglets::pheromone_tail::reset_field_state(&base.dir);
+            if removed {
+                println!(
+                    "rebuild-field: cleared pheromone field state in {}.\n\
+                     Restart `thronglets mcp` (or kill the existing MCP processes and \
+                     let your AI tool relaunch them) to trigger a clean replay from the \
+                     trace store.",
+                    base.dir.display()
+                );
+            } else {
+                println!(
+                    "rebuild-field: nothing to clear (field snapshot and cursor not present)."
+                );
+            }
+            return;
+        }
         Commands::ReleaseCheck {
             hours,
             max_sessions,
@@ -464,9 +491,10 @@ pub(crate) async fn dispatch(cli: Cli) {
 
         Commands::ProfileSummary
         | Commands::ProfileCheck
+        | Commands::RebuildField { .. }
         | Commands::ReleaseCheck { .. }
         | Commands::EvalSignals { .. } => {
-            unreachable!("eval commands handled before identity bootstrap")
+            unreachable!("eval/maintenance commands handled before identity bootstrap")
         }
 
         Commands::Setup

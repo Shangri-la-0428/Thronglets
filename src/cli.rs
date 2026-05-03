@@ -704,6 +704,20 @@ pub(crate) enum Commands {
     ProfileCheck,
 
     #[command(hide = true)]
+    /// Reset the pheromone field — delete the persisted field snapshot and
+    /// tail cursor so the next daemon boot replays the field from the trace
+    /// store. Use after fixing physics bugs or after long pipeline outages
+    /// where the in-memory field has diverged from the store of truth.
+    ///
+    /// The trace store itself is untouched; this only resets the derived
+    /// view. Requires `--confirm`.
+    RebuildField {
+        /// Confirm the destructive action.
+        #[arg(long)]
+        confirm: bool,
+    },
+
+    #[command(hide = true)]
     /// Run a release-oriented operator gate across prehook profile logs and offline signal quality.
     /// Reads optional prehook profile lines from stdin, then evaluates current offline signal quality.
     ReleaseCheck {

@@ -1153,6 +1153,41 @@ impl TraceStore {
         Self::collect_traces_with_space(&mut stmt, params![limit as i64])
     }
 
+    /// Fetch agent traces with `timestamp > since_ms`, in chronological order.
+    /// Filters out internal signal/presence/continuity/reinforcement traces so
+    /// the field tail processes the same set as `field_replay_traces_with_space`.
+    pub fn traces_after(
+        &self,
+        since_ms: i64,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(Trace, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT {TRACE_SELECT_COLUMNS}, space FROM traces \
+             WHERE timestamp > ?1 \
+               AND capability NOT LIKE 'urn:thronglets:signal:%' \
+               AND capability NOT LIKE 'urn:thronglets:presence:%' \
+               AND capability NOT LIKE 'urn:thronglets:continuity:%' \
+               AND capability NOT LIKE 'urn:thronglets:signal-reinforcement:%' \
+             ORDER BY timestamp ASC LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        Self::collect_traces_with_space(&mut stmt, params![since_ms, limit as i64])
+    }
+
+    /// Latest agent trace timestamp_ms (excludes internal signal/presence/etc).
+    /// Used to seed the field tail cursor on a first hydration so we don't
+    /// re-excite traces that hydrate already replayed.
+    pub fn latest_agent_trace_timestamp_ms(&self) -> rusqlite::Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = "SELECT MAX(timestamp) FROM traces \
+                   WHERE capability NOT LIKE 'urn:thronglets:signal:%' \
+                     AND capability NOT LIKE 'urn:thronglets:presence:%' \
+                     AND capability NOT LIKE 'urn:thronglets:continuity:%' \
+                     AND capability NOT LIKE 'urn:thronglets:signal-reinforcement:%'";
+        conn.query_row(sql, [], |row| row.get::<_, Option<i64>>(0))
+    }
+
     /// Total trace count.
     pub fn count(&self) -> rusqlite::Result<u64> {
         let conn = self.conn.lock().unwrap();
