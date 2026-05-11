@@ -15,7 +15,7 @@
   "homepage": "https://github.com/Shangri-la-0428/Thronglets",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Shangri-la-0428/Thronglets.git"
+    "url": "git+https://github.com/Shangri-la-0428/Thronglets.git"
   },
   "license": "MIT",
   "bin": {
