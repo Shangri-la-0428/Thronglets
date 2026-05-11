@@ -9,8 +9,9 @@ use thronglets::posts::{
     filter_signal_feed_results, summarize_recent_signal_feed, summarize_signal_traces,
 };
 use thronglets::presence::{PresenceTraceConfig, create_presence_trace, summarize_recent_presence};
-use thronglets::trace::Trace;
+use thronglets::trace::{EvidenceVerification, MethodCompliance, TraceEvidence};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn record(
     ctx: &FullCtx,
     capability: String,
@@ -19,32 +20,61 @@ pub(crate) fn record(
     input_size: u32,
     context: String,
     model: String,
+    session_id: Option<String>,
+    space: Option<String>,
+    method_compliance: Option<String>,
+    artifact_refs: Vec<String>,
+    trial_key: Option<String>,
+    verification: Option<String>,
 ) {
     let store = open_store(&ctx.dir);
     let outcome = parse_outcome(&outcome);
-    let ctx_hash = simhash(&context);
-    let ctx_text = if context.is_empty() {
-        None
-    } else {
-        Some(context.clone())
+    let method_compliance = method_compliance.as_deref().map(|value| {
+        MethodCompliance::parse(value).unwrap_or_else(|| {
+            panic!("invalid method_compliance: {value}");
+        })
+    });
+    let verification = verification.as_deref().map(|value| {
+        EvidenceVerification::parse(value).unwrap_or_else(|| {
+            panic!("invalid verification: {value}");
+        })
+    });
+    let evidence = TraceEvidence {
+        artifact_refs,
+        trial_key,
+        verification,
     };
-    let trace = Trace::new_with_identity(
-        capability.clone(),
-        outcome,
-        latency,
-        input_size,
-        ctx_hash,
-        ctx_text,
+
+    let service_ctx = thronglets::service::Ctx {
+        store: &store,
+        field: None,
+        identity: &ctx.identity,
+        binding: &ctx.binding,
+    };
+    let recorded = thronglets::service::record_trace(
+        &service_ctx,
+        thronglets::service::RecordTraceReq {
+            capability: capability.clone(),
+            outcome,
+            latency_ms: latency,
+            input_size,
+            context,
+            model,
+            session_id,
+            space,
+            agent_id: None,
+            sigil_id: None,
+            method_compliance,
+            evidence,
+        },
         None,
-        ctx.binding.owner_account.clone(),
-        Some(ctx.binding.device_identity.clone()),
-        model,
-        ctx.identity.public_key_bytes(),
-        |msg| ctx.identity.sign(msg),
-    );
-    store.insert(&trace).expect("failed to insert trace");
+    )
+    .expect("failed to record trace");
+    let thronglets::service::RecordResult::Trace(recorded) = recorded else {
+        unreachable!("record command does not write external continuity traces");
+    };
     println!("Trace recorded:");
-    println!("  ID:         {}", hex_encode(&trace.id[..8]));
+    println!("  ID:         {}", recorded.trace_id);
     println!("  Capability: {}", capability);
     println!("  Outcome:    {:?}", outcome);
 }
@@ -299,6 +329,8 @@ pub(crate) fn space(ctx: &FullCtx, space: String, hours: u32, limit: usize, json
         let _ = store.insert(&trace);
     }
     let local_feedback = ws.space_feedback_summary(Some(&space));
+    let learning =
+        thronglets::service::space_learning_view(&store, &local_feedback, &space, hours, limit);
     let continuity_traces = store
         .query_recent_continuity_traces(hours, limit.max(1).saturating_mul(10))
         .expect("failed to query recent continuity traces");
@@ -314,6 +346,7 @@ pub(crate) fn space(ctx: &FullCtx, space: String, hours: u32, limit: usize, json
         space,
         sessions,
         signals,
+        learning,
         continuity,
         local_feedback,
     };

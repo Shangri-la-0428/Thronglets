@@ -207,7 +207,7 @@ mod tests {
             0,
             simhash(context),
             Some(context.to_string()),
-            Some("test-session".to_string()),
+            Some(format!("test-session-{ts_ms}")),
             "test-model".to_string(),
             key.verifying_key().to_bytes(),
             |bytes| key.sign(bytes),
@@ -243,7 +243,10 @@ mod tests {
         assert_eq!(tail.poll_once(), 1);
         assert_eq!(tail.current_cursor(), 1_000);
         let points_after_first = field.len();
-        assert!(points_after_first > 0, "field should have points after excitation");
+        assert!(
+            points_after_first > 0,
+            "field should have points after excitation"
+        );
 
         // Insert another, older — must NOT be re-processed (cursor blocks)
         let t_old = make_trace("tool:edit", "beta", 500, LOCAL_SEED);
@@ -378,7 +381,10 @@ mod tests {
         let total = tail.drain();
         assert_eq!(total, 50);
         assert_eq!(tail.current_cursor(), 10_049);
-        assert!(field.len() > 0, "drained traces must produce field points");
+        assert!(
+            !field.is_empty(),
+            "drained traces must produce field points"
+        );
     }
 
     #[test]

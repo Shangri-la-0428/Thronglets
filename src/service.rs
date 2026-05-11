@@ -9,6 +9,7 @@ use crate::continuity::{
     ExternalContinuityInput, ExternalContinuityRecordConfig, record_external_continuity,
 };
 use crate::identity::{IdentityBinding, NodeIdentity};
+pub use crate::learning::SpaceLearningView;
 use crate::pheromone::PheromoneField;
 use crate::posts::{
     DEFAULT_SIGNAL_REINFORCEMENT_TTL_HOURS, SignalPostKind, SignalTraceConfig,
@@ -21,7 +22,7 @@ use crate::presence::{
     is_presence_capability, summarize_recent_presence,
 };
 use crate::storage::TraceStore;
-use crate::trace::{MethodCompliance, Outcome, Trace};
+use crate::trace::{EvidenceVerification, MethodCompliance, Outcome, Trace, TraceEvidence};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -57,6 +58,7 @@ const PROJECT_MANIFESTS: &[&str] = &[
 /// Walks up `path.ancestors()` looking for (in priority order):
 ///   1. a `.git` file or directory — the repo root (authoritative)
 ///   2. a common project manifest (Cargo.toml, package.json, …)
+///
 /// If neither is found, falls back to the last two path components
 /// joined with `/` (the legacy heuristic).
 ///
@@ -135,6 +137,7 @@ pub struct RecordTraceReq {
     pub agent_id: Option<String>,
     pub sigil_id: Option<String>,
     pub method_compliance: Option<MethodCompliance>,
+    pub evidence: TraceEvidence,
 }
 
 pub struct RecordTraceOut {
@@ -169,6 +172,7 @@ pub fn record_trace(
         agent_id,
         sigil_id,
         method_compliance,
+        evidence,
     } = req;
 
     // External continuity path
@@ -198,7 +202,7 @@ pub fn record_trace(
     };
     let (owner, device) = sign_config(ctx);
 
-    let trace = Trace::new_with_agent_compliance(
+    let trace = Trace::new_with_agent_compliance_evidence(
         capability.clone(),
         outcome,
         latency_ms,
@@ -211,6 +215,7 @@ pub fn record_trace(
         agent_id,
         sigil_id,
         method_compliance,
+        normalize_evidence(evidence),
         model,
         ctx.identity.public_key_bytes(),
         |msg| ctx.identity.sign(msg),
@@ -239,6 +244,80 @@ pub fn record_trace(
         capability: trace.capability.clone(),
         trace,
     }))
+}
+
+fn normalize_evidence(mut evidence: TraceEvidence) -> TraceEvidence {
+    evidence.artifact_refs = evidence
+        .artifact_refs
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .take(16)
+        .map(|value| {
+            if value.len() > 512 {
+                value.chars().take(512).collect()
+            } else {
+                value
+            }
+        })
+        .collect();
+    evidence.trial_key = evidence
+        .trial_key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            if value.len() > 128 {
+                value.chars().take(128).collect()
+            } else {
+                value
+            }
+        });
+    evidence
+}
+
+pub fn parse_evidence_from_json(args: &serde_json::Value) -> Result<TraceEvidence, String> {
+    let mut evidence = TraceEvidence::default();
+    if let Some(value) = args.get("artifact_refs") {
+        let Some(items) = value.as_array() else {
+            return Err("artifact_refs must be an array of strings".into());
+        };
+        let mut refs = Vec::new();
+        for item in items {
+            let Some(rendered) = item.as_str() else {
+                return Err("artifact_refs must be an array of strings".into());
+            };
+            refs.push(rendered.to_string());
+        }
+        evidence.artifact_refs = refs;
+    }
+    evidence.trial_key = args
+        .get("trial_key")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    evidence.verification = args
+        .get("verification")
+        .and_then(|value| value.as_str())
+        .map(|value| {
+            EvidenceVerification::parse(value).ok_or_else(|| {
+                "verification must be one of test, replay, eval, human, none".to_string()
+            })
+        })
+        .transpose()?;
+    Ok(normalize_evidence(evidence))
+}
+
+pub fn space_learning_view(
+    store: &TraceStore,
+    local_feedback: &crate::workspace::SpaceFeedbackSummary,
+    space: &str,
+    hours: u32,
+    limit: usize,
+) -> SpaceLearningView {
+    let fetch_limit = limit.max(1).saturating_mul(80).max(200);
+    let traces = store
+        .recent_agent_traces_for_space(hours as u64, fetch_limit, Some(space))
+        .unwrap_or_default();
+    crate::learning::view_from_traces(&traces, local_feedback, limit)
 }
 
 // ── Outcome Reflexivity ─────────────────────────────────────

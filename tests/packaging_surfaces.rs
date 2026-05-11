@@ -21,19 +21,6 @@ fn cargo_version() -> String {
         .to_string()
 }
 
-fn extract_quoted_value(source: &str, key: &str) -> String {
-    source
-        .lines()
-        .find_map(|line| {
-            let trimmed = line.trim();
-            let prefix = format!("{key} = ");
-            trimmed
-                .strip_prefix(&prefix)
-                .map(|rest| rest.trim_matches('"').to_string())
-        })
-        .unwrap_or_else(|| panic!("missing key: {key}"))
-}
-
 #[test]
 fn package_versions_match_current_source_version() {
     let cargo_version = cargo_version();
@@ -197,7 +184,6 @@ fn package_installers_read_version_from_a_single_source() {
             "npm/bin/thronglets.js should keep an executable bit so npm global installs expose a runnable CLI"
         );
     }
-
 }
 
 #[test]

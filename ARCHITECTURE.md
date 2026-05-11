@@ -29,16 +29,17 @@ The core product is:
 
 Everything else is an adapter or upgrade layer.
 
-## Field Evolution (2026-04-11)
+## Stigmergic Intelligence (2026-04-16, revised v2.0.0)
 
-**Thronglets IS the subject of evolution.** Individual Sigils are the field's sensory-action organs (neurons). The field (Thronglets shared memory network) evolves; individuals serve the field.
+Evolution is observable at the field level and expressed through individual sessions. Field points are the replicators; Sigils/Loops are the vehicles; the aggregate field is the population.
 
 Existing mechanisms that ARE evolutionary dynamics (not just features):
+
 - **Hebbian co-edit** = synaptic strengthening (co-occurring patterns are reinforced)
 - **Pheromone decay** = synaptic weakening (unused information fades)
 - **Carrying capacity** = selection pressure (new signals cost more as field fills)
-- **Corroboration bonus** = multi-source validation (multi-agent confirmed info is more persistent)
 - **Outcome-weighted deposits** = fitness selection (successful traces deposit more)
+- **Reinforcement-modulated decay** = frequently reinforced landmarks decay more slowly
 
 Selection pressure is intrinsic to the field's Hebbian dynamics — no external judge needed.
 
@@ -48,7 +49,7 @@ Lifecycle events reframed:
 - BOND = synapse formation
 - MERGE = node consolidation
 
-The evolution target function = spherical coverage of the intelligence field (not individual survival).
+Identity is preserved on traces for accountability and settlement, but the pheromone field is identity-blind: deposit physics depends on what happened, not who did it.
 
 ## Abstraction Levels (v1.0)
 
@@ -65,10 +66,10 @@ FieldKey = (capability, bucket, level)
 | 2 | **Typed** | File type × language | Yes | "tool:edit on Rust source files" |
 | 3 | **Universal** | Pure capability | Yes | "tool:edit" |
 
-**One trace excites all four levels simultaneously.** Same physics (decay, Hebbian coupling, carrying capacity, corroboration) at every level — the physics produces correct behavior automatically:
+**One trace excites all four levels simultaneously.** Same physics (decay, Hebbian coupling, carrying capacity, outcome weighting) at every level — the physics produces correct behavior automatically:
 
-- Level 0 is sparse → low corroboration → weak signals (correct: specific experience shouldn't generalize)
-- Level 3 is dense → high corroboration → strong signals (correct: universal patterns are more reliable)
+- Level 0 is sparse and specific → weak unless repeatedly reinforced (correct: specific experience shouldn't over-generalize)
+- Level 3 is dense and universal → persistent only when many executions keep reinforcing it
 - Carrying capacity creates natural competition between levels
 
 **Space isolation is Level 1** — not a separate mechanism. It was always an abstraction level; v1.0 names it.
@@ -91,7 +92,7 @@ Different agents name the same actions differently. The pheromone field normaliz
 - `claude-code/Grep`, `claude-code/Glob`, `codex/search` → `tool:search`
 - `urn:thronglets:*`, `mcp:*` → pass-through
 
-Normalization happens at the field layer (`pheromone.rs`), not at storage. Traces preserve original capability URIs for audit. The field sees a unified namespace — enabling corroboration, Hebbian coupling, and carrying capacity pressure to operate across agents.
+Normalization happens at the field layer (`pheromone.rs`), not at storage. Traces preserve original capability URIs for audit. The field sees a unified namespace — enabling Hebbian coupling and carrying capacity pressure to operate across agents.
 
 ## Temporal Direction in Hebbian Edges (implemented)
 
@@ -126,7 +127,9 @@ The core coordination model is:
 
 Multiple AIs should influence each other by changing a shared environment, not by becoming a direct messaging system.
 
-One user on one device can still evolve a local field through repeated sessions and agents. That repetition strengthens local traces, priors, and Hebbian order, but it does not count as independent multi-source corroboration.
+One user on one device can still evolve a local field through repeated sessions and agents. That repetition strengthens local traces, priors, and Hebbian order, but same-device agents do not receive an identity-based field bonus.
+
+Agent-maintained external learning loops are expressed through the same primitives. A Heuristic System is not a new Thronglets object: it is a `space` whose sparse `trace` evidence, optional local artifacts, derived `field`, and projected `view` have started to compress into stable paths, failure residue, and regression candidates. If an alleged learning concept cannot fit as `trace`, `signal`, `policy`, or `view`, suspect the concept before expanding the ontology.
 
 ### 3. Device-first, owner-optional
 
@@ -226,9 +229,9 @@ Hard rules:
 - `Oasyce SDK = policy, operations, and resource orchestration`
 - `Oasyce Chain = account truth, authorization truth, commitments, settlement, and public finality`
 
-### Service layer: single source of truth
+### Service layer: single entrypoint
 
-All business logic lives in `service.rs`. MCP and HTTP are thin protocol adapters: parse input → call service → format output. Business logic is never duplicated across transport layers.
+Business entrypoints live in `service.rs`. MCP and HTTP are thin protocol adapters: parse input → call service → format output. Derived view logic may live in focused modules such as `learning.rs`, but transports never duplicate it.
 
 ### Statistics vs signals: separate concerns
 

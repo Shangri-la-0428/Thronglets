@@ -254,22 +254,21 @@ pub(crate) fn co_edit_observations(
             CO_EDIT_OBSERVATION_HOURS,
             CO_EDIT_MAX_DISTANCE,
             space,
-        ) {
-            if stats.co_sessions >= 2 {
-                let short_name = std::path::Path::new(other_file.as_str())
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(other_file.as_str());
-                let quality = if stats.co_sessions >= 3 {
-                    format!(", {}%", (stats.success_rate() * 100.0).round() as u32)
-                } else {
-                    String::new()
-                };
-                observations.push(format!(
-                    "  coupled: {} ({} sessions{})",
-                    short_name, stats.co_sessions, quality
-                ));
-            }
+        ) && stats.co_sessions >= 2
+        {
+            let short_name = std::path::Path::new(other_file.as_str())
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(other_file.as_str());
+            let quality = if stats.co_sessions >= 3 {
+                format!(", {}%", (stats.success_rate() * 100.0).round() as u32)
+            } else {
+                String::new()
+            };
+            observations.push(format!(
+                "  coupled: {} ({} sessions{})",
+                short_name, stats.co_sessions, quality
+            ));
         }
     }
     observations

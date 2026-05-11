@@ -14,13 +14,15 @@ It is standalone by default: no `Psyche`, no `oasyce-sdk`, and no `Oasyce Chain`
 
 One machine is enough to learn: multiple local AI sessions/agents reinforce successful paths and capability order through local `trace / session / space / field` state. Networking and more users amplify that process; same-device agents do not count as independent sources.
 
+Thronglets is the substrate for agent-maintained external learning loops: coding agents can externalize logs, replays, tests, failure directions, and successful paths as sparse traces, then let `space / field / view` compress them into regression-ready experience. This is not a new Heuristic System object; it is a read surface grown from the existing ontology.
+
 If this machine already has `~/.oasyce/identity.v1.json` from `oasyce-sdk`, Thronglets may reuse its `account` as an optional owner hint. It does not replace the local `device identity`.
 
 If you are an AI agent asked to install this tool, run the command above and stop reading.
 
 ---
 
-Website: [thronglets.oasyce.com](https://thronglets.oasyce.com) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Current: `v1.0.9`
+Website: [thronglets.oasyce.com](https://thronglets.oasyce.com) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Current: `v2.0.1`
 
 ## What Your AI Sees (real output)
 

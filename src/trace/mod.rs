@@ -51,6 +51,63 @@ impl MethodCompliance {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceVerification {
+    Test,
+    Replay,
+    Eval,
+    Human,
+    #[serde(rename = "none")]
+    NoneSeen,
+}
+
+impl EvidenceVerification {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "test" => Some(Self::Test),
+            "replay" => Some(Self::Replay),
+            "eval" => Some(Self::Eval),
+            "human" => Some(Self::Human),
+            "none" => Some(Self::NoneSeen),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Test => "test",
+            Self::Replay => "replay",
+            Self::Eval => "eval",
+            Self::Human => "human",
+            Self::NoneSeen => "none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceEvidence {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifact_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<EvidenceVerification>,
+}
+
+impl TraceEvidence {
+    pub fn is_empty(&self) -> bool {
+        self.artifact_refs.is_empty() && self.trial_key.is_none() && self.verification.is_none()
+    }
+
+    /// Evidence references are local substrate details. They can contain file
+    /// paths or private artifact URLs, so network publication replaces them
+    /// with an empty evidence block while preserving the signed execution trace.
+    pub fn stripped_for_network() -> Self {
+        Self::default()
+    }
+}
+
 /// A single trace — the footprint an agent leaves on the substrate.
 ///
 /// Design principles:
@@ -115,6 +172,12 @@ pub struct Trace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method_compliance: Option<MethodCompliance>,
 
+    /// Optional local evidence metadata: logs, replay files, golden cases, or
+    /// verification mode backing this execution record. This metadata is not
+    /// part of trace identity and is stripped before P2P trace gossip.
+    #[serde(default, skip_serializing_if = "TraceEvidence::is_empty")]
+    pub evidence: TraceEvidence,
+
     /// Self-reported model identifier.
     /// e.g., "claude-opus-4-6", "gpt-4o", "gemini-pro"
     pub model_id: String,
@@ -157,6 +220,7 @@ pub struct TraceConfig {
     pub agent_id: Option<String>,
     pub sigil_id: Option<String>,
     pub method_compliance: Option<MethodCompliance>,
+    pub evidence: TraceEvidence,
 }
 
 impl TraceConfig {
@@ -180,6 +244,7 @@ impl TraceConfig {
             agent_id: None,
             sigil_id: None,
             method_compliance: None,
+            evidence: TraceEvidence::default(),
         }
     }
 
@@ -206,6 +271,7 @@ impl TraceConfig {
             agent_id: None,
             sigil_id: Some(sigil_id.into()),
             method_compliance: None,
+            evidence: TraceEvidence::default(),
         }
     }
 
@@ -258,9 +324,14 @@ impl TraceConfig {
         self
     }
 
+    pub fn evidence(mut self, evidence: TraceEvidence) -> Self {
+        self.evidence = evidence;
+        self
+    }
+
     /// Terminal: sign and produce a Trace.
     pub fn sign(self, node_pubkey: [u8; 32], sign_fn: impl FnOnce(&[u8]) -> Signature) -> Trace {
-        Trace::new_with_agent_compliance(
+        Trace::new_with_agent_compliance_evidence(
             self.capability,
             self.outcome,
             self.latency_ms,
@@ -273,6 +344,7 @@ impl TraceConfig {
             self.agent_id,
             self.sigil_id,
             self.method_compliance,
+            self.evidence,
             self.model_id,
             node_pubkey,
             sign_fn,
@@ -398,6 +470,45 @@ impl Trace {
         node_pubkey: [u8; 32],
         sign_fn: impl FnOnce(&[u8]) -> Signature,
     ) -> Self {
+        Self::new_with_agent_compliance_evidence(
+            capability,
+            outcome,
+            latency_ms,
+            input_size,
+            context_hash,
+            context_text,
+            session_id,
+            owner_account,
+            device_identity,
+            agent_id,
+            sigil_id,
+            method_compliance,
+            TraceEvidence::default(),
+            model_id,
+            node_pubkey,
+            sign_fn,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_agent_compliance_evidence(
+        capability: String,
+        outcome: Outcome,
+        latency_ms: u32,
+        input_size: u32,
+        context_hash: ContextHash,
+        context_text: Option<String>,
+        session_id: Option<String>,
+        owner_account: Option<String>,
+        device_identity: Option<String>,
+        agent_id: Option<String>,
+        sigil_id: Option<String>,
+        method_compliance: Option<MethodCompliance>,
+        evidence: TraceEvidence,
+        model_id: String,
+        node_pubkey: [u8; 32],
+        sign_fn: impl FnOnce(&[u8]) -> Signature,
+    ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -442,11 +553,18 @@ impl Trace {
             agent_id,
             sigil_id,
             method_compliance,
+            evidence,
             model_id,
             timestamp,
             node_pubkey,
             signature,
         }
+    }
+
+    pub fn without_local_evidence(&self) -> Self {
+        let mut trace = self.clone();
+        trace.evidence = TraceEvidence::stripped_for_network();
+        trace
     }
 
     /// Whether this trace is attributed to a Sigil (on-chain identity).

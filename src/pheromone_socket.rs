@@ -40,7 +40,7 @@ pub struct ScanRequest {
 pub fn start_listener(field: Arc<PheromoneField>, data_dir: &Path) -> SocketGuard {
     #[cfg(unix)]
     {
-        return start_unix_listener(field, data_dir);
+        start_unix_listener(field, data_dir)
     }
 
     #[cfg(not(unix))]
@@ -120,7 +120,7 @@ impl Drop for SocketGuard {
 pub fn query(data_dir: &Path, request: &ScanRequest) -> Option<Vec<FieldScan>> {
     #[cfg(unix)]
     {
-        return query_unix(data_dir, request);
+        query_unix(data_dir, request)
     }
 
     #[cfg(not(unix))]

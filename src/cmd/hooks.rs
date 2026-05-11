@@ -391,10 +391,10 @@ pub(crate) fn prehook(ctx: &FullCtx) {
     let ctx_hash = simhash(&hook_context);
     if let Some(recent_error) = ws.recent_errors.iter().find(|e| {
         // Scoped errors only match their own space; unscoped (legacy) errors are always visible
-        if let Some(ref es) = e.space {
-            if current_space.as_deref() != Some(es.as_str()) {
-                return false;
-            }
+        if let Some(ref es) = e.space
+            && current_space.as_deref() != Some(es.as_str())
+        {
+            return false;
         }
         let age_ms = now_ms - e.timestamp_ms;
         if e.tool == tool_name && age_ms < 3_600_000 {
@@ -1683,19 +1683,17 @@ mod tests {
 
     #[test]
     fn field_observations_render_hebbian_direction() {
-        let scans = vec![
-            FieldScan {
-                capability: "tool:edit".into(),
-                intensity: 0.8,
-                valence: 0.78,
-                latency: 0.0,
-                variance: 0.0,
-                total_excitations: 0,
-                context_similarity: 0.9,
-                level: AbstractionLevel::Project,
-                coupled_from: Some("tool:search".into()),
-            },
-        ];
+        let scans = vec![FieldScan {
+            capability: "tool:edit".into(),
+            intensity: 0.8,
+            valence: 0.78,
+            latency: 0.0,
+            variance: 0.0,
+            total_excitations: 0,
+            context_similarity: 0.9,
+            level: AbstractionLevel::Project,
+            coupled_from: Some("tool:search".into()),
+        }];
 
         let rendered = render_field_observations(scans);
         assert_eq!(rendered.len(), 1);

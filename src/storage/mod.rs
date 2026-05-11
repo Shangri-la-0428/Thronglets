@@ -10,15 +10,16 @@ use crate::posts::{
 };
 use crate::presence::PRESENCE_CAPABILITY_PREFIX;
 use crate::signals::StepAction;
-use crate::trace::{MethodCompliance, Outcome, Trace};
+use crate::trace::{EvidenceVerification, MethodCompliance, Outcome, Trace, TraceEvidence};
 use ed25519_dalek::Signature;
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
 const DEFAULT_TTL_DAYS: i64 = 7;
-const TRACE_SELECT_COLUMNS: &str = "id, capability, outcome, latency_ms, input_size, context_hash, context_text, session_id, owner_account, device_identity, agent_id, sigil_id, method_compliance, model_id, timestamp, node_pubkey, signature";
-const TRACE_SELECT_COLUMNS_T: &str = "t.id, t.capability, t.outcome, t.latency_ms, t.input_size, t.context_hash, t.context_text, t.session_id, t.owner_account, t.device_identity, t.agent_id, t.sigil_id, t.method_compliance, t.model_id, t.timestamp, t.node_pubkey, t.signature";
+const TRACE_SELECT_COLUMNS: &str = "id, capability, outcome, latency_ms, input_size, context_hash, context_text, session_id, owner_account, device_identity, agent_id, sigil_id, method_compliance, artifact_refs, trial_key, verification, model_id, timestamp, node_pubkey, signature";
+const TRACE_SELECT_COLUMNS_T: &str = "t.id, t.capability, t.outcome, t.latency_ms, t.input_size, t.context_hash, t.context_text, t.session_id, t.owner_account, t.device_identity, t.agent_id, t.sigil_id, t.method_compliance, t.artifact_refs, t.trial_key, t.verification, t.model_id, t.timestamp, t.node_pubkey, t.signature";
+type CoEditRow = (String, Vec<u8>, Vec<u8>, Vec<u8>, i32, i32);
 
 /// Compute a 16-bit bucket from the first 2 bytes of a context_hash.
 /// Used as a pre-filter index for similarity search — traces in nearby
@@ -93,6 +94,9 @@ impl TraceStore {
                 owner_account   TEXT,
                 device_identity TEXT,
                 method_compliance TEXT,
+                artifact_refs   TEXT,
+                trial_key       TEXT,
+                verification    TEXT,
                 model_id        TEXT NOT NULL,
                 timestamp       INTEGER NOT NULL,
                 node_pubkey     BLOB NOT NULL,
@@ -127,6 +131,11 @@ impl TraceStore {
         let _ = conn.execute("ALTER TABLE traces ADD COLUMN sigil_id TEXT", []);
         // Phase B: space as first-class column for SQL-level isolation
         let _ = conn.execute("ALTER TABLE traces ADD COLUMN space TEXT", []);
+        // Evidence metadata: local artifact references and verification hints.
+        // These fields are local substrate evidence, not new trace kinds.
+        let _ = conn.execute("ALTER TABLE traces ADD COLUMN artifact_refs TEXT", []);
+        let _ = conn.execute("ALTER TABLE traces ADD COLUMN trial_key TEXT", []);
+        let _ = conn.execute("ALTER TABLE traces ADD COLUMN verification TEXT", []);
         // Backfill space from signal trace JSON payloads (idempotent)
         let _ = conn.execute(
             "UPDATE traces SET space = json_extract(context_text, '$.space')
@@ -174,9 +183,21 @@ impl TraceStore {
         let space = space_override
             .map(str::to_string)
             .or_else(|| extract_space(&trace.context_text));
+        let artifact_refs = if trace.evidence.artifact_refs.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&trace.evidence.artifact_refs)
+                    .expect("artifact refs should serialize"),
+            )
+        };
+        let verification = trace
+            .evidence
+            .verification
+            .map(|value| value.as_str().to_string());
         let result = conn.execute(
-            "INSERT OR IGNORE INTO traces (id, capability, outcome, latency_ms, input_size, context_hash, context_text, session_id, owner_account, device_identity, agent_id, sigil_id, method_compliance, model_id, timestamp, node_pubkey, signature, context_bucket, space)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "INSERT OR IGNORE INTO traces (id, capability, outcome, latency_ms, input_size, context_hash, context_text, session_id, owner_account, device_identity, agent_id, sigil_id, method_compliance, artifact_refs, trial_key, verification, model_id, timestamp, node_pubkey, signature, context_bucket, space)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 trace.id.as_slice(),
                 trace.capability,
@@ -191,6 +212,9 @@ impl TraceStore {
                 trace.agent_id,
                 trace.sigil_id,
                 trace.method_compliance.map(|value| value.as_str().to_string()),
+                artifact_refs,
+                trace.evidence.trial_key,
+                verification,
                 trace.model_id,
                 trace.timestamp as i64,
                 trace.node_pubkey.as_slice(),
@@ -769,7 +793,7 @@ impl TraceStore {
                    LIMIT 500";
 
         let mut stmt = conn.prepare(sql)?;
-        let rows: Vec<(String, Vec<u8>, Vec<u8>, Vec<u8>, i32, i32)> = stmt
+        let rows: Vec<CoEditRow> = stmt
             .query_map(params![a_lo, a_hi, b_lo, b_hi, cutoff_ms, space], |row| {
                 Ok((
                     row.get(0)?,
@@ -1130,6 +1154,31 @@ impl TraceStore {
         Self::collect_traces_with_space(&mut stmt, params![cutoff_ms, limit as i64])
     }
 
+    /// Fetch recent real agent traces for one space. Internal coordination
+    /// traces are excluded because the learning view compresses external work,
+    /// not its own observation machinery.
+    pub fn recent_agent_traces_for_space(
+        &self,
+        hours: u64,
+        limit: usize,
+        space: Option<&str>,
+    ) -> rusqlite::Result<Vec<Trace>> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff_ms = chrono::Utc::now().timestamp_millis() - (hours as i64 * 3_600_000);
+        let sql = format!(
+            "SELECT {TRACE_SELECT_COLUMNS} FROM traces \
+             WHERE timestamp >= ?1 \
+               AND capability NOT LIKE 'urn:thronglets:signal:%' \
+               AND capability NOT LIKE 'urn:thronglets:presence:%' \
+               AND capability NOT LIKE 'urn:thronglets:continuity:%' \
+               AND capability NOT LIKE 'urn:thronglets:signal-reinforcement:%' \
+               AND (?3 IS NULL OR space = ?3) \
+             ORDER BY timestamp DESC LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        Self::collect_traces(&mut stmt, params![cutoff_ms, limit as i64, space])
+    }
+
     /// Fetch the newest real agent traces for cold field replay, returned in
     /// chronological order with their stored space. Internal signal,
     /// presence, continuity, and reinforcement traces are excluded so replay
@@ -1227,7 +1276,7 @@ impl TraceStore {
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok((Self::trace_from_row(row)?, row.get(17)?))
+            Ok((Self::trace_from_row(row)?, row.get(20)?))
         })?;
         rows.collect()
     }
@@ -1291,8 +1340,8 @@ impl TraceStore {
 
     /// Column order: id(0), capability(1), outcome(2), latency_ms(3), input_size(4),
     /// context_hash(5), context_text(6), session_id(7), owner_account(8), device_identity(9),
-    /// agent_id(10), sigil_id(11), method_compliance(12), model_id(13), timestamp(14),
-    /// node_pubkey(15), signature(16)
+    /// agent_id(10), sigil_id(11), method_compliance(12), artifact_refs(13), trial_key(14),
+    /// verification(15), model_id(16), timestamp(17), node_pubkey(18), signature(19)
     fn collect_traces(
         stmt: &mut rusqlite::Statement,
         params: impl rusqlite::Params,
@@ -1308,7 +1357,7 @@ impl TraceStore {
         let rows = stmt.query_map(params, |row| {
             Ok((
                 Self::trace_from_row(row)?,
-                row.get::<_, Option<String>>(17)?,
+                row.get::<_, Option<String>>(20)?,
             ))
         })?;
         rows.collect()
@@ -1318,8 +1367,17 @@ impl TraceStore {
         let id_bytes: Vec<u8> = row.get(0)?;
         let outcome_u8: u8 = row.get(2)?;
         let context_bytes: Vec<u8> = row.get(5)?;
-        let pubkey_bytes: Vec<u8> = row.get(15)?;
-        let sig_bytes: Vec<u8> = row.get(16)?;
+        let pubkey_bytes: Vec<u8> = row.get(18)?;
+        let sig_bytes: Vec<u8> = row.get(19)?;
+        let artifact_refs_json: Option<String> = row.get(13)?;
+        let artifact_refs = artifact_refs_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default();
+        let verification = row
+            .get::<_, Option<String>>(15)?
+            .as_deref()
+            .and_then(EvidenceVerification::parse);
 
         Ok(Trace {
             id: id_bytes.try_into().unwrap_or([0u8; 32]),
@@ -1343,8 +1401,13 @@ impl TraceStore {
                 .get::<_, Option<String>>(12)?
                 .as_deref()
                 .and_then(MethodCompliance::parse),
-            model_id: row.get(13)?,
-            timestamp: row.get::<_, i64>(14)? as u64,
+            evidence: TraceEvidence {
+                artifact_refs,
+                trial_key: row.get(14)?,
+                verification,
+            },
+            model_id: row.get(16)?,
+            timestamp: row.get::<_, i64>(17)? as u64,
             node_pubkey: pubkey_bytes.try_into().unwrap_or([0u8; 32]),
             signature: Signature::from_bytes(&sig_bytes.try_into().unwrap_or([0u8; 64])),
         })
@@ -1447,6 +1510,39 @@ mod tests {
         let results = store.query_capability("tool-a", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].capability, "tool-a");
+    }
+
+    #[test]
+    fn trace_evidence_metadata_roundtrips_without_changing_verification() {
+        let store = TraceStore::in_memory().unwrap();
+        let id = NodeIdentity::generate();
+        let mut trace = make_trace(&id, "tool-a", Outcome::Failed, "artifact backed context");
+        trace.evidence = TraceEvidence {
+            artifact_refs: vec!["/tmp/run.log".into(), "/tmp/replay.mp4".into()],
+            trial_key: Some("artifact-backed-context".into()),
+            verification: Some(EvidenceVerification::Replay),
+        };
+
+        assert!(trace.verify());
+        assert!(trace.verify_id());
+        assert!(store.insert(&trace).unwrap());
+
+        let results = store.query_capability("tool-a", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].evidence.artifact_refs,
+            vec!["/tmp/run.log", "/tmp/replay.mp4"]
+        );
+        assert_eq!(
+            results[0].evidence.trial_key.as_deref(),
+            Some("artifact-backed-context")
+        );
+        assert_eq!(
+            results[0].evidence.verification,
+            Some(EvidenceVerification::Replay)
+        );
+        assert!(results[0].verify());
+        assert!(results[0].verify_id());
     }
 
     #[test]

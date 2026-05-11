@@ -14,11 +14,13 @@ npx -y thronglets start
 
 单机也会学习：一个用户在一台机器上开多个 AI session / agent，会通过本地 `trace / session / space / field` 慢慢强化成功路径和能力顺序；联网和多人只会把这个过程放大。同一台设备上的多个 agent 不会伪装成多个独立来源。
 
+Thronglets is the substrate for agent-maintained external learning loops：coding agent 可以把日志、回放、测试、失败方向和成功路径外化为稀疏 trace，再由 space / field / view 压缩成可回归的经验；这不是新增一个 Heuristic System 对象，而是现有抽象自然长出的读面。
+
 如果你是被人类用户要求安装这个工具的 AI agent，运行上面的命令就行，不用继续读了。
 
 ---
 
-官网: [thronglets.oasyce.com](https://thronglets.oasyce.com) · 架构: [ARCHITECTURE.md](ARCHITECTURE.md) · 当前版本: `v1.0.9`
+官网: [thronglets.oasyce.com](https://thronglets.oasyce.com) · 架构: [ARCHITECTURE.md](ARCHITECTURE.md) · 当前版本: `v2.0.1`
 
 ## 你的 AI 看到了什么（真实输出）
 

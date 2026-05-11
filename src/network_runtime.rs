@@ -498,7 +498,7 @@ async fn publish_local_traces(store: &TraceStore, command_tx: &mpsc::Sender<Netw
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             if command_tx
                 .send(NetworkCommand::PublishTrace {
-                    trace: Box::new(trace),
+                    trace: Box::new(trace.without_local_evidence()),
                     space,
                     receipt: Some(reply_tx),
                 })
@@ -603,7 +603,7 @@ mod tests {
     use crate::network_state::NetworkSnapshot;
     use crate::pheromone::{AbstractionLevel, PheromoneField};
     use crate::storage::TraceStore;
-    use crate::trace::{Outcome, Trace};
+    use crate::trace::{EvidenceVerification, Outcome, Trace, TraceEvidence};
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 
@@ -815,7 +815,7 @@ mod tests {
     async fn publish_local_traces_only_marks_confirmed_traces() {
         let store = TraceStore::in_memory().unwrap();
         let identity = NodeIdentity::generate();
-        let accepted = Trace::new(
+        let mut accepted = Trace::new(
             "cap/accepted".into(),
             Outcome::Succeeded,
             10,
@@ -827,6 +827,11 @@ mod tests {
             identity.public_key_bytes(),
             |msg| identity.sign(msg),
         );
+        accepted.evidence = TraceEvidence {
+            artifact_refs: vec!["/tmp/private-replay.mp4".into()],
+            trial_key: Some("accepted-lineage".into()),
+            verification: Some(EvidenceVerification::Replay),
+        };
         let rejected = Trace::new(
             "cap/rejected".into(),
             Outcome::Succeeded,
@@ -851,6 +856,7 @@ mod tests {
         let join = tokio::spawn(async move {
             let mut accepted_space = None;
             let mut rejected_space = None;
+            let mut accepted_evidence_empty = false;
             while let Some(command) = rx.recv().await {
                 if let NetworkCommand::PublishTrace {
                     trace,
@@ -860,24 +866,29 @@ mod tests {
                 {
                     if trace.id == accepted_id {
                         accepted_space = space;
+                        accepted_evidence_empty = trace.evidence.is_empty();
                     } else {
                         rejected_space = space;
                     }
                     let _ = reply.send(trace.id == accepted_id);
                 }
             }
-            (accepted_space, rejected_space)
+            (accepted_space, rejected_space, accepted_evidence_empty)
         });
 
         publish_local_traces(&store, &tx).await;
         drop(tx);
 
-        let (accepted_space, rejected_space) = join.await.unwrap();
+        let (accepted_space, rejected_space, accepted_evidence_empty) = join.await.unwrap();
 
         let unpublished = store.unpublished_traces(10).unwrap();
         assert_eq!(unpublished.len(), 1);
         assert_eq!(unpublished[0].id, rejected.id);
         assert_eq!(accepted_space.as_deref(), Some("space-accepted"));
         assert_eq!(rejected_space.as_deref(), Some("space-rejected"));
+        assert!(
+            accepted_evidence_empty,
+            "P2P trace publication must strip local artifact metadata"
+        );
     }
 }

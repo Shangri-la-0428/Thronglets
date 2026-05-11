@@ -11,7 +11,7 @@ use thronglets::pheromone::PheromoneField;
 use thronglets::pulse::{PRESENCE_DIMENSION_NAME, PulseEmitter, VIABILITY_DIMENSION_NAME};
 use thronglets::service::{self, Ctx, RecordTraceReq};
 use thronglets::storage::TraceStore;
-use thronglets::trace::{MethodCompliance, Outcome, Trace};
+use thronglets::trace::{MethodCompliance, Outcome, Trace, TraceEvidence};
 
 fn insert_trace(
     store: &TraceStore,
@@ -90,6 +90,7 @@ fn regression_corpus_record_trace_scopes_storage_and_rejects_invalid_continuity(
         agent_id: None,
         sigil_id: None,
         method_compliance: Some(MethodCompliance::Unknown),
+        evidence: TraceEvidence::default(),
     };
 
     let recorded = service::record_trace(&ctx, req, None).expect("record_trace should succeed");
@@ -144,6 +145,7 @@ fn regression_corpus_record_trace_scopes_storage_and_rejects_invalid_continuity(
             agent_id: None,
             sigil_id: None,
             method_compliance: None,
+            evidence: TraceEvidence::default(),
         },
         Some(invalid_continuity),
     ) {

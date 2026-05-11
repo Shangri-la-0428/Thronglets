@@ -133,6 +133,10 @@ fn handle_post_trace(ctx: &HttpContext, body: &str) -> String {
     if capability.is_empty() && external_continuity.is_none() {
         return json!({"error": "missing field: capability"}).to_string();
     }
+    let evidence = match service::parse_evidence_from_json(&args) {
+        Ok(value) => value,
+        Err(error) => return json!({"error": error}).to_string(),
+    };
 
     let req = service::RecordTraceReq {
         capability,
@@ -148,6 +152,7 @@ fn handle_post_trace(ctx: &HttpContext, body: &str) -> String {
         method_compliance: args["method_compliance"]
             .as_str()
             .and_then(MethodCompliance::parse),
+        evidence,
     };
 
     match service::record_trace(&svc_ctx(ctx), req, external_continuity) {

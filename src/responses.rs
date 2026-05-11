@@ -9,6 +9,7 @@ use thronglets::identity_surface::IdentitySummary;
 use thronglets::network_state::ObservedPeer;
 use thronglets::posts::SignalFeedResult;
 use thronglets::presence::PresenceFeedResult;
+use thronglets::service::SpaceLearningView;
 use thronglets::workspace;
 
 #[derive(Serialize)]
@@ -306,6 +307,7 @@ pub(crate) struct SpaceSnapshotData {
     pub(crate) space: String,
     pub(crate) sessions: Vec<PresenceFeedResult>,
     pub(crate) signals: Vec<SignalFeedResult>,
+    pub(crate) learning: SpaceLearningView,
     pub(crate) continuity: ContinuitySpaceData,
     pub(crate) local_feedback: workspace::SpaceFeedbackSummary,
 }

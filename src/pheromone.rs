@@ -27,6 +27,9 @@ use crate::trace::{Outcome, Trace};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+type LevelBucket = (u8, i64);
+type LiveEdge<'a> = (&'a str, &'a str, f64);
+
 // ── Constants ──────────────────────────────────────────────────
 
 /// Half-life in hours. After this many hours without excitation,
@@ -1305,7 +1308,7 @@ impl PheromoneField {
             COUPLING_PRUNE_THRESHOLD
         };
 
-        let mut level_edges: HashMap<(u8, i64), Vec<(&str, &str, f64)>> = HashMap::new();
+        let mut level_edges: HashMap<LevelBucket, Vec<LiveEdge<'_>>> = HashMap::new();
         for (key, edge) in &inner.edges {
             let w = edge.current_weight(now_ms);
             if w > threshold {
@@ -1629,9 +1632,7 @@ impl PheromoneField {
             if intensity < PRUNE_THRESHOLD {
                 continue;
             }
-            let entry = cap_map
-                .entry(&key.capability)
-                .or_insert((0.0, 0.0, 0.0, 0));
+            let entry = cap_map.entry(&key.capability).or_insert((0.0, 0.0, 0.0, 0));
             entry.0 += intensity;
             entry.1 += point.valence * intensity;
             entry.2 += point.latency * intensity;
@@ -2031,7 +2032,7 @@ mod tests {
         ] {
             let reverse_key = EdgeKey::at_level("cap/second", "cap/first", level, bucket);
             assert!(
-                inner.edges.get(&reverse_key).is_none(),
+                !inner.edges.contains_key(&reverse_key),
                 "reverse edge should not exist at {:?}",
                 level
             );
@@ -2151,7 +2152,7 @@ mod tests {
 
         let snapshot = field.snapshot();
         assert!(
-            snapshot.couplings.len() >= 1,
+            !snapshot.couplings.is_empty(),
             "snapshot should preserve ≥1 coupling"
         );
 

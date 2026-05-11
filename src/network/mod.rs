@@ -313,6 +313,7 @@ pub async fn start(
                                 match serde_json::from_slice::<Trace>(&message.data) {
                                     Ok(trace) => {
                                         if trace.verify() && trace.verify_id() {
+                                            let trace = trace.without_local_evidence();
                                             debug!(trace_id = ?&trace.id[..4], "Received valid trace from network");
                                             let _ = event_tx
                                                 .send(NetworkEvent::TraceReceived {
@@ -532,7 +533,8 @@ pub async fn start(
                             receipt,
                         } => {
                             let mut accepted = false;
-                            match serde_json::to_vec(&trace) {
+                            let publish_trace = trace.without_local_evidence();
+                            match serde_json::to_vec(&publish_trace) {
                                 Ok(data) => {
                                     // Always publish to global topic
                                     let global = gossipsub::IdentTopic::new(TRACE_TOPIC);

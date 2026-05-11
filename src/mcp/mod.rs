@@ -112,6 +112,20 @@ fn tool_definitions() -> Value {
                             "enum": ["compliant", "noncompliant", "unknown"],
                             "description": "Optional method-quality classification under the current explicit policy view"
                         },
+                        "artifact_refs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional local evidence references such as logs, replay files, videos, golden cases, or summaries. These stay local and are stripped before P2P trace gossip."
+                        },
+                        "trial_key": {
+                            "type": "string",
+                            "description": "Optional stable key for one experiment/task lineage."
+                        },
+                        "verification": {
+                            "type": "string",
+                            "enum": ["test", "replay", "eval", "human", "none"],
+                            "description": "Optional verification mode backing this trace."
+                        },
                         "model": {
                             "type": "string",
                             "description": "Self-reported model identifier (default: \"unknown\")"
@@ -492,13 +506,11 @@ impl McpSession {
     }
 
     fn update_roots(&self, params: &Value) {
-        let roots = params.get("roots").and_then(|v| v.as_array());
-        if let Some(roots) = roots {
-            if let Some(space) = space_from_roots(roots) {
-                if let Ok(mut s) = self.default_space.lock() {
-                    *s = Some(space);
-                }
-            }
+        if let Some(roots) = params.get("roots").and_then(|v| v.as_array())
+            && let Some(space) = space_from_roots(roots)
+            && let Ok(mut s) = self.default_space.lock()
+        {
+            *s = Some(space);
         }
     }
 
@@ -631,7 +643,12 @@ async fn handle_tool_call(
 // Tool 1: trace_record
 // ---------------------------------------------------------------------------
 
-async fn handle_trace_record(ctx: &McpContext, session: &McpSession, id: Value, args: Value) -> JsonRpcResponse {
+async fn handle_trace_record(
+    ctx: &McpContext,
+    session: &McpSession,
+    id: Value,
+    args: Value,
+) -> JsonRpcResponse {
     let capability = args
         .get("capability")
         .and_then(|v| v.as_str())
@@ -647,6 +664,10 @@ async fn handle_trace_record(ctx: &McpContext, session: &McpSession, id: Value, 
     }
 
     let svc = svc_ctx(ctx);
+    let evidence = match service::parse_evidence_from_json(&args) {
+        Ok(value) => value,
+        Err(error) => return JsonRpcResponse::error(id, -32602, error),
+    };
 
     let req = service::RecordTraceReq {
         capability,
@@ -689,6 +710,7 @@ async fn handle_trace_record(ctx: &McpContext, session: &McpSession, id: Value, 
             .get("method_compliance")
             .and_then(|v| v.as_str())
             .and_then(MethodCompliance::parse),
+        evidence,
     };
 
     let publish_space = req.space.clone();

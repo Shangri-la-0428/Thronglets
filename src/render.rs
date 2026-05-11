@@ -361,6 +361,10 @@ pub(crate) fn render_space_snapshot(data: &SpaceSnapshotData) {
         "  Learning: {} positive / {} negative local follow events (24h)",
         data.local_feedback.positive_24h, data.local_feedback.negative_24h
     );
+    println!(
+        "  Loop:     {} (compression debt: {})",
+        data.learning.status, data.learning.compression_debt.level
+    );
     if data.continuity.summary.trace_count > 0 {
         println!(
             "  Continuity: {} local traces, {} Net-ready summaries",

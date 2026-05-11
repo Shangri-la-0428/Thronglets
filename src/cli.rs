@@ -278,6 +278,30 @@ pub(crate) enum Commands {
         /// Model identifier
         #[arg(long, default_value = "cli")]
         model: String,
+
+        /// Optional session identifier.
+        #[arg(long)]
+        session_id: Option<String>,
+
+        /// Optional substrate space.
+        #[arg(long)]
+        space: Option<String>,
+
+        /// Optional method compliance classification.
+        #[arg(long)]
+        method_compliance: Option<String>,
+
+        /// Optional local evidence artifact reference. May be repeated.
+        #[arg(long = "artifact-ref")]
+        artifact_refs: Vec<String>,
+
+        /// Optional stable lineage key for the trial/task.
+        #[arg(long)]
+        trial_key: Option<String>,
+
+        /// Optional verification mode: test, replay, eval, human, none.
+        #[arg(long)]
+        verification: Option<String>,
     },
 
     #[command(hide = true)]

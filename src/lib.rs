@@ -8,6 +8,7 @@ pub mod eval;
 pub mod http;
 pub mod identity;
 pub mod identity_surface;
+pub mod learning;
 pub mod mcp;
 pub mod network;
 pub mod network_runtime;
