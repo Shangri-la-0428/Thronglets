@@ -20,7 +20,7 @@ Thronglets is the substrate for agent-maintained external learning loops：codin
 
 ---
 
-官网: [thronglets.oasyce.com](https://thronglets.oasyce.com) · 架构: [ARCHITECTURE.md](ARCHITECTURE.md) · 当前版本: `v2.0.1`
+官网: [thronglets.oasyce.com](https://thronglets.oasyce.com) · 架构: [ARCHITECTURE.md](ARCHITECTURE.md) · 当前版本: `v2.0.2`
 
 ## 你的 AI 看到了什么（真实输出）
 

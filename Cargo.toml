@@ -1,6 +1,6 @@
 [package]
 name = "thronglets"
-version = "2.0.1"
+version = "2.0.2"
 edition = "2024"
 description = "Local AI substrate for agents with sparse signals, hooks, and optional adapters"
 license = "MIT"

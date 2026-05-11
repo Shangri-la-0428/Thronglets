@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.0.2 — 2026-05-11
+
+**Add: space-level external learning view for agent-maintained heuristic loops.**
+
+Thronglets now exposes the first minimal read surface for agent-maintained external learning loops without adding a new top-level ontology. A Heuristic System is represented as a `space` whose traces, local evidence metadata, derived field, and projected view begin to compress into stable paths, failure residue, regression candidates, and compression debt.
+
+### Added
+- `trace_record` evidence metadata: optional `artifact_refs`, `trial_key`, and `verification` (`test | replay | eval | human | none`) for logs, replays, golden cases, videos, summaries, and experiment lineages.
+- `space --json` learning view with `learning.status`, `stable_paths`, `failure_residue`, `regression_candidates`, and `compression_debt`.
+- `src/learning.rs` — pure derived-view compression from recent traces; SQLite remains the single fact source.
+- Tests for evidence metadata roundtrip, quiet learning spaces, artifact-backed regression candidates, compliant stable paths, noncompliant success exclusion, compression debt, and P2P evidence privacy.
+
+### Changed
+- P2P trace publication strips local evidence metadata before gossip, preserving Level 2/3 abstract field sync while keeping artifact details local.
+- README and architecture docs now state the strategic position directly: Thronglets is the substrate for agent-maintained external learning loops.
+- Architecture docs were cleaned up to reflect the v2.0 identity-blind field physics and remove stale corroboration-bonus wording.
+
+### Migration
+- SQLite adds nullable `artifact_refs`, `trial_key`, and `verification` columns. Existing traces load as empty evidence and keep their signatures valid.
+- No new default user command. Normal path remains `start / share / join / status`; learning is visible through the existing `space --json` read surface.
+
 ## v2.0.1 — 2026-05-04
 
 **Fix: hook-path traces now actually excite the pheromone field.**
